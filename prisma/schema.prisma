@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  createdAt DateTime @default(now())
+
+  accounts      Account[]
+  categories    Category[]
+  transactions  Transaction[]
+  fixedExpenses FixedExpense[]
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // "cash", "bank", "credit_card"
+  balance   Decimal  @default(0)
+  currency  String   @default("EUR")
+  color     String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions  Transaction[]
+  fixedExpenses FixedExpense[]
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Category {
+  id     String  @id @default(uuid())
+  name   String
+  type   String  // "expense" | "income"
+  icon   String?
+  color  String?
+  userId String
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions  Transaction[]
+  fixedExpenses FixedExpense[]
+
+  @@index([userId])
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+  amount      Decimal
+  type        String   // "expense" | "income"
+  description String?
+  date        DateTime @default(now())
+
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fixedExpenseId String?
+  fixedExpense   FixedExpense? @relation(fields: [fixedExpenseId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([categoryId])
+  @@index([date])
+}
+
+model FixedExpense {
+  id          String   @id @default(uuid())
+  name        String
+  amount      Decimal
+  type        String   // "expense" | "income"
+  dueDay      Int      // 1-31
+  isActive    Boolean  @default(true)
+  description String?
+
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions Transaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
