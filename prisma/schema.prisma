@@ -30,9 +30,15 @@ model Account {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  transactions  Transaction[]
-  fixedExpenses FixedExpense[]
-  createdAt     DateTime @default(now())
+  // Credit card specific fields (null if not credit card)
+  creditLimit   Decimal? // Credit limit (e.g., 5000.00)
+  cutoffDay     Int?     // Statement closing day (1-31)
+  paymentDueDay Int?     // Payment due day (1-31)
+
+  transactions       Transaction[]
+  fixedExpenses      FixedExpense[]
+  creditCardPayments CreditCardPayment[]
+  createdAt          DateTime @default(now())
 
   @@index([userId])
 }
@@ -69,6 +75,8 @@ model Transaction {
   fixedExpenseId String?
   fixedExpense   FixedExpense? @relation(fields: [fixedExpenseId], references: [id], onDelete: SetNull)
 
+  creditCardPayment CreditCardPayment?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -102,4 +110,23 @@ model FixedExpense {
 
   @@index([userId])
   @@index([userId, type, sortOrder])
+}
+
+model CreditCardPayment {
+  id          String   @id @default(uuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  amount      Decimal
+  paymentDate DateTime
+  periodStart DateTime // Start of the paid period
+  periodEnd   DateTime // End of the paid period
+
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
+  @@index([paymentDate])
 }

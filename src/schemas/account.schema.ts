@@ -6,6 +6,10 @@ export const createAccountSchema = z.object({
   balance: z.number().default(0),
   currency: z.string().default('EUR'),
   color: z.string().optional(),
+  // Credit card specific fields
+  creditLimit: z.number().positive().optional(),
+  cutoffDay: z.number().int().min(1).max(31).optional(),
+  paymentDueDay: z.number().int().min(1).max(31).optional(),
 });
 
 export const updateAccountSchema = createAccountSchema.partial();
