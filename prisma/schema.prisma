@@ -85,6 +85,7 @@ model FixedExpense {
   type        String   // "expense" | "income"
   dueDay      Int      // 1-31
   isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
   description String?
 
   accountId  String
@@ -100,4 +101,5 @@ model FixedExpense {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+  @@index([userId, type, sortOrder])
 }

@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import * as fixedExpensesService from '../services/fixed-expenses.service.js';
-import { createFixedExpenseSchema, updateFixedExpenseSchema, payFixedExpenseSchema } from '../schemas/fixed-expense.schema.js';
+import { createFixedExpenseSchema, updateFixedExpenseSchema, payFixedExpenseSchema, reorderFixedExpensesSchema } from '../schemas/fixed-expense.schema.js';
 import { AuthRequest } from '../types/index.js';
 
 export async function getFixedExpenses(req: AuthRequest, res: Response, next: NextFunction) {
@@ -86,6 +86,20 @@ export async function getFixedExpensesSummary(req: AuthRequest, res: Response, n
     const summary = await fixedExpensesService.getFixedExpensesSummary(req.user!.userId);
     res.json(summary);
   } catch (error) {
+    next(error);
+  }
+}
+
+export async function reorderFixedExpenses(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const { items } = reorderFixedExpensesSchema.parse(req.body);
+    const result = await fixedExpensesService.reorderFixedExpenses(req.user!.userId, items);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Algunos gastos fijos no fueron encontrados') {
+      res.status(404).json({ error: error.message });
+      return;
+    }
     next(error);
   }
 }

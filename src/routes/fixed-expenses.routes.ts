@@ -9,6 +9,7 @@ router.use(authMiddleware);
 router.get('/summary', fixedExpensesController.getFixedExpensesSummary);
 router.get('/', fixedExpensesController.getFixedExpenses);
 router.post('/', fixedExpensesController.createFixedExpense);
+router.post('/reorder', fixedExpensesController.reorderFixedExpenses);
 router.get('/:id', fixedExpensesController.getFixedExpenseById);
 router.patch('/:id', fixedExpensesController.updateFixedExpense);
 router.delete('/:id', fixedExpensesController.deleteFixedExpense);

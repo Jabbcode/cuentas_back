@@ -18,6 +18,16 @@ export const payFixedExpenseSchema = z.object({
   amount: z.number().positive().optional(), // Allow override for variable bills
 });
 
+export const reorderFixedExpensesSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().uuid('ID inválido'),
+      sortOrder: z.number().int().min(0),
+    })
+  ),
+});
+
 export type CreateFixedExpenseInput = z.infer<typeof createFixedExpenseSchema>;
 export type UpdateFixedExpenseInput = z.infer<typeof updateFixedExpenseSchema>;
 export type PayFixedExpenseInput = z.infer<typeof payFixedExpenseSchema>;
+export type ReorderFixedExpensesInput = z.infer<typeof reorderFixedExpensesSchema>;

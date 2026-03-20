@@ -92,13 +92,38 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
   return transaction;
 }
 
+export async function reorderFixedExpenses(userId: string, itemOrders: { id: string; sortOrder: number }[]) {
+  // Verificar que todos los items pertenecen al usuario
+  const itemIds = itemOrders.map(item => item.id);
+  const items = await prisma.fixedExpense.findMany({
+    where: { id: { in: itemIds }, userId },
+    select: { id: true },
+  });
+
+  if (items.length !== itemIds.length) {
+    throw new Error('Algunos gastos fijos no fueron encontrados');
+  }
+
+  // Actualizar el orden de cada item
+  await prisma.$transaction(
+    itemOrders.map(({ id, sortOrder }) =>
+      prisma.fixedExpense.update({
+        where: { id },
+        data: { sortOrder },
+      })
+    )
+  );
+
+  return { success: true };
+}
+
 export async function getFixedExpensesSummary(userId: string) {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
   const fixedExpenses = await prisma.fixedExpense.findMany({
-    where: { userId, isActive: true },
+    where: { userId },
     include: {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
@@ -111,29 +136,35 @@ export async function getFixedExpensesSummary(userId: string) {
         },
       },
     },
-    orderBy: { dueDay: 'asc' },
+    orderBy: [
+      { sortOrder: 'asc' },
+      { dueDay: 'asc' },
+    ],
   });
 
-  const totalMonthlyExpenses = fixedExpenses
+  // Solo contar los activos para los totales mensuales
+  const activeFixedExpenses = fixedExpenses.filter((fe) => fe.isActive);
+
+  const totalMonthlyExpenses = activeFixedExpenses
     .filter((fe) => fe.type === 'expense')
     .reduce((sum, fe) => sum + Number(fe.amount), 0);
 
-  const totalMonthlyIncome = fixedExpenses
+  const totalMonthlyIncome = activeFixedExpenses
     .filter((fe) => fe.type === 'income')
     .reduce((sum, fe) => sum + Number(fe.amount), 0);
 
-  const paidThisMonth = fixedExpenses.filter((fe) => fe.transactions.length > 0);
-  const pendingThisMonth = fixedExpenses.filter((fe) => fe.transactions.length === 0);
+  const paidThisMonth = activeFixedExpenses.filter((fe) => fe.transactions.length > 0);
+  const pendingThisMonth = activeFixedExpenses.filter((fe) => fe.transactions.length === 0);
 
   return {
     totalMonthlyExpenses,
     totalMonthlyIncome,
-    totalCount: fixedExpenses.length,
+    totalCount: activeFixedExpenses.length,
     paidCount: paidThisMonth.length,
     pendingCount: pendingThisMonth.length,
     items: fixedExpenses.map((fe) => ({
       ...fe,
-      isPaidThisMonth: fe.transactions.length > 0,
+      isPaidThisMonth: fe.transactions.length > 0 && fe.isActive,
       transactions: undefined,
     })),
   };
