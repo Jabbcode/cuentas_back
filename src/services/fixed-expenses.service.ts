@@ -50,7 +50,29 @@ export async function createFixedExpense(data: CreateFixedExpenseInput, userId: 
 }
 
 export async function updateFixedExpense(id: string, data: UpdateFixedExpenseInput, userId: string) {
-  await getFixedExpenseById(id, userId);
+  const existingExpense = await getFixedExpenseById(id, userId);
+
+  // Preparar actualizaciones para transacciones asociadas
+  const transactionUpdates: any = {};
+
+  if (data.categoryId && data.categoryId !== existingExpense.categoryId) {
+    transactionUpdates.categoryId = data.categoryId;
+  }
+
+  if (data.accountId && data.accountId !== existingExpense.accountId) {
+    transactionUpdates.accountId = data.accountId;
+  }
+
+  // Si hay cambios en categoría o cuenta, actualizar las transacciones asociadas
+  if (Object.keys(transactionUpdates).length > 0) {
+    await prisma.transaction.updateMany({
+      where: {
+        fixedExpenseId: id,
+        userId,
+      },
+      data: transactionUpdates,
+    });
+  }
 
   return prisma.fixedExpense.update({
     where: { id },
