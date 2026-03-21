@@ -201,18 +201,25 @@ export async function getCreditCardStatement(accountId: string, userId: string):
     });
   }
 
+  // Calculate period end dates (one day before the next cutoff)
+  const currentPeriodEnd = new Date(nextCutoff);
+  currentPeriodEnd.setDate(currentPeriodEnd.getDate() - 1);
+
+  const closedPeriodEnd = new Date(lastCutoff);
+  closedPeriodEnd.setDate(closedPeriodEnd.getDate() - 1);
+
   return {
     account,
     currentPeriod: {
       startDate: lastCutoff,
-      endDate: nextCutoff,
+      endDate: currentPeriodEnd,
       balance: currentBalance,
       transactions: currentPeriodTransactions,
       daysUntilCutoff,
     },
     closedPeriod: {
       startDate: previousCutoff,
-      endDate: lastCutoff,
+      endDate: closedPeriodEnd,
       balance: closedBalance,
       transactions: closedPeriodTransactions,
       isPaid: !!closedPeriodPayment,
