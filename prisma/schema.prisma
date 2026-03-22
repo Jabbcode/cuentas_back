@@ -18,6 +18,8 @@ model User {
   categories    Category[]
   transactions  Transaction[]
   fixedExpenses FixedExpense[]
+  debts         Debt[]
+  debtPayments  DebtPayment[]
 }
 
 model Account {
@@ -38,6 +40,7 @@ model Account {
   transactions       Transaction[]
   fixedExpenses      FixedExpense[]
   creditCardPayments CreditCardPayment[]
+  debtPayments       DebtPayment[]
   createdAt          DateTime @default(now())
 
   @@index([userId])
@@ -76,6 +79,7 @@ model Transaction {
   fixedExpense   FixedExpense? @relation(fields: [fixedExpenseId], references: [id], onDelete: SetNull)
 
   creditCardPayment CreditCardPayment?
+  debtPayment       DebtPayment?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -128,5 +132,67 @@ model CreditCardPayment {
   createdAt DateTime @default(now())
 
   @@index([accountId])
+  @@index([paymentDate])
+}
+
+model Debt {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Basic information
+  creditor        String   // Name of the creditor (e.g., "Juan", "Banco BBVA")
+  description     String   // Description/concept of the debt
+  totalAmount     Decimal  // Original total amount of the debt
+  remainingAmount Decimal  // Remaining amount to pay
+
+  // Interest (optional)
+  interestRate Decimal? // Interest rate
+  interestType String?  // "fixed" | "percentage"
+
+  // Dates
+  startDate DateTime  @default(now())
+  dueDate   DateTime? // Payment deadline (optional)
+
+  // Status
+  status String @default("active") // "active" | "paid" | "overdue"
+
+  // Payments
+  payments DebtPayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, status])
+}
+
+model DebtPayment {
+  id     String @id @default(uuid())
+  debtId String
+  debt   Debt   @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  amount    Decimal // Total payment amount (principal + interest)
+  principal Decimal // Amount that goes to principal
+  interest  Decimal // Amount that goes to interest
+
+  // Account from which the payment was made
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // Associated transaction
+  transactionId String?      @unique
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  paymentDate DateTime @default(now())
+  notes       String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([debtId])
+  @@index([userId])
   @@index([paymentDate])
 }
