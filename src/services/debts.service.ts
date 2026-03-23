@@ -62,8 +62,10 @@ export async function getDebts(userId: string, status?: string) {
     where,
     include: {
       payments: {
+        include: {
+          account: { select: { id: true, name: true } },
+        },
         orderBy: { paymentDate: 'desc' },
-        take: 5, // Last 5 payments for preview
       },
       _count: {
         select: { payments: true },
@@ -284,8 +286,16 @@ export async function getDebtsSummary(userId: string) {
   const activeDebts = debts.filter((d) => d.status === 'active');
   const overdueDebts = debts.filter((d) => d.status === 'overdue');
 
-  const totalDebt = activeDebts.reduce((sum, d) => sum + Number(d.remainingAmount), 0);
-  const totalOverdue = overdueDebts.reduce((sum, d) => sum + Number(d.remainingAmount), 0);
+  // Total debt should include both active and overdue debts
+  const totalActiveAmount = activeDebts.reduce(
+    (sum, d) => sum + Number(d.remainingAmount),
+    0
+  );
+  const totalOverdueAmount = overdueDebts.reduce(
+    (sum, d) => sum + Number(d.remainingAmount),
+    0
+  );
+  const totalDebt = totalActiveAmount + totalOverdueAmount;
 
   // Get debts due soon (within 7 days)
   const sevenDaysFromNow = new Date();
@@ -299,7 +309,7 @@ export async function getDebtsSummary(userId: string) {
     totalActiveDebts: activeDebts.length,
     totalOverdueDebts: overdueDebts.length,
     totalDebtAmount: totalDebt,
-    totalOverdueAmount: totalOverdue,
+    totalOverdueAmount: totalOverdueAmount,
     debtsDueSoon: dueSoon.length,
     upcomingDebts: dueSoon.map((d) => ({
       id: d.id,

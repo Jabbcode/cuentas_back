@@ -14,12 +14,13 @@ model User {
   name      String
   createdAt DateTime @default(now())
 
-  accounts      Account[]
-  categories    Category[]
-  transactions  Transaction[]
-  fixedExpenses FixedExpense[]
-  debts         Debt[]
-  debtPayments  DebtPayment[]
+  accounts               Account[]
+  categories             Category[]
+  transactions           Transaction[]
+  fixedExpenses          FixedExpense[]
+  debts                  Debt[]
+  debtPayments           DebtPayment[]
+  recurringDebtPayments  RecurringDebtPayment[]
 }
 
 model Account {
@@ -37,11 +38,12 @@ model Account {
   cutoffDay     Int?     // Statement closing day (1-31)
   paymentDueDay Int?     // Payment due day (1-31)
 
-  transactions       Transaction[]
-  fixedExpenses      FixedExpense[]
-  creditCardPayments CreditCardPayment[]
-  debtPayments       DebtPayment[]
-  createdAt          DateTime @default(now())
+  transactions           Transaction[]
+  fixedExpenses          FixedExpense[]
+  creditCardPayments     CreditCardPayment[]
+  debtPayments           DebtPayment[]
+  recurringDebtPayments  RecurringDebtPayment[]
+  createdAt              DateTime @default(now())
 
   @@index([userId])
 }
@@ -158,7 +160,8 @@ model Debt {
   status String @default("active") // "active" | "paid" | "overdue"
 
   // Payments
-  payments DebtPayment[]
+  payments               DebtPayment[]
+  recurringPayments      RecurringDebtPayment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,4 +198,40 @@ model DebtPayment {
   @@index([debtId])
   @@index([userId])
   @@index([paymentDate])
+}
+
+model RecurringDebtPayment {
+  id     String @id @default(uuid())
+  debtId String
+  debt   Debt   @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Payment configuration
+  amount    Decimal // Amount to pay each period
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // Recurrence configuration
+  frequency  String // "monthly" | "biweekly" | "weekly"
+  dayOfMonth Int?   // For monthly payments (1-31)
+  dayOfWeek  Int?   // For weekly payments (0-6, 0=Sunday)
+
+  // Status and tracking
+  isActive      Boolean   @default(true)
+  startDate     DateTime  @default(now())
+  endDate       DateTime? // Optional end date
+  lastProcessed DateTime? // Last time a payment was created
+  nextDueDate   DateTime  // Next scheduled payment date
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([debtId])
+  @@index([userId])
+  @@index([nextDueDate])
+  @@index([isActive])
 }

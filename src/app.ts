@@ -10,6 +10,7 @@ import fixedExpensesRoutes from './routes/fixed-expenses.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import creditCardsRoutes from './routes/credit-cards.routes.js';
 import debtsRoutes from './routes/debts.routes.js';
+import recurringDebtPaymentsRoutes from './routes/recurring-debt-payments.routes.js';
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api/fixed-expenses', fixedExpensesRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/credit-cards', creditCardsRoutes);
 app.use('/api/debts', debtsRoutes);
+app.use('/api/recurring-debt-payments', recurringDebtPaymentsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
