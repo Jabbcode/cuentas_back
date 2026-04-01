@@ -24,14 +24,15 @@ model User {
 }
 
 model Account {
-  id        String   @id @default(uuid())
-  name      String
-  type      String   // "cash", "bank", "credit_card"
-  balance   Decimal  @default(0)
-  currency  String   @default("EUR")
-  color     String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String   @id @default(uuid())
+  name           String
+  type           String   // "cash", "bank", "credit_card"
+  balance        Decimal  @default(0)
+  initialBalance Decimal  @default(0) // Starting balance when account was created
+  currency       String   @default("EUR")
+  color          String?
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Credit card specific fields (null if not credit card)
   creditLimit   Decimal? // Credit limit (e.g., 5000.00)

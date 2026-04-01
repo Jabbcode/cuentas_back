@@ -144,12 +144,16 @@ export async function getCreditCardStatement(accountId: string, userId: string):
     0
   );
 
+  // Calculate period end dates (one day before the next cutoff)
+  const closedPeriodEnd = new Date(lastCutoff);
+  closedPeriodEnd.setDate(closedPeriodEnd.getDate() - 1);
+
   // Check if closed period is paid
   const closedPeriodPayment = await prisma.creditCardPayment.findFirst({
     where: {
       accountId,
       periodStart: previousCutoff,
-      periodEnd: lastCutoff,
+      periodEnd: closedPeriodEnd,
     },
   });
 
@@ -157,8 +161,14 @@ export async function getCreditCardStatement(accountId: string, userId: string):
   const daysUntilDue = getDaysBetween(today, paymentDueDate);
   const daysUntilCutoff = getDaysBetween(today, nextCutoff);
 
+  // Calculate period end dates (one day before the next cutoff)
+  const currentPeriodEnd = new Date(nextCutoff);
+  currentPeriodEnd.setDate(currentPeriodEnd.getDate() - 1);
+
   const creditLimit = Number(account.creditLimit || 0);
-  const totalUsed = currentBalance + (closedPeriodPayment ? 0 : closedBalance);
+  // Use account balance directly as it reflects the actual debt after all payments
+  // Balance is negative when there's debt (expenses > payments)
+  const totalUsed = Math.abs(Number(account.balance));
   const available = creditLimit - totalUsed;
   const usagePercentage = creditLimit > 0 ? Math.round((totalUsed / creditLimit) * 100) : 0;
 
@@ -200,13 +210,6 @@ export async function getCreditCardStatement(accountId: string, userId: string):
       severity: 'info',
     });
   }
-
-  // Calculate period end dates (one day before the next cutoff)
-  const currentPeriodEnd = new Date(nextCutoff);
-  currentPeriodEnd.setDate(currentPeriodEnd.getDate() - 1);
-
-  const closedPeriodEnd = new Date(lastCutoff);
-  closedPeriodEnd.setDate(closedPeriodEnd.getDate() - 1);
 
   return {
     account,
@@ -310,52 +313,31 @@ export async function payCreditCardStatement(
 
   const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
 
-  // Create payment transaction (income to credit card)
-  const transaction = await prisma.transaction.create({
-    data: {
-      amount: data.amount,
-      type: 'income',
-      description: `Pago estado de cuenta ${statement.account.name}`,
-      date: paymentDate,
-      accountId: accountId,
-      categoryId: (await getOrCreatePaymentCategory(userId)).id,
-      userId,
-    },
-  });
+  // Import transaction service to create transactions properly
+  const { createTransaction } = await import('./transactions.service.js');
 
-  // Update credit card balance (reduce debt)
-  await prisma.account.update({
-    where: { id: accountId },
-    data: {
-      balance: {
-        decrement: data.amount,
-      },
-    },
-  });
+  // Create payment transaction (income to credit card)
+  // This automatically updates the credit card balance
+  const transaction = await createTransaction({
+    amount: data.amount,
+    type: 'income',
+    description: `Pago estado de cuenta ${statement.account.name}`,
+    date: paymentDate.toISOString(),
+    accountId: accountId,
+    categoryId: (await getOrCreatePaymentCategory(userId)).id,
+  }, userId);
 
   // If paying from another account, create expense transaction
+  // This automatically updates the payment account balance
   if (data.paymentAccountId !== accountId) {
-    await prisma.transaction.create({
-      data: {
-        amount: data.amount,
-        type: 'expense',
-        description: `Pago tarjeta ${statement.account.name}`,
-        date: paymentDate,
-        accountId: data.paymentAccountId,
-        categoryId: (await getOrCreatePaymentCategory(userId)).id,
-        userId,
-      },
-    });
-
-    // Update payment account balance
-    await prisma.account.update({
-      where: { id: data.paymentAccountId },
-      data: {
-        balance: {
-          decrement: data.amount,
-        },
-      },
-    });
+    await createTransaction({
+      amount: data.amount,
+      type: 'expense',
+      description: `Pago tarjeta ${statement.account.name}`,
+      date: paymentDate.toISOString(),
+      accountId: data.paymentAccountId,
+      categoryId: (await getOrCreatePaymentCategory(userId)).id,
+    }, userId);
   }
 
   // Record payment
