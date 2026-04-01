@@ -76,6 +76,13 @@ function getDaysBetween(from: Date, to: Date): number {
 }
 
 /**
+ * Normalize date to midnight UTC to avoid timezone issues
+ */
+function normalizeToUTC(date: Date): Date {
+  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0));
+}
+
+/**
  * Get credit card statement with current and closed periods
  */
 export async function getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement> {
@@ -97,6 +104,9 @@ export async function getCreditCardStatement(accountId: string, userId: string):
   // Calculate previous cutoff for closed period
   const previousCutoff = new Date(lastCutoff);
   previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+
+  // Normalize dates to UTC midnight for consistent comparisons
+  const previousCutoffUTC = normalizeToUTC(previousCutoff);
 
   // Get transactions for current period (last cutoff to now)
   const currentPeriodTransactions = await prisma.transaction.findMany({
@@ -148,12 +158,15 @@ export async function getCreditCardStatement(accountId: string, userId: string):
   const closedPeriodEnd = new Date(lastCutoff);
   closedPeriodEnd.setDate(closedPeriodEnd.getDate() - 1);
 
-  // Check if closed period is paid
+  // Normalize to UTC midnight for consistent comparisons
+  const closedPeriodEndUTC = normalizeToUTC(closedPeriodEnd);
+
+  // Check if closed period is paid (use UTC normalized dates)
   const closedPeriodPayment = await prisma.creditCardPayment.findFirst({
     where: {
       accountId,
-      periodStart: previousCutoff,
-      periodEnd: closedPeriodEnd,
+      periodStart: previousCutoffUTC,
+      periodEnd: closedPeriodEndUTC,
     },
   });
 
