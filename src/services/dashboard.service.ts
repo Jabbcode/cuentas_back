@@ -8,7 +8,7 @@ export async function getSummary(userId: string) {
   const [accounts, monthlyTransactions] = await Promise.all([
     prisma.account.findMany({
       where: { userId },
-      select: { balance: true },
+      select: { balance: true, type: true, creditLimit: true },
     }),
     prisma.transaction.findMany({
       where: {
@@ -22,7 +22,16 @@ export async function getSummary(userId: string) {
     }),
   ]);
 
-  const totalBalance = accounts.reduce((sum, acc) => sum + Number(acc.balance), 0);
+  const totalBalance = accounts.reduce((sum, acc) => {
+    // For credit cards, add available credit (limit - used)
+    if (acc.type === 'credit_card' && acc.creditLimit) {
+      const used = Math.abs(Number(acc.balance));
+      const available = Number(acc.creditLimit) - used;
+      return sum + available;
+    }
+    // For other accounts, add balance normally
+    return sum + Number(acc.balance);
+  }, 0);
 
   const monthlyIncome = monthlyTransactions
     .filter((t) => t.type === 'income')
