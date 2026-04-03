@@ -8,6 +8,7 @@ export const createTransactionSchema = z.object({
   accountId: z.string().uuid('ID de cuenta inválido'),
   categoryId: z.string().uuid('ID de categoría inválido'),
   fixedExpenseId: z.string().uuid().optional(),
+  imageHash: z.string().optional(), // For receipt scanning
 });
 
 export const updateTransactionSchema = createTransactionSchema.partial();

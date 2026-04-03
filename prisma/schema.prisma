@@ -70,6 +70,7 @@ model Transaction {
   type        String   // "expense" | "income"
   description String?
   date        DateTime @default(now())
+  imageHash   String?  // SHA256 hash of receipt image for duplicate detection
 
   accountId  String
   account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -91,6 +92,7 @@ model Transaction {
   @@index([accountId])
   @@index([categoryId])
   @@index([date])
+  @@index([imageHash])
 }
 
 model FixedExpense {
