@@ -1,3 +1,9 @@
 node_modules
 dist
 .env
+
+# Documentation
+../docs
+
+# Tesseract language data
+*.traineddata
