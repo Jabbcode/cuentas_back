@@ -3,7 +3,7 @@ dist
 .env
 
 # Documentation
-../docs
+docs
 
 # Tesseract language data
 *.traineddata
