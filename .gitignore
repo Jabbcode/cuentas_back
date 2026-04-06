@@ -5,5 +5,8 @@ dist
 # Documentation
 docs
 
+# Scripts (keep local only)
+src/scripts/
+
 # Tesseract language data
 *.traineddata

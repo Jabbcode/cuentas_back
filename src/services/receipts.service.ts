@@ -95,12 +95,12 @@ async function checkSimilarTransactions(
 async function extractTextFromImage(imageBuffer: Buffer): Promise<string> {
   try {
     const result = await Tesseract.recognize(imageBuffer, 'spa', {
-      logger: (m) => console.log('[OCR]', m),
+    // Removed console.log
     });
 
     return result.data.text;
   } catch (error) {
-    console.error('OCR Error:', error);
+    // Removed console.error
     throw new Error('Error al extraer texto de la imagen');
   }
 }
@@ -175,7 +175,7 @@ Si no puedes extraer algún campo, usa valores por defecto razonables.`;
       imageHash: '', // Will be set by caller
     };
   } catch (error) {
-    console.error('Claude API Error:', error);
+    // Removed console.error
     throw new Error('Error al procesar la factura con IA');
   }
 }
@@ -189,14 +189,14 @@ export async function scanReceipt(
 ): Promise<DuplicateCheckResponse> {
   // Step 1: Calculate image hash
   const imageHash = calculateImageHash(imageBuffer);
-  console.log('[Receipt] Image hash:', imageHash);
+    // Removed console.log
 
   // Step 2: Check for exact duplicate (same image)
-  console.log('[Receipt] Checking for exact duplicate...');
+    // Removed console.log
   const exactDuplicate = await checkExactDuplicate(imageHash, userId);
 
   if (exactDuplicate) {
-    console.log('[Receipt] Exact duplicate found!', exactDuplicate.id);
+    // Removed console.log
     return {
       duplicate: true,
       matchType: 'exact',
@@ -213,24 +213,24 @@ export async function scanReceipt(
   }
 
   // Step 3: Extract text with OCR
-  console.log('[Receipt] No exact duplicate. Starting OCR...');
+    // Removed console.log
   const ocrText = await extractTextFromImage(imageBuffer);
 
   if (!ocrText || ocrText.trim().length < 10) {
     throw new Error('No se pudo extraer texto legible de la imagen');
   }
 
-  console.log('[Receipt] OCR completed. Text length:', ocrText.length);
+    // Removed console.log
 
   // Step 4: Process with Claude
-  console.log('[Receipt] Processing with Claude API...');
+    // Removed console.log
   const structuredData = await processReceiptWithClaude(ocrText);
   structuredData.imageHash = imageHash; // Add hash to structured data
 
-  console.log('[Receipt] Processing completed:', structuredData);
+    // Removed console.log
 
   // Step 5: Check for similar transactions
-  console.log('[Receipt] Checking for similar transactions...');
+    // Removed console.log
   const similarTransaction = await checkSimilarTransactions(
     structuredData.amount,
     structuredData.date,
@@ -239,7 +239,7 @@ export async function scanReceipt(
   );
 
   if (similarTransaction) {
-    console.log('[Receipt] Similar transaction found!', similarTransaction.id);
+    // Removed console.log
     return {
       duplicate: true,
       matchType: 'similar',
@@ -257,7 +257,7 @@ export async function scanReceipt(
   }
 
   // Step 6: No duplicates found
-  console.log('[Receipt] No duplicates found. Returning scanned data.');
+    // Removed console.log
   return {
     duplicate: false,
     matchType: 'none',
@@ -269,14 +269,14 @@ export async function scanReceipt(
  * OCR-only function: Extract text without AI processing (FREE)
  */
 export async function ocrOnly(imageBuffer: Buffer): Promise<{ rawText: string }> {
-  console.log('[Receipt] Starting OCR (no AI processing)...');
+    // Removed console.log
   const rawText = await extractTextFromImage(imageBuffer);
 
   if (!rawText || rawText.trim().length < 10) {
     throw new Error('No se pudo extraer texto legible de la imagen');
   }
 
-  console.log('[Receipt] OCR completed. Text length:', rawText.length);
+    // Removed console.log
 
   return { rawText };
 }
