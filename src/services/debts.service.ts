@@ -272,6 +272,61 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
     return { debt: updatedDebt, payment, transaction };
   });
 
+  // Mark associated fixed expense as paid (if exists)
+  const recurringPayment = await prisma.recurringDebtPayment.findFirst({
+    where: {
+      debtId: debt.id,
+      isActive: true,
+      frequency: 'monthly',
+    },
+  });
+
+  if (recurringPayment) {
+    const fixedExpense = await prisma.fixedExpense.findFirst({
+      where: {
+        userId,
+        recurringDebtPaymentId: recurringPayment.id,
+        isActive: true,
+      },
+    });
+
+    if (fixedExpense) {
+      const { createTransaction } = await import('./transactions.service.js');
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+      // Check if there's already a payment this month
+      const existingPayment = await prisma.transaction.findFirst({
+        where: {
+          fixedExpenseId: fixedExpense.id,
+          date: {
+            gte: startOfMonth,
+            lte: endOfMonth,
+          },
+        },
+      });
+
+      // Only create if there's no payment this month
+      if (!existingPayment) {
+        try {
+          await createTransaction({
+            amount: data.amount,
+            type: 'expense',
+            description: `Pago: ${fixedExpense.name}`,
+            date: new Date().toISOString(),
+            accountId: data.accountId,
+            categoryId: fixedExpense.categoryId,
+            fixedExpenseId: fixedExpense.id,
+          }, userId);
+        } catch (error) {
+          // Log error but don't fail the whole transaction
+          console.error('Error creating fixed expense transaction:', error);
+        }
+      }
+    }
+  }
+
   return result;
 }
 

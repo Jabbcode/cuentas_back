@@ -133,6 +133,33 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
     }
   }
 
+  // If this is a recurring debt payment fixed expense, also record the payment in the debt
+  if (fixedExpense.recurringDebtPaymentId) {
+    const { payDebt } = await import('./debts.service.js');
+
+    try {
+      // Get the recurring payment to find the debtId
+      const recurringPayment = await prisma.recurringDebtPayment.findUnique({
+        where: { id: fixedExpense.recurringDebtPaymentId },
+      });
+
+      if (recurringPayment) {
+        await payDebt(
+          recurringPayment.debtId,
+          userId,
+          {
+            amount,
+            accountId: fixedExpense.accountId,
+            notes: `Pago automático desde gasto fijo`,
+          }
+        );
+      }
+    } catch (error) {
+      // Log error but don't fail the whole transaction
+      console.error('Error registering debt payment:', error);
+    }
+  }
+
   return transaction;
 }
 
@@ -164,6 +191,9 @@ export async function reorderFixedExpenses(userId: string, itemOrders: { id: str
 export async function getFixedExpensesSummary(userId: string) {
   // Sync credit card fixed expenses before getting summary
   await syncCreditCardFixedExpenses(userId);
+
+  // Sync recurring debt payment fixed expenses
+  await syncRecurringDebtPaymentFixedExpenses(userId);
 
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -324,6 +354,112 @@ async function syncCreditCardFixedExpenses(userId: string) {
     } catch (error) {
       // Skip this card if there's an error (e.g., dates not configured)
       console.error(`Error syncing fixed expense for card ${card.name}:`, error);
+    }
+  }
+}
+
+/**
+ * Sync recurring debt payment fixed expenses
+ * Creates or updates fixed expenses for monthly recurring debt payments
+ */
+async function syncRecurringDebtPaymentFixedExpenses(userId: string) {
+  // Get all active monthly recurring debt payments
+  const recurringPayments = await prisma.recurringDebtPayment.findMany({
+    where: {
+      userId,
+      isActive: true,
+      frequency: 'monthly',
+    },
+    include: {
+      debt: {
+        select: {
+          id: true,
+          creditor: true,
+          description: true,
+          status: true,
+        },
+      },
+    },
+  });
+
+  // Get or create category for debt payments
+  let category = await prisma.category.findFirst({
+    where: {
+      userId,
+      name: 'Pago de Deuda',
+      type: 'expense',
+    },
+  });
+
+  if (!category) {
+    category = await prisma.category.create({
+      data: {
+        name: 'Pago de Deuda',
+        type: 'expense',
+        icon: '💰',
+        color: '#F59E0B',
+        userId,
+      },
+    });
+  }
+
+  for (const payment of recurringPayments) {
+    try {
+      // Skip if debt is already paid
+      if (payment.debt.status === 'paid') {
+        // Deactivate fixed expense if exists
+        const existingFixedExpense = await prisma.fixedExpense.findFirst({
+          where: {
+            userId,
+            recurringDebtPaymentId: payment.id,
+          },
+        });
+
+        if (existingFixedExpense) {
+          await prisma.fixedExpense.update({
+            where: { id: existingFixedExpense.id },
+            data: { isActive: false },
+          });
+        }
+        continue;
+      }
+
+      // Find existing fixed expense for this recurring payment
+      const existingFixedExpense = await prisma.fixedExpense.findFirst({
+        where: {
+          userId,
+          recurringDebtPaymentId: payment.id,
+        },
+      });
+
+      const fixedExpenseData = {
+        name: `Pago Deuda: ${payment.debt.creditor}${payment.debt.description ? ` - ${payment.debt.description}` : ''}`,
+        amount: payment.amount,
+        type: 'expense' as const,
+        dueDay: payment.dayOfMonth!,
+        isActive: true,
+        accountId: payment.accountId,
+        categoryId: category.id,
+      };
+
+      if (existingFixedExpense) {
+        // Update existing fixed expense
+        await prisma.fixedExpense.update({
+          where: { id: existingFixedExpense.id },
+          data: fixedExpenseData,
+        });
+      } else {
+        // Create new fixed expense
+        await prisma.fixedExpense.create({
+          data: {
+            ...fixedExpenseData,
+            recurringDebtPaymentId: payment.id,
+            userId,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(`Error syncing fixed expense for debt ${payment.debt.creditor}:`, error);
     }
   }
 }

@@ -121,6 +121,10 @@ model FixedExpense {
   creditCardAccountId String?
   creditCardAccount   Account? @relation("CreditCardFixedExpense", fields: [creditCardAccountId], references: [id], onDelete: Cascade)
 
+  // Recurring debt payment linkage (if this is a debt payment fixed expense)
+  recurringDebtPaymentId String?                @unique
+  recurringDebtPayment   RecurringDebtPayment? @relation(fields: [recurringDebtPaymentId], references: [id], onDelete: Cascade)
+
   transactions Transaction[]
 
   createdAt DateTime @default(now())
@@ -129,6 +133,7 @@ model FixedExpense {
   @@index([userId])
   @@index([userId, type, sortOrder])
   @@index([creditCardAccountId])
+  @@index([recurringDebtPaymentId])
 }
 
 model CreditCardPayment {
@@ -239,6 +244,8 @@ model RecurringDebtPayment {
   nextDueDate   DateTime  // Next scheduled payment date
 
   notes String?
+
+  fixedExpense FixedExpense?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
