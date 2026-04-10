@@ -365,6 +365,46 @@ export async function payCreditCardStatement(
     },
   });
 
+  // Mark associated fixed expense as paid (if exists)
+  const fixedExpense = await prisma.fixedExpense.findFirst({
+    where: {
+      userId,
+      creditCardAccountId: accountId,
+      isActive: true,
+    },
+  });
+
+  if (fixedExpense) {
+    // Create transaction for the fixed expense
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Check if there's already a payment this month
+    const existingPayment = await prisma.transaction.findFirst({
+      where: {
+        fixedExpenseId: fixedExpense.id,
+        date: {
+          gte: startOfMonth,
+          lte: endOfMonth,
+        },
+      },
+    });
+
+    // Only create if there's no payment this month
+    if (!existingPayment) {
+      await createTransaction({
+        amount: data.amount,
+        type: 'expense',
+        description: `Pago: ${fixedExpense.name}`,
+        date: paymentDate.toISOString(),
+        accountId: data.paymentAccountId,
+        categoryId: category.id,
+        fixedExpenseId: fixedExpense.id,
+      }, userId);
+    }
+  }
+
   return payment;
 }
 

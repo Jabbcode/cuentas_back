@@ -10,6 +10,7 @@ export const createAccountSchema = z.object({
   creditLimit: z.number().positive().optional(),
   cutoffDay: z.number().int().min(1).max(31).optional(),
   paymentDueDay: z.number().int().min(1).max(31).optional(),
+  paymentAccountId: z.string().uuid().optional().nullable(),
 });
 
 export const updateAccountSchema = createAccountSchema.partial();

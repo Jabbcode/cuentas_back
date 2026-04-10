@@ -111,6 +111,28 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
     userId
   );
 
+  // If this is a credit card fixed expense, also record the payment in the credit card
+  if (fixedExpense.creditCardAccountId) {
+    const { payCreditCardStatement } = await import('./credit-cards.service.js');
+
+    try {
+      await payCreditCardStatement(
+        fixedExpense.creditCardAccountId,
+        userId,
+        {
+          amount,
+          paymentAccountId: fixedExpense.accountId,
+          paymentDate: date,
+        }
+      );
+    } catch (error) {
+      // If payment already exists, ignore error
+      if (!(error instanceof Error && error.message.includes('ya está pagado'))) {
+        throw error;
+      }
+    }
+  }
+
   return transaction;
 }
 
@@ -140,6 +162,9 @@ export async function reorderFixedExpenses(userId: string, itemOrders: { id: str
 }
 
 export async function getFixedExpensesSummary(userId: string) {
+  // Sync credit card fixed expenses before getting summary
+  await syncCreditCardFixedExpenses(userId);
+
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
@@ -190,4 +215,115 @@ export async function getFixedExpensesSummary(userId: string) {
       transactions: undefined,
     })),
   };
+}
+
+/**
+ * Sync credit card fixed expenses
+ * Creates or updates fixed expenses for credit cards with pending payments
+ */
+async function syncCreditCardFixedExpenses(userId: string) {
+  const { getCreditCardStatement } = await import('./credit-cards.service.js');
+
+  // Get all credit cards with payment account configured
+  const creditCards = await prisma.account.findMany({
+    where: {
+      userId,
+      type: 'credit_card',
+      paymentAccountId: { not: null },
+      cutoffDay: { not: null },
+      paymentDueDay: { not: null },
+    },
+  });
+
+  // Get or create category for credit card payments
+  let category = await prisma.category.findFirst({
+    where: {
+      userId,
+      name: 'Pago de Tarjeta',
+      type: 'expense',
+    },
+  });
+
+  if (!category) {
+    category = await prisma.category.create({
+      data: {
+        name: 'Pago de Tarjeta',
+        type: 'expense',
+        icon: '💳',
+        color: '#8B5CF6',
+        userId,
+      },
+    });
+  }
+
+  for (const card of creditCards) {
+    try {
+      const statement = await getCreditCardStatement(card.id, userId);
+      const { closedPeriod, currentPeriod } = statement;
+
+      // Find existing fixed expense for this credit card
+      const existingFixedExpense = await prisma.fixedExpense.findFirst({
+        where: {
+          userId,
+          creditCardAccountId: card.id,
+        },
+      });
+
+      // Determine which amount to use (Option C):
+      // 1. If there's a closed period pending payment -> use that (urgent)
+      // 2. Otherwise, if current period has balance -> use that (projection)
+      let amountToUse = 0;
+      let shouldShow = false;
+
+      if (closedPeriod.balance > 0 && !closedPeriod.isPaid) {
+        // Urgent: closed period needs to be paid
+        amountToUse = closedPeriod.balance;
+        shouldShow = true;
+      } else if (currentPeriod.balance > 0) {
+        // Projection: current period accumulating
+        amountToUse = currentPeriod.balance;
+        shouldShow = true;
+      }
+
+      if (shouldShow) {
+        if (existingFixedExpense) {
+          // Update existing fixed expense
+          await prisma.fixedExpense.update({
+            where: { id: existingFixedExpense.id },
+            data: {
+              amount: amountToUse,
+              dueDay: card.paymentDueDay!,
+              isActive: true,
+              accountId: card.paymentAccountId!,
+              categoryId: category.id,
+            },
+          });
+        } else {
+          // Create new fixed expense
+          await prisma.fixedExpense.create({
+            data: {
+              name: `Pago Tarjeta ${card.name}`,
+              amount: amountToUse,
+              type: 'expense',
+              dueDay: card.paymentDueDay!,
+              isActive: true,
+              accountId: card.paymentAccountId!,
+              categoryId: category.id,
+              creditCardAccountId: card.id,
+              userId,
+            },
+          });
+        }
+      } else if (existingFixedExpense) {
+        // Deactivate fixed expense if no balance
+        await prisma.fixedExpense.update({
+          where: { id: existingFixedExpense.id },
+          data: { isActive: false },
+        });
+      }
+    } catch (error) {
+      // Skip this card if there's an error (e.g., dates not configured)
+      console.error(`Error syncing fixed expense for card ${card.name}:`, error);
+    }
+  }
 }
