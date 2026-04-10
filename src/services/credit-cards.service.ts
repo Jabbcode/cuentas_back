@@ -399,7 +399,7 @@ export async function payCreditCardStatement(
         description: `Pago: ${fixedExpense.name}`,
         date: paymentDate.toISOString(),
         accountId: data.paymentAccountId,
-        categoryId: category.id,
+        categoryId: fixedExpense.categoryId,
         fixedExpenseId: fixedExpense.id,
       }, userId);
     }
