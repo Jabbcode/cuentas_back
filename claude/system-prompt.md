@@ -195,21 +195,95 @@ Cuando trabajes en una tarea de Notion:
 - ✅ NUNCA confíes en parámetros de usuario para userId
 - ❌ NUNCA devuelvas datos sin filtrar por usuario
 
-### 6. **🚫 NUNCA PUSHEAR A MAIN DIRECTAMENTE - RESTRICCIÓN CRÍTICA DE GITHUB**
-- ❌ **PROHIBIDO ABSOLUTO** pushear código directamente a main
-- ❌ **PROHIBIDO ABSOLUTO** mergear sin una PR en GitHub
-- ❌ **PROHIBIDO ABSOLUTO** hacer cambios en main sin aprobación EXPLÍCITA del usuario
-- ✅ **SIEMPRE OBLIGATORIO** crear rama feature en GitHub
-- ✅ **SIEMPRE OBLIGATORIO** crear Pull Request en GitHub
-- ✅ **SIEMPRE OBLIGATORIO** esperar confirmación EXPLÍCITA del usuario
-- ✅ **SOLO Y ÚNICAMENTE** si usuario dice "pushea a main" O "mergea a main" (EXPLÍCITO), entonces mergear a main
-- ✅ El usuario DEBE ser EXPLÍCITO: "pushea a main" o "mergea a main" (no acepta "OK", "está bien", "adelante")
-- ✅ NUNCA asumir que el usuario quiere que se pushee a main
-- ✅ Si hay duda, SIEMPRE preguntar antes de hacer merge
+### 6. **🚫 VERIFICACIÓN OBLIGATORIA DE TYPESCRIPT - CRÍTICO ANTES DE PR**
+- ❌ **PROHIBIDO** reportar "✅ IMPLEMENTADO" si hay errores TypeScript
+- ❌ **PROHIBIDO** crear PR si `npm run build` falla
+- ❌ **PROHIBIDO** mergear a main si hay TS errors
+- ✅ **SIEMPRE OBLIGATORIO** ejecutar `npx tsc --noEmit` localmente ANTES de reportar
+- ✅ **SIEMPRE OBLIGATORIO** ejecutar `npm run build` localmente ANTES de crear PR
+- ✅ **SIEMPRE** revisar errors específicos:
+  - Type mismatch (TS2367, TS2322): number vs Decimal, string vs number, etc
+  - Missing properties on types
+  - Incorrect function signatures
+  - Null/undefined issues
+  - Import/export errors
+- ✅ Si encuentras error TypeScript: REPORTA el error exacto + FIX requerido
+- ✅ NO avances a PR hasta que `tsc` compile sin errors
+- ✅ Mensaje antes de PR: "✅ BUILD SUCCESSFUL: No TypeScript errors detected"
+- ✅ **CRÍTICO BACKEND:** También verifica que userId filtering está presente en TODAS las queries
+
+**Cuando encuentres un error de tipo como en el ejemplo:**
+```
+src/services/fixed-expenses.service.ts(92,40): error TS2367: 
+This comparison appears to be unintentional because the types 'number' 
+and 'Decimal' have no overlap.
+```
+
+**Debes:**
+1. ⚠️ REPORTAR el error exacto
+2. 📝 IDENTIFICAR la causa (ej: `Decimal` vs `number`)
+3. 🔧 PROPONER la solución (ej: convertir con `.toNumber()`)
+4. ✅ APLICAR el fix
+5. 🔍 VERIFICAR que `tsc` compila sin errores
+6. ✅ SOLO ENTONCES reportar "BUILD SUCCESSFUL"
 
 ---
 
-## 🔄 FLUJO DE TRABAJO MEJORADO (3 FASES)
+## ✅ CHECKLIST DE VERIFICACIÓN PRE-PR (OBLIGATORIO)
+
+**Antes de crear ANY PR, SIEMPRE ejecuta este checklist:**
+
+### 1. **TypeScript Compilation**
+```bash
+npx tsc --noEmit
+```
+- ✅ DEBE retornar 0 errors
+- ❌ Si hay errors: REPÓRTALOS, FIXÉALOS, repite hasta compilar
+
+### 2. **Build Test**
+```bash
+npm run build
+```
+- ✅ DEBE completar sin errores
+- ❌ Si falla: REPÓRTALOS, identifica la causa, FIXEA, repite
+
+### 3. **Code Quality**
+- ✅ No hay `// @ts-ignore` o `any` tipos
+- ✅ Imports están completos y correctos
+- ✅ No hay variables sin usar
+- ✅ Funciones tienen tipos correctos
+- ✅ No hay type mismatches (number vs Decimal, string vs number, etc)
+
+### 4. **Seguridad - userId Filtering (CRÍTICO)**
+- ✅ TODAS las queries filtran por userId
+- ✅ userId viene de req.user!.userId (JWT token)
+- ✅ NO confiar en parámetros del cliente para userId
+- ✅ No hay queries sin .where({ userId })
+
+### 5. **Formato y Estilo**
+- ✅ Sigue conventions.md del proyecto
+- ✅ Servicios y controllers documentados
+- ✅ Manejo de errores presente
+- ✅ Validación con Zod presente
+- ✅ No hay console.log() en código
+
+### 6. **Verificación Final**
+- ✅ `npm run build` pasa ✓
+- ✅ No hay TypeScript errors ✓
+- ✅ userId filtering en todas las queries ✓
+- ✅ Acceptance criteria cubiertos ✓
+
+**Mensaje de PR:**
+```
+✅ BUILD SUCCESSFUL
+- TypeScript: 0 errors
+- Build: Passed
+- Security: userId filtering verified
+- Code quality: OK
+- Ready for review
+```
+
+---
 
 ### FASE 1: ANÁLISIS Y PROPUESTA
 ```
