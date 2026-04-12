@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import { CreateFixedExpenseInput, UpdateFixedExpenseInput, PayFixedExpenseInput } from '../schemas/fixed-expense.schema.js';
 import { createTransaction } from './transactions.service.js';
+import { calculateNextDueDate } from './recurring-debt-payments.service.js';
 
 export async function getFixedExpenses(userId: string, activeOnly = false) {
   return prisma.fixedExpense.findMany({
@@ -72,6 +73,48 @@ export async function updateFixedExpense(id: string, data: UpdateFixedExpenseInp
       },
       data: transactionUpdates,
     });
+  }
+
+  // Si este fixed expense está asociado a un recurring debt payment, sincronizar cambios
+  if (existingExpense.recurringDebtPaymentId) {
+    // Obtener el recurring payment actual para calcular nextDueDate
+    const recurringPayment = await prisma.recurringDebtPayment.findUnique({
+      where: { id: existingExpense.recurringDebtPaymentId },
+    });
+
+    if (recurringPayment) {
+      const recurringPaymentUpdates: any = {};
+
+      if (data.dueDay !== undefined && data.dueDay !== existingExpense.dueDay) {
+        recurringPaymentUpdates.dayOfMonth = data.dueDay;
+      }
+
+      if (data.amount !== undefined && data.amount !== existingExpense.amount) {
+        recurringPaymentUpdates.amount = data.amount;
+      }
+
+      if (data.accountId && data.accountId !== existingExpense.accountId) {
+        recurringPaymentUpdates.accountId = data.accountId;
+      }
+
+      // Recalcular nextDueDate si cambia dayOfMonth
+      if (recurringPaymentUpdates.dayOfMonth !== undefined) {
+        recurringPaymentUpdates.nextDueDate = calculateNextDueDate(
+          recurringPayment.frequency,
+          recurringPaymentUpdates.dayOfMonth,
+          recurringPayment.dayOfWeek,
+          new Date()
+        );
+      }
+
+      // Actualizar el recurring debt payment si hay cambios
+      if (Object.keys(recurringPaymentUpdates).length > 0) {
+        await prisma.recurringDebtPayment.update({
+          where: { id: existingExpense.recurringDebtPaymentId },
+          data: recurringPaymentUpdates,
+        });
+      }
+    }
   }
 
   return prisma.fixedExpense.update({
