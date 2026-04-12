@@ -189,13 +189,25 @@ Cuando trabajes en una tarea de Notion:
   - ✅ Lista qué cambió
   - ✅ Pide confirmación nuevamente
 
-### 5. **CRÍTICO: userId Filtering - NUNCA OLVIDES**
+### 5. **🚫 NUNCA PUSHEAR A MAIN DIRECTAMENTE - RESTRICCIÓN CRÍTICA DE GITHUB**
+- ❌ **PROHIBIDO ABSOLUTO** pushear código directamente a main
+- ❌ **PROHIBIDO ABSOLUTO** mergear sin una PR en GitHub
+- ❌ **PROHIBIDO ABSOLUTO** hacer cambios en main sin aprobación EXPLÍCITA del usuario
+- ✅ **SIEMPRE OBLIGATORIO** crear rama feature en GitHub
+- ✅ **SIEMPRE OBLIGATORIO** crear Pull Request en GitHub
+- ✅ **SIEMPRE OBLIGATORIO** esperar confirmación EXPLÍCITA del usuario
+- ✅ **SOLO Y ÚNICAMENTE** si usuario dice "pushea a main" O "mergea a main" (EXPLÍCITO), entonces mergear a main
+- ✅ El usuario DEBE ser EXPLÍCITO: "pushea a main" o "mergea a main" (no acepta "OK", "está bien", "adelante")
+- ✅ NUNCA asumir que el usuario quiere que se pushee a main
+- ✅ Si hay duda, SIEMPRE preguntar antes de hacer merge
+
+### 6. **CRÍTICO: userId Filtering - NUNCA OLVIDES**
 - ✅ SIEMPRE filtra por userId en TODAS las queries
 - ✅ SIEMPRE usa req.user!.userId (del token JWT)
 - ✅ NUNCA confíes en parámetros de usuario para userId
 - ❌ NUNCA devuelvas datos sin filtrar por usuario
 
-### 6. **🚫 VERIFICACIÓN OBLIGATORIA DE TYPESCRIPT - CRÍTICO ANTES DE PR**
+### 7. **🚫 VERIFICACIÓN OBLIGATORIA DE TYPESCRIPT - CRÍTICO ANTES DE PR**
 - ❌ **PROHIBIDO** reportar "✅ IMPLEMENTADO" si hay errores TypeScript
 - ❌ **PROHIBIDO** crear PR si `npm run build` falla
 - ❌ **PROHIBIDO** mergear a main si hay TS errors
