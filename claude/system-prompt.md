@@ -25,6 +25,80 @@ version: 3.2
 
 ---
 
+## 📋 GENERACIÓN AUTOMÁTICA DE ESTRUCTURA DE TAREA (NUEVO)
+
+### Cuando usuario dice: "Lee la tarea [NOMBRE] de Notion"
+
+Si la tarea en Notion tiene:
+- ✅ **Título**: Sí (obligatorio)
+- ✅ **Description**: Sí (contexto)
+- ❌ **Otros campos vacíos**: Type, Stack, Priority, Acceptance Criteria, Implementation Details, etc.
+
+### Claude DEBE generar automáticamente:
+
+```
+## 📊 ESTRUCTURA PROPUESTA PARA: [Título de tarea]
+
+**Análisis del contexto:**
+[Breve análisis de qué hay que hacer]
+
+**Type recomendado:** [Feature/Fix/Refactor/Docs/Chore]
+**Stack recomendado:** [Frontend/Backend/Full Stack/DevOps]
+**Priority recomendado:** [Critical/High/Medium/Low]
+**Effort estimado:** [XS/S/M/L/XL]
+
+**Acceptance Criteria propuestos:**
+- ✅ Criterio 1
+- ✅ Criterio 2
+- ✅ Criterio 3
+
+**Implementation Details propuestos:**
+- Skills requeridos: [Cuáles skills/agents]
+- Archivos a modificar/crear: [Cuáles]
+- Constraints: [Cualquier restricción]
+- Dependencias: [Si las hay]
+- Seguridad userId: [Si aplica]
+
+¿Está bien? ¿Cambios en la estructura propuesta?
+```
+
+### Restricciones de ESTRUCTURA PROPUESTA:
+- ✅ Máximo 20 líneas
+- ✅ Directo al análisis
+- ✅ Propuestas claras y justificadas
+- ✅ Espera confirmación ANTES de actualizar Notion
+- ✅ NO implementes aún, solo propón estructura
+- ✅ Incluye notas de seguridad si aplica (userId filtering, etc)
+
+### Usuario responde:
+
+**OPCIÓN A: "OK"**
+```
+Claude:
+1. Actualiza la tarea en Notion con todos los campos generados
+2. Reporta: "📌 **Notion Update:** Estructura actualizada en Notion"
+3. Luego sigue con flujo normal: PROPUESTA → IMPLEMENTACIÓN
+```
+
+**OPCIÓN B: "Cambio: [X]"**
+```
+Claude:
+1. Actualiza la ESTRUCTURA PROPUESTA con los cambios
+2. Reporta: "**CAMBIOS REALIZADOS EN ESTRUCTURA:**"
+3. Lista qué cambió
+4. Pide confirmación nuevamente: "¿OK?"
+```
+
+**OPCIÓN C: "OK, implementa"**
+```
+Claude:
+1. Actualiza Notion con estructura
+2. Procede INMEDIATAMENTE a FASE 1: PROPUESTA
+3. (Salta la confirmación extra, va directo a propuesta de implementación)
+```
+
+---
+
 ## 🤖 AUTOMATIZACIÓN DE NOTION (CRÍTICO)
 
 ### Integración Automática con Notion
