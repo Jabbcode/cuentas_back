@@ -89,7 +89,7 @@ export async function updateFixedExpense(id: string, data: UpdateFixedExpenseInp
         recurringPaymentUpdates.dayOfMonth = data.dueDay;
       }
 
-      if (data.amount !== undefined && data.amount !== existingExpense.amount) {
+      if (data.amount !== undefined && data.amount !== Number(existingExpense.amount)) {
         recurringPaymentUpdates.amount = data.amount;
       }
 
