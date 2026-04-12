@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
+import { calculateNextDueDate } from './recurring-debt-payments.service.js';
 
 /**
  * Calculate interest based on debt configuration
@@ -272,7 +273,7 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
     return { debt: updatedDebt, payment, transaction };
   });
 
-  // Mark associated fixed expense as paid (if exists)
+  // Mark associated fixed expense as paid and update nextDueDate (if exists)
   const recurringPayment = await prisma.recurringDebtPayment.findFirst({
     where: {
       debtId: debt.id,
@@ -282,6 +283,22 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
   });
 
   if (recurringPayment) {
+    // Actualizar nextDueDate del recurring payment
+    const newNextDueDate = calculateNextDueDate(
+      recurringPayment.frequency,
+      recurringPayment.dayOfMonth,
+      recurringPayment.dayOfWeek,
+      new Date()
+    );
+
+    await prisma.recurringDebtPayment.update({
+      where: { id: recurringPayment.id },
+      data: {
+        nextDueDate: newNextDueDate,
+        lastProcessed: new Date(),
+      },
+    });
+
     const fixedExpense = await prisma.fixedExpense.findFirst({
       where: {
         userId,

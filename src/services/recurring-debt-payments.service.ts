@@ -8,18 +8,26 @@ import * as debtsService from './debts.service.js';
 /**
  * Calculate the next due date based on frequency and current date
  */
-function calculateNextDueDate(
+export function calculateNextDueDate(
   frequency: string,
   dayOfMonth: number | null,
   dayOfWeek: number | null,
   fromDate: Date = new Date()
 ): Date {
-  const nextDate = new Date(fromDate);
+  const today = new Date(fromDate);
+  today.setHours(0, 0, 0, 0);
+  const nextDate = new Date(today);
 
   if (frequency === 'monthly') {
     // Monthly: next occurrence of dayOfMonth
-    nextDate.setMonth(nextDate.getMonth() + 1);
-    nextDate.setDate(dayOfMonth || 1);
+    const targetDay = dayOfMonth || 1;
+    nextDate.setDate(targetDay);
+
+    // Si la fecha ya pasó este mes, ir al próximo mes
+    if (nextDate <= today) {
+      nextDate.setMonth(nextDate.getMonth() + 1);
+      nextDate.setDate(targetDay);
+    }
   } else if (frequency === 'biweekly') {
     // Biweekly: add 14 days
     nextDate.setDate(nextDate.getDate() + 14);
