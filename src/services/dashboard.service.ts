@@ -65,7 +65,7 @@ export async function getByCategory(userId: string, type: 'expense' | 'income' =
       },
     },
     include: {
-      category: { select: { id: true, name: true, icon: true, color: true } },
+      category: { select: { id: true, name: true, icon: true, color: true, monthlyLimit: true } },
     },
   });
 
@@ -82,7 +82,11 @@ export async function getByCategory(userId: string, type: 'expense' | 'income' =
 
   return Object.values(byCategory)
     .map((c) => ({
-      ...c.category,
+      id: c.category.id,
+      name: c.category.name,
+      icon: c.category.icon,
+      color: c.category.color,
+      monthlyLimit: c.category.monthlyLimit ? Number(c.category.monthlyLimit) : undefined,
       total: c.total,
       percentage: total > 0 ? Math.round((c.total / total) * 100) : 0,
     }))

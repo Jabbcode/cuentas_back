@@ -55,13 +55,14 @@ model Account {
 }
 
 model Category {
-  id     String  @id @default(uuid())
-  name   String
-  type   String  // "expense" | "income"
-  icon   String?
-  color  String?
-  userId String
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  name         String
+  type         String   // "expense" | "income"
+  icon         String?
+  color        String?
+  monthlyLimit Decimal?
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   transactions  Transaction[]
   fixedExpenses FixedExpense[]
