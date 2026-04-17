@@ -5,6 +5,7 @@ export const createCategorySchema = z.object({
   type: z.enum(['expense', 'income']),
   icon: z.string().optional(),
   color: z.string().optional(),
+  monthlyLimit: z.number().positive().nullable().optional(),
 });
 
 export const updateCategorySchema = createCategorySchema.partial();

@@ -71,3 +71,17 @@ export async function deleteCategory(req: AuthRequest, res: Response, next: Next
     next(error);
   }
 }
+
+export async function getCategorySpending(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const id = req.params.id as string;
+    const spending = await categoriesService.getCategorySpending(id, req.user!.userId);
+    res.json(spending);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Categoría no encontrada') {
+      res.status(404).json({ error: error.message });
+      return;
+    }
+    next(error);
+  }
+}
