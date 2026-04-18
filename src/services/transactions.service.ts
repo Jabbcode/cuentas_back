@@ -99,12 +99,20 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
     existing.type === 'income' ? 'expense' : 'income'
   );
 
+  // Build update data object with only defined fields
+  const updateData: Record<string, any> = {};
+  if (data.amount !== undefined) updateData.amount = data.amount;
+  if (data.type !== undefined) updateData.type = data.type;
+  if (data.description !== undefined) updateData.description = data.description;
+  if (data.accountId !== undefined) updateData.accountId = data.accountId;
+  if (data.categoryId !== undefined) updateData.categoryId = data.categoryId;
+  if (data.fixedExpenseId !== undefined) updateData.fixedExpenseId = data.fixedExpenseId;
+  if (data.imageHash !== undefined) updateData.imageHash = data.imageHash;
+  if (data.date !== undefined) updateData.date = new Date(data.date);
+
   const updated = await prisma.transaction.update({
     where: { id },
-    data: {
-      ...data,
-      date: data.date ? new Date(data.date) : undefined,
-    },
+    data: updateData,
     include: {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
