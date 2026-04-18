@@ -24,6 +24,9 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
         account: { select: { id: true, name: true, color: true } },
         category: { select: { id: true, name: true, icon: true, color: true } },
         fixedExpense: { select: { id: true, name: true } },
+        _count: {
+          select: { receiptItems: true },
+        },
       },
       orderBy: { date: 'desc' },
       take: limit,
