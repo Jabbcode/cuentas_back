@@ -9,6 +9,7 @@ router.use(authMiddleware);
 router.get('/', transactionsController.getTransactions);
 router.post('/', transactionsController.createTransaction);
 router.get('/:id', transactionsController.getTransactionById);
+router.get('/:id/items', transactionsController.getReceiptItems);
 router.patch('/:id', transactionsController.updateTransaction);
 router.delete('/:id', transactionsController.deleteTransaction);
 

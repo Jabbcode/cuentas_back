@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import Tesseract from 'tesseract.js';
 import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
+import { buildReceiptAnalysisPrompt } from '../prompts/receipt-analysis.prompt.js';
 import type { ScanReceiptResponse, DuplicateCheckResponse } from '../schemas/receipt.schema.js';
 
 // Initialize Claude API client
@@ -109,38 +110,7 @@ async function extractTextFromImage(imageBuffer: Buffer): Promise<string> {
  * Process extracted text with Claude to structure receipt data
  */
 async function processReceiptWithClaude(ocrText: string): Promise<ScanReceiptResponse> {
-  const prompt = `Eres un asistente que analiza facturas/recibos y extrae información estructurada.
-
-Analiza el siguiente texto de una factura y extrae:
-1. **amount** (monto total): número positivo sin símbolos
-2. **description** (descripción): breve descripción del gasto (comercio + concepto)
-3. **date** (fecha): formato ISO 8601 (YYYY-MM-DD)
-4. **suggestedCategory** (categoría sugerida): una de estas opciones:
-   - Alimentación
-   - Transporte
-   - Vivienda
-   - Servicios
-   - Entretenimiento
-   - Ropa
-   - Salud
-   - Educación
-   - Compras
-   - Tecnología
-5. **confidence** (confianza): "high", "medium", o "low" según la claridad del texto
-
-TEXTO DE LA FACTURA:
-${ocrText}
-
-Responde ÚNICAMENTE con un JSON válido con esta estructura:
-{
-  "amount": 0,
-  "description": "",
-  "date": "",
-  "suggestedCategory": "",
-  "confidence": "medium"
-}
-
-Si no puedes extraer algún campo, usa valores por defecto razonables.`;
+  const prompt = buildReceiptAnalysisPrompt(ocrText);
 
   try {
     const message = await anthropic.messages.create({
@@ -173,6 +143,12 @@ Si no puedes extraer algún campo, usa valores por defecto razonables.`;
       confidence: data.confidence || 'low',
       rawText: ocrText,
       imageHash: '', // Will be set by caller
+      items: Array.isArray(data.items) ? data.items.map((item: any) => ({
+        name: item.name || 'Producto sin nombre',
+        quantity: parseFloat(item.quantity) || 1,
+        unitPrice: parseFloat(item.unitPrice) || 0,
+        totalPrice: parseFloat(item.totalPrice) || 0,
+      })) : [],
     };
   } catch (error) {
     // Removed console.error

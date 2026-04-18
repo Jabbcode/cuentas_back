@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+const receiptItemInputSchema = z.object({
+  name: z.string().min(1),
+  quantity: z.number().positive(),
+  unitPrice: z.number().nonnegative(),
+  totalPrice: z.number().nonnegative(),
+});
+
 export const createTransactionSchema = z.object({
   amount: z.number().positive('El monto debe ser positivo'),
   type: z.enum(['expense', 'income']),
@@ -9,6 +16,7 @@ export const createTransactionSchema = z.object({
   categoryId: z.string().uuid('ID de categoría inválido'),
   fixedExpenseId: z.string().uuid().optional(),
   imageHash: z.string().optional(), // For receipt scanning
+  receiptItems: z.array(receiptItemInputSchema).optional(), // Receipt items
 });
 
 export const updateTransactionSchema = createTransactionSchema.partial();
