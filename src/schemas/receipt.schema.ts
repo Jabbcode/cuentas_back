@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+export const receiptItemDataSchema = z.object({
+  name: z.string(),
+  quantity: z.number().positive(),
+  unitPrice: z.number().nonnegative(),
+  totalPrice: z.number().nonnegative(),
+});
+
 export const scanReceiptResponseSchema = z.object({
   amount: z.number().positive(),
   description: z.string(),
@@ -8,6 +15,7 @@ export const scanReceiptResponseSchema = z.object({
   confidence: z.enum(['high', 'medium', 'low']),
   rawText: z.string().optional(),
   imageHash: z.string(),
+  items: z.array(receiptItemDataSchema).optional(),
 });
 
 export const duplicateCheckResponseSchema = z.object({

@@ -41,6 +41,7 @@ export async function getTransactionById(id: string, userId: string) {
     include: {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
+      receiptItems: true,
     },
   });
 
@@ -61,11 +62,21 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
       accountId: data.accountId,
       categoryId: data.categoryId,
       fixedExpenseId: data.fixedExpenseId,
+      imageHash: data.imageHash,
       userId,
+      receiptItems: data.receiptItems ? {
+        create: data.receiptItems.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+        })),
+      } : undefined,
     },
     include: {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
+      receiptItems: true,
     },
   });
 
@@ -119,5 +130,15 @@ export async function deleteTransaction(id: string, userId: string) {
 
   return prisma.transaction.delete({
     where: { id },
+  });
+}
+
+export async function getReceiptItems(transactionId: string, userId: string) {
+  // Verify transaction belongs to user
+  await getTransactionById(transactionId, userId);
+
+  return prisma.receiptItem.findMany({
+    where: { transactionId },
+    orderBy: { createdAt: 'asc' },
   });
 }

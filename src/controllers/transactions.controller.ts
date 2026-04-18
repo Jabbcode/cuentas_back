@@ -65,3 +65,17 @@ export async function deleteTransaction(req: AuthRequest, res: Response, next: N
     next(error);
   }
 }
+
+export async function getReceiptItems(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const transactionId = req.params.id as string;
+    const items = await transactionsService.getReceiptItems(transactionId, req.user!.userId);
+    res.json(items);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Transacción no encontrada') {
+      res.status(404).json({ error: error.message });
+      return;
+    }
+    next(error);
+  }
+}
