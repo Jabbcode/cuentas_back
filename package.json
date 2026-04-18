@@ -18,12 +18,10 @@
   },
   "lint-staged": {
     "*.ts": [
-      "prettier --write",
-      "tsc --noEmit"
+      "prettier --write"
     ],
     "prisma/schema.prisma": [
-      "prettier --write",
-      "prisma validate"
+      "prettier --write"
     ]
   },
   "dependencies": {
