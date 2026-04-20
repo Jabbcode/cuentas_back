@@ -21,6 +21,7 @@ model User {
   debts                  Debt[]
   debtPayments           DebtPayment[]
   recurringDebtPayments  RecurringDebtPayment[]
+  transfers              Transfer[]
 }
 
 model Account {
@@ -49,9 +50,29 @@ model Account {
   creditCardPayments            CreditCardPayment[]
   debtPayments                  DebtPayment[]
   recurringDebtPayments         RecurringDebtPayment[]
+  transfersFrom                 Transfer[] @relation("TransferFrom")
+  transfersTo                   Transfer[] @relation("TransferTo")
   createdAt                     DateTime @default(now())
 
   @@index([userId])
+}
+
+model Transfer {
+  id            String   @id @default(uuid())
+  fromAccountId String
+  fromAccount   Account  @relation("TransferFrom", fields: [fromAccountId], references: [id], onDelete: Cascade)
+  toAccountId   String
+  toAccount     Account  @relation("TransferTo", fields: [toAccountId], references: [id], onDelete: Cascade)
+  amount        Decimal
+  note          String?
+  date          DateTime @default(now())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([fromAccountId])
+  @@index([toAccountId])
 }
 
 model Category {
