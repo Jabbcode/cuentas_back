@@ -15,5 +15,13 @@ export const createAccountSchema = z.object({
 
 export const updateAccountSchema = createAccountSchema.partial();
 
+export const transferSchema = z.object({
+  fromAccountId: z.string().uuid('ID de cuenta origen inválido'),
+  toAccountId: z.string().uuid('ID de cuenta destino inválido'),
+  amount: z.number().positive('El monto debe ser mayor a 0'),
+  note: z.string().optional(),
+});
+
 export type CreateAccountInput = z.infer<typeof createAccountSchema>;
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
+export type TransferInput = z.infer<typeof transferSchema>;

@@ -8,7 +8,9 @@ router.use(authMiddleware);
 
 router.get('/', accountsController.getAccounts);
 router.post('/', accountsController.createAccount);
+router.post('/transfer', accountsController.transferFunds);
 router.get('/:id', accountsController.getAccountById);
+router.get('/:id/transfers', accountsController.getTransfersByAccount);
 router.patch('/:id', accountsController.updateAccount);
 router.delete('/:id', accountsController.deleteAccount);
 
