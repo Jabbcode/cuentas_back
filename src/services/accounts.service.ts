@@ -46,7 +46,11 @@ export async function deleteAccount(id: string, userId: string) {
   });
 }
 
-export async function updateAccountBalance(accountId: string, amount: number, type: 'expense' | 'income') {
+export async function updateAccountBalance(
+  accountId: string,
+  amount: number,
+  type: 'expense' | 'income'
+) {
   const account = await prisma.account.findUnique({
     where: { id: accountId },
   });
@@ -56,9 +60,7 @@ export async function updateAccountBalance(accountId: string, amount: number, ty
   }
 
   const currentBalance = Number(account.balance);
-  const newBalance = type === 'income'
-    ? currentBalance + amount
-    : currentBalance - amount;
+  const newBalance = type === 'income' ? currentBalance + amount : currentBalance - amount;
 
   return prisma.account.update({
     where: { id: accountId },
