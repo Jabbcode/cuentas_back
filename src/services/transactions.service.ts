@@ -1,6 +1,11 @@
 import { prisma } from '../lib/prisma.js';
-import { CreateTransactionInput, UpdateTransactionInput, TransactionQuery } from '../schemas/transaction.schema.js';
+import {
+  CreateTransactionInput,
+  UpdateTransactionInput,
+  TransactionQuery,
+} from '../schemas/transaction.schema.js';
 import { updateAccountBalance } from './accounts.service.js';
+import { checkBudgetAndNotify } from './notifications.service.js';
 
 export async function getTransactions(userId: string, query: TransactionQuery) {
   const { startDate, endDate, accountId, categoryId, type, limit = 50, offset = 0 } = query;
@@ -67,14 +72,16 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
       fixedExpenseId: data.fixedExpenseId,
       imageHash: data.imageHash,
       userId,
-      receiptItems: data.receiptItems ? {
-        create: data.receiptItems.map(item => ({
-          name: item.name,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
-        })),
-      } : undefined,
+      receiptItems: data.receiptItems
+        ? {
+            create: data.receiptItems.map((item) => ({
+              name: item.name,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              totalPrice: item.totalPrice,
+            })),
+          }
+        : undefined,
     },
     include: {
       account: { select: { id: true, name: true, color: true } },
@@ -85,6 +92,10 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
 
   // Update account balance
   await updateAccountBalance(data.accountId, data.amount, data.type);
+
+  if (data.type === 'expense') {
+    checkBudgetAndNotify(userId, data.categoryId).catch(() => {});
+  }
 
   return transaction;
 }

@@ -14,6 +14,8 @@ model User {
   name      String
   createdAt DateTime @default(now())
 
+  notificationPreferences Json @default("{\"categoryLimit\":true,\"debtDue\":true,\"monthlyEmail\":true}")
+
   accounts               Account[]
   categories             Category[]
   transactions           Transaction[]
@@ -23,6 +25,7 @@ model User {
   recurringDebtPayments  RecurringDebtPayment[]
   transfers              Transfer[]
   budgets                Budget[]
+  notifications          Notification[]
 }
 
 model Account {
@@ -297,6 +300,22 @@ model Budget {
   @@unique([userId, categoryId, month, year])
   @@index([userId])
   @@index([userId, month, year])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // "category_limit" | "debt_due" | "monthly_summary"
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, read])
+  @@index([createdAt])
 }
 
 model ReceiptItem {
