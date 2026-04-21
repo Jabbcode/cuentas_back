@@ -7,13 +7,16 @@
 │  User   │  (usuario del sistema)
 └────┬────┘
      │
-     ├─ 1:N ────► Account        (cuentas del usuario)
-     ├─ 1:N ────► Category       (categorías de transacciones)
-     ├─ 1:N ────► Transaction    (movimientos de dinero)
-     ├─ 1:N ────► FixedExpense   (gastos/ingresos recurrentes)
-     ├─ 1:N ────► Debt           (deudas del usuario)
-     ├─ 1:N ────► DebtPayment    (pagos de deudas)
-     └─ 1:N ────► RecurringDebtPayment (pagos recurrentes)
+     ├─ 1:N ────► Account               (cuentas del usuario)
+     ├─ 1:N ────► Category              (categorías de transacciones)
+     ├─ 1:N ────► Transaction           (movimientos de dinero)
+     ├─ 1:N ────► FixedExpense          (gastos/ingresos recurrentes)
+     ├─ 1:N ────► Debt                  (deudas del usuario)
+     ├─ 1:N ────► DebtPayment           (pagos de deudas)
+     ├─ 1:N ────► RecurringDebtPayment  (pagos recurrentes)
+     ├─ 1:N ────► Transfer              (transferencias entre cuentas)
+     ├─ 1:N ────► Budget                (presupuestos por categoría/mes)
+     └─ 1:N ────► Notification          (alertas y notificaciones)
 
 ┌─────────┐
 │ Account │  (cuenta bancaria, tarjeta, efectivo)
@@ -23,6 +26,7 @@
      ├─ 1:N ────► FixedExpense   (gastos fijos vinculados)
      ├─ 1:N ────► CreditCardPayment (pagos de tarjeta)
      ├─ 1:N ────► DebtPayment    (pagos desde esta cuenta)
+     ├─ 1:N ────► Transfer       (origen/destino de transferencias)
      └─ Self ───► Account        (relación para tarjeta de crédito)
 
 ┌───────────────┐
@@ -34,25 +38,28 @@
         ├─ N:1 ────► User
         ├─ N:1 ────► FixedExpense (si es recurrente)
         ├─ 1:1 ────► CreditCardPayment
-        └─ 1:1 ────► DebtPayment
+        ├─ 1:1 ────► DebtPayment
+        └─ 1:N ────► ReceiptItem  (ítems del recibo OCR)
 ```
 
 ## 🗂️ Tablas Detalladas
 
 ### User
 ```
-id          UUID (Primary Key)
-email       String (Unique)
-password    String (hashed with bcrypt)
-name        String
-createdAt   DateTime (default: now)
+id                      UUID (Primary Key)
+email                   String (Unique)
+password                String (hashed with bcrypt)
+name                    String
+createdAt               DateTime (default: now)
+notificationPreferences Json    (default: {categoryLimit:true, debtDue:true, monthlyEmail:true})
 ```
 
 **Índices:**
 - email (unique)
 
 **Relaciones:**
-- 1:N con Account, Category, Transaction, etc.
+- 1:N con Account, Category, Transaction, FixedExpense, Debt, DebtPayment, RecurringDebtPayment
+- 1:N con Transfer, Budget, Notification
 
 ---
 
@@ -97,12 +104,13 @@ paymentAccountId String? (Foreign Key → Account)
 
 ### Category
 ```
-id      UUID (Primary Key)
-name    String
-type    String  // "expense" | "income"
-icon    String? (optional, emoji o nombre de icon)
-color   String? (optional, hex code)
-userId  UUID (Foreign Key → User)
+id           UUID (Primary Key)
+name         String
+type         String   // "expense" | "income"
+icon         String?  (optional, Lucide icon name)
+color        String?  (optional, hex code)
+monthlyLimit Decimal? (legacy — usar Budget como fuente de verdad; ver REFACTOR-001)
+userId       UUID (Foreign Key → User)
 ```
 
 **Índices:**
@@ -112,6 +120,7 @@ userId  UUID (Foreign Key → User)
 - N:1 con User
 - 1:N con Transaction
 - 1:N con FixedExpense
+- 1:N con Budget
 
 ---
 
@@ -322,6 +331,110 @@ updatedAt       DateTime (updated on changes)
 - nextDueDate se recalcula después de cada pago
 - Se puede pausar con isActive = false
 - Puede tener endDate para límitar duración
+
+---
+
+### Transfer
+```
+id            UUID (Primary Key)
+fromAccountId UUID (Foreign Key → Account)
+toAccountId   UUID (Foreign Key → Account)
+amount        Decimal
+note          String? (optional)
+date          DateTime (default: now)
+userId        UUID (Foreign Key → User)
+createdAt     DateTime (default: now)
+```
+
+**Índices:**
+- userId, fromAccountId, toAccountId
+
+**Relaciones:**
+- N:1 con Account (origen y destino)
+- N:1 con User
+
+**Lógica:**
+- Mueve dinero entre dos cuentas del mismo usuario
+- No crea Transaction; debita fromAccount, acredita toAccount directamente
+
+---
+
+### Budget
+```
+id         UUID (Primary Key)
+amount     Decimal        // Límite de gasto
+month      Int            // 1-12
+year       Int
+alertAt    Decimal?       // Porcentaje (0-100) para alerta temprana (default 80)
+userId     UUID (Foreign Key → User)
+categoryId UUID (Foreign Key → Category)
+createdAt  DateTime (default: now)
+updatedAt  DateTime (updated on changes)
+```
+
+**Índices:**
+- userId
+- userId + month + year
+- UNIQUE(userId, categoryId, month, year)
+
+**Relaciones:**
+- N:1 con User
+- N:1 con Category
+
+**Lógica:**
+- Un presupuesto por categoría por mes/año
+- El GET `/budgets` calcula `spent`, `remaining`, `percentage` en tiempo real desde transacciones
+- Es la fuente de verdad para límites de gasto (no `category.monthlyLimit`)
+
+---
+
+### Notification
+```
+id        UUID (Primary Key)
+userId    UUID (Foreign Key → User)
+type      String   // "category_limit" | "debt_due" | "monthly_summary"
+title     String
+message   String
+read      Boolean  (default: false)
+metadata  Json?    (datos adicionales según tipo)
+createdAt DateTime (default: now)
+```
+
+**Índices:**
+- userId
+- userId + read (para contar no leídas eficientemente)
+- createdAt
+
+**Relaciones:**
+- N:1 con User
+
+**Lógica:**
+- Se crean automáticamente por cron jobs y por `checkBudgetAndNotify` en transactions service
+- `metadata` puede incluir categoryId, debtId, amounts según el tipo
+- `unreadCount` se devuelve en el GET /notifications
+
+---
+
+### ReceiptItem
+```
+id            UUID (Primary Key)
+transactionId UUID (Foreign Key → Transaction)
+name          String   // Nombre del producto
+quantity      Decimal  // Cantidad
+unitPrice     Decimal  // Precio unitario
+totalPrice    Decimal  // quantity * unitPrice
+createdAt     DateTime (default: now)
+```
+
+**Índices:**
+- transactionId
+
+**Relaciones:**
+- N:1 con Transaction
+
+**Lógica:**
+- Generados por el flujo OCR al subir un recibo
+- Desglosan el total de la transacción en ítems individuales
 
 ---
 

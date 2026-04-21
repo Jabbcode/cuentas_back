@@ -11,6 +11,7 @@
 - 🎯 API REST para el frontend
 - 📸 Procesamiento de recibos (OCR con Tesseract)
 - 🤖 Análisis con IA (Anthropic SDK)
+- 🔔 Notificaciones y alertas (cron jobs + email via Resend)
 
 ## 🛠️ Stack Tecnológico
 
@@ -41,6 +42,10 @@
 - **multer 2.1.1** - File upload middleware
   - Maneja formidatas
   - Memory/disk storage
+
+### Email y Notificaciones
+- **resend** - Transactional email (HTML templates)
+- **node-cron** - Cron jobs (alertas deudas diario, email mensual)
 
 ### Análisis
 - **tesseract.js 7** - OCR para recibos
@@ -78,7 +83,14 @@ src/
 │   ├── errorHandler.ts
 │   └── ...
 ├── lib/                # Utilidades
-│   └── prisma.ts       # Cliente Prisma
+│   ├── prisma.ts       # Cliente Prisma
+│   ├── cron.ts         # Cron jobs (deudas + email mensual)
+│   └── email/          # Servicio de email modular
+│       ├── index.ts        # sendMonthlySummaryEmail (Resend)
+│       ├── constants.ts    # ICON_EMOJI map, resolveIcon()
+│       ├── types.ts        # CategoryEmailData, MonthlySummaryParams
+│       └── templates/
+│           └── monthly-summary.template.ts
 ├── types/              # TypeScript definitions
 │   └── index.ts
 ├── app.ts              # Express app setup
@@ -88,7 +100,7 @@ src/
 ## 🗄️ Base de Datos
 
 ### Tablas Principales
-- **User** - Usuarios del sistema
+- **User** - Usuarios del sistema (incluye `notificationPreferences` JSON)
 - **Account** - Cuentas (cash, bank, credit_card)
 - **Transaction** - Movimientos de dinero
 - **Category** - Categorías de transacciones
@@ -97,6 +109,10 @@ src/
 - **Debt** - Deudas
 - **DebtPayment** - Pagos de deudas
 - **RecurringDebtPayment** - Pagos recurrentes de deudas
+- **Transfer** - Transferencias entre cuentas propias
+- **Budget** - Presupuestos mensuales por categoría (fuente de verdad para límites)
+- **Notification** - Alertas y notificaciones del sistema
+- **ReceiptItem** - Ítems individuales de recibos OCR
 
 ### Relaciones Clave
 ```
@@ -106,12 +122,16 @@ User
 ├─ Categories (1 a N)
 ├─ FixedExpenses (1 a N)
 ├─ Debts (1 a N)
-└─ DebtPayments (1 a N)
+├─ DebtPayments (1 a N)
+├─ Transfers (1 a N)
+├─ Budgets (1 a N)
+└─ Notifications (1 a N)
 
 Account
 ├─ Transactions (1 a N)
 ├─ FixedExpenses (1 a N)
-└─ CreditCardPayments (1 a N)
+├─ CreditCardPayments (1 a N)
+└─ Transfers (1 a N, origen y destino)
 ```
 
 Ver `architecture/database-schema.md` para detalles completos.
@@ -319,6 +339,10 @@ ANTHROPIC_API_KEY=sk-...
 
 # Uploads
 UPLOAD_DIR=./uploads
+
+# Email (Resend)
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=MisCuentas <noreply@miscuentas.app>
 ```
 
 ## 🚀 Iniciar en Desarrollo

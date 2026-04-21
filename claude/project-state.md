@@ -68,6 +68,15 @@ API REST en desarrollo activo con endpoints core implementados.
 - [x] PATCH /budgets/:id
 - [x] DELETE /budgets/:id
 
+### ✅ Notificaciones y Alertas (FEAT-013 — 2026-04-21)
+- [x] GET /notifications (con unreadCount)
+- [x] PATCH /notifications/:id/read
+- [x] PATCH /notifications/read-all
+- [x] DELETE /notifications/:id
+- [x] GET /notifications/preferences
+- [x] PATCH /notifications/preferences
+- [x] POST /notifications/test-email (TEST ONLY)
+
 ### 🔄 En Progreso
 - [ ] OCR de recibos mejorado
 - [ ] Análisis con IA
@@ -126,10 +135,10 @@ API REST en desarrollo activo con endpoints core implementados.
 - Migrations: 12 completadas
 
 ### Code
-- Controladores: 12 archivos
-- Servicios: 12 archivos
-- Schemas: 12 archivos
-- Líneas de código TypeScript: ~3000
+- Controladores: 13 archivos
+- Servicios: 13 archivos
+- Schemas: 13 archivos
+- Líneas de código TypeScript: ~3500
 
 ## 🔐 Seguridad
 
@@ -159,6 +168,7 @@ API REST en desarrollo activo con endpoints core implementados.
 
 ### Cambios Recientes
 - **FEAT-011 (2026-04-21):** API de presupuestos `/api/budgets` — modelo Budget en Prisma, CRUD completo, GET enriquece con spending calculado desde transacciones via `groupBy`
+- **FEAT-013 (2026-04-21):** Sistema de notificaciones — modelo Notification en Prisma, cron jobs (deudas diario + email mensual), API REST completa, email HTML via Resend, `checkBudgetAndNotify` en transactions service
 
 ## 📦 Dependencias
 
@@ -189,6 +199,8 @@ DATABASE_URL=postgresql://...
 JWT_SECRET=tu-secreto
 JWT_EXPIRATION=24h
 PORT=3001
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=MisCuentas <noreply@miscuentas.app>
 ```
 
 ## 🎯 Próximas Prioridades
