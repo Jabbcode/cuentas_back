@@ -3,7 +3,7 @@
 Documento vivo del estado actual del backend. Actualizar regularmente.
 
 ## 📅 Fecha de Actualización
-**Última actualización:** 2024
+**Última actualización:** 2026-04-21
 
 ## 🚀 Estado General
 API REST en desarrollo activo con endpoints core implementados.
@@ -61,6 +61,12 @@ API REST en desarrollo activo con endpoints core implementados.
 
 ### ✅ Dashboard
 - [x] GET /dashboard/summary
+
+### ✅ Presupuestos (FEAT-011 — 2026-04-21)
+- [x] GET /budgets?month=&year= (con spent/remaining/percentage calculado)
+- [x] POST /budgets
+- [x] PATCH /budgets/:id
+- [x] DELETE /budgets/:id
 
 ### 🔄 En Progreso
 - [ ] OCR de recibos mejorado
@@ -152,7 +158,7 @@ API REST en desarrollo activo con endpoints core implementados.
 - Versionado: No implementado (considerar v1)
 
 ### Cambios Recientes
-- Nada que requiera cambios en frontend
+- **FEAT-011 (2026-04-21):** API de presupuestos `/api/budgets` — modelo Budget en Prisma, CRUD completo, GET enriquece con spending calculado desde transacciones via `groupBy`
 
 ## 📦 Dependencias
 
