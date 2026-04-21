@@ -22,6 +22,7 @@ model User {
   debtPayments           DebtPayment[]
   recurringDebtPayments  RecurringDebtPayment[]
   transfers              Transfer[]
+  budgets                Budget[]
 }
 
 model Account {
@@ -87,6 +88,7 @@ model Category {
 
   transactions  Transaction[]
   fixedExpenses FixedExpense[]
+  budgets       Budget[]
 
   @@index([userId])
 }
@@ -277,6 +279,24 @@ model RecurringDebtPayment {
   @@index([userId])
   @@index([nextDueDate])
   @@index([isActive])
+}
+
+model Budget {
+  id         String   @id @default(uuid())
+  amount     Decimal
+  month      Int      // 1-12
+  year       Int
+  alertAt    Decimal? // Percentage (0-100) to show alert, default 80
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, categoryId, month, year])
+  @@index([userId])
+  @@index([userId, month, year])
 }
 
 model ReceiptItem {
