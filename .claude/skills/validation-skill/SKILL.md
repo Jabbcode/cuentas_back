@@ -1,48 +1,73 @@
 ---
 name: validation-skill
-description: Validar datos con Zod
+description: Validar datos con Zod — schemas, tipos inferidos y validación en controllers
 type: skill
 ---
 
-## Propósito
+## Cuándo Usar
 
-Validar datos con Zod
+- Al crear schemas para body de requests
+- Al inferir tipos TypeScript desde schemas
+- Al validar input en controllers antes de llamar al service
 
-## Cuándo Usar Este Skill
+## Patrón Schema Zod
 
-- ✅ Cuando necesitas implementar este patrón
-- ✅ Para código relacionado con validar datos con zod
-- ✅ Siguiendo las mejores prácticas del proyecto
+```typescript
+import { z } from 'zod';
 
-## Lo Que Sabe Hacer
+export const createAccountSchema = z.object({
+  name: z.string().min(1, 'Nombre requerido'),
+  type: z.enum(['cash', 'bank', 'credit_card']),
+  balance: z.number().default(0),
+  currency: z.string().default('USD'),
+  color: z.string().optional(),
+  creditLimit: z.number().optional(),
+  paymentAccountId: z.string().uuid().optional(),
+});
 
-- Schemas Zod
-- Validaciones anidadas
-- Refinamientos
-- Mensajes claros
+// Update: todos los campos opcionales
+export const updateAccountSchema = createAccountSchema.partial();
 
+// Tipos inferidos — siempre exportar junto al schema
+export type CreateAccountInput = z.infer<typeof createAccountSchema>;
+export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
+```
 
-## Patrones Clave
+## Validar en Controller
 
-Ver `examples.md` para código real del proyecto.
+```typescript
+export async function createAccount(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    // .parse() lanza ZodError si falla — el errorHandler lo convierte a 400
+    const data = createAccountSchema.parse(req.body);
+    const account = await accountsService.createAccount(data, req.user!.userId);
+    res.status(201).json(account);
+  } catch (error) {
+    next(error);
+  }
+}
+```
 
-## Best Practices
+## Validaciones Comunes
 
-1. Sigue los patrones documentados
-2. Consulta `conventions.md` para convenciones backend
-3. Usa TypeScript types explícitos
-4. Valida siempre los datos
-5. Filtra siempre por userId (CRÍTICO)
-6. Maneja errores apropiadamente
+```typescript
+z.string().min(1, 'Campo requerido')
+z.string().email('Email inválido')
+z.string().uuid('ID inválido')
+z.number().positive('Debe ser positivo')
+z.number().int('Debe ser entero')
+z.enum(['a', 'b', 'c'])
+z.boolean()
+z.coerce.number()          // convierte string → number (útil para query params)
+z.coerce.date()            // convierte string → Date
+z.string().optional()      // campo opcional
+z.string().nullable()      // puede ser null
+z.array(z.string()).min(1) // array no vacío
+```
 
-## Anti-Patterns
+## Anti-patterns
 
-- No filtrar por userId (⚠️ CRÍTICO)
-- Validación manual sin Zod
-- Código sin TypeScript types
-- Sin manejo de errores
-- Queries sin optimizar
-
-## Ejemplos
-
-Ver `examples.md`
+- ❌ Validación manual con `if (!req.body.name)` — usar Zod
+- ❌ Crear tipos manualmente — inferir con `z.infer<>`
+- ❌ `.safeParse()` sin manejar el error — o usar `.parse()` y dejar que next(error) lo maneje
+- ❌ `any` en parámetros de service — usar el tipo inferido del schema

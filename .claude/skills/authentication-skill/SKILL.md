@@ -1,48 +1,69 @@
 ---
 name: authentication-skill
-description: Manejar autenticación con JWT y bcrypt
+description: Manejar autenticación con JWT y bcrypt — AuthRequest type, middleware y extracción de userId
 type: skill
 ---
 
-## Propósito
+## Cuándo Usar
 
-Manejar autenticación con JWT y bcrypt
+- Al escribir cualquier controller que requiera usuario autenticado
+- Al entender el flujo de autenticación del proyecto
+- Al crear rutas protegidas
 
-## Cuándo Usar Este Skill
+## Tipo AuthRequest
 
-- ✅ Cuando necesitas implementar este patrón
-- ✅ Para código relacionado con manejar autenticación con jwt y bcrypt
-- ✅ Siguiendo las mejores prácticas del proyecto
+```typescript
+// src/types/index.ts
+export interface AuthRequest extends Request {
+  user?: {
+    userId: string;
+    email: string;
+  };
+}
+```
 
-## Lo Que Sabe Hacer
+## Uso en Controllers
 
-- JWT tokens
-- bcrypt hashing
-- Middleware auth
-- Token refresh
+```typescript
+import { AuthRequest } from '../types/index.js';
 
+// userId siempre de req.user!.userId — nunca del body o params
+export async function getAccounts(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const accounts = await accountsService.getAccounts(req.user!.userId);
+    res.json(accounts);
+  } catch (error) {
+    next(error);
+  }
+}
+```
 
-## Patrones Clave
+## Aplicar authMiddleware en Routes
 
-Ver `examples.md` para código real del proyecto.
+```typescript
+import { Router } from 'express';
+import { authMiddleware } from '../middlewares/auth.middleware.js';
 
-## Best Practices
+const router = Router();
+router.use(authMiddleware); // protege todas las rutas del router
 
-1. Sigue los patrones documentados
-2. Consulta `conventions.md` para convenciones backend
-3. Usa TypeScript types explícitos
-4. Valida siempre los datos
-5. Filtra siempre por userId (CRÍTICO)
-6. Maneja errores apropiadamente
+router.get('/', accountsController.getAccounts);
+router.post('/', accountsController.createAccount);
 
-## Anti-Patterns
+export default router;
+```
 
-- No filtrar por userId (⚠️ CRÍTICO)
-- Validación manual sin Zod
-- Código sin TypeScript types
-- Sin manejo de errores
-- Queries sin optimizar
+## Flujo JWT
 
-## Ejemplos
+1. `POST /api/auth/login` → valida email/password con bcrypt → retorna token JWT
+2. Frontend guarda token en `localStorage.token`
+3. Cada request incluye `Authorization: Bearer <token>`
+4. `authMiddleware` valida token → popula `req.user` con `{ userId, email }`
+5. Controller extrae `req.user!.userId` → pasa al service
 
-Ver `examples.md`
+## Anti-patterns
+
+- ❌ `req.body.userId` como fuente del userId — manipulable por el cliente
+- ❌ Rutas sin `authMiddleware` que accedan a datos de usuario
+- ❌ `req.user?.userId ?? ''` — si user es undefined, el middleware falló; lanzar error
+- ❌ Loguear tokens JWT en console.log

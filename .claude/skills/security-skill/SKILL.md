@@ -1,48 +1,63 @@
 ---
 name: security-skill
-description: Asegurar que datos no se filteren entre usuarios
+description: Asegurar que datos no se filteren entre usuarios — userId filtering en cada query
 type: skill
 ---
 
-## Propósito
+## Cuándo Usar
 
-Asegurar que datos no se filteren entre usuarios
+- Al escribir cualquier query Prisma que accede a datos del usuario
+- Al extraer userId de la request
+- Al verificar propiedad de un recurso antes de mutarlo
 
-## Cuándo Usar Este Skill
+## Regla de Oro
 
-- ✅ Cuando necesitas implementar este patrón
-- ✅ Para código relacionado con asegurar que datos no se filteren entre usuarios
-- ✅ Siguiendo las mejores prácticas del proyecto
+**Nunca confiar en parámetros del cliente para userId.** El userId siempre viene del token JWT, extraído por `authMiddleware`.
 
-## Lo Que Sabe Hacer
+## Extraer userId en Controller
 
-- Filtrado por userId
-- Validación de propiedad
-- CORS
-- Input validation
+```typescript
+import { AuthRequest } from '../types/index.js';
 
+export async function getAccounts(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user!.userId; // del token JWT — nunca de req.body o req.params
+    const accounts = await accountsService.getAccounts(userId);
+    res.json(accounts);
+  } catch (error) {
+    next(error);
+  }
+}
+```
 
-## Patrones Clave
+## Filtrar en Todas las Queries
 
-Ver `examples.md` para código real del proyecto.
+```typescript
+// ✅ Correcto — usuario solo ve sus datos
+prisma.transaction.findMany({ where: { userId } })
 
-## Best Practices
+// ✅ Correcto — verifica propiedad en update/delete
+const item = await prisma.account.findFirst({ where: { id, userId } });
+if (!item) throw new Error('No encontrado');
 
-1. Sigue los patrones documentados
-2. Consulta `conventions.md` para convenciones backend
-3. Usa TypeScript types explícitos
-4. Valida siempre los datos
-5. Filtra siempre por userId (CRÍTICO)
-6. Maneja errores apropiadamente
+// ❌ Incorrecto — cualquier usuario podría ver datos de otro
+prisma.transaction.findMany({ where: { accountId } }) // sin userId
+```
 
-## Anti-Patterns
+## Verificar Propiedad Antes de Mutar
 
-- No filtrar por userId (⚠️ CRÍTICO)
-- Validación manual sin Zod
-- Código sin TypeScript types
-- Sin manejo de errores
-- Queries sin optimizar
+```typescript
+// Siempre verificar que el recurso pertenece al usuario antes de update/delete
+export async function deleteAccount(id: string, userId: string) {
+  const account = await prisma.account.findFirst({ where: { id, userId } });
+  if (!account) throw new Error('Cuenta no encontrada'); // 404, no 403 — no revelar existencia
+  return prisma.account.delete({ where: { id } });
+}
+```
 
-## Ejemplos
+## Anti-patterns
 
-Ver `examples.md`
+- ❌ `prisma.model.findUnique({ where: { id } })` sin userId — no verifica propiedad
+- ❌ `userId` tomado de `req.body.userId` o `req.params.userId` — manipulable
+- ❌ Retornar error 403 explícito — revela que el recurso existe; usar 404
+- ❌ Queries en includes anidados sin filtrar por userId

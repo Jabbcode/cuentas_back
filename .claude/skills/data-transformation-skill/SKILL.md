@@ -1,48 +1,82 @@
 ---
 name: data-transformation-skill
-description: Transformar datos de BD a formato de API
+description: Transformar datos de BD a formato de API — mapeo de tipos Prisma, Decimal y campos derivados
 type: skill
 ---
 
-## Propósito
+## Cuándo Usar
 
-Transformar datos de BD a formato de API
+- Al retornar datos que requieren cálculos o campos derivados
+- Al manejar tipos `Decimal` de Prisma en respuestas
+- Al formatear o filtrar campos antes de enviar al cliente
 
-## Cuándo Usar Este Skill
+## Decimal → number
 
-- ✅ Cuando necesitas implementar este patrón
-- ✅ Para código relacionado con transformar datos de bd a formato de api
-- ✅ Siguiendo las mejores prácticas del proyecto
+Prisma retorna campos numéricos como `Decimal`, no `number`. Convertir antes de operar o retornar:
 
-## Lo Que Sabe Hacer
+```typescript
+import { Prisma } from '@prisma/client';
 
-- Mapeo de tipos
-- Serialización
-- Campos derivados
-- Filtrado de datos
+// Convertir para operaciones matemáticas
+const balance = account.balance.toNumber();
+const available = account.creditLimit!.toNumber() - Math.abs(balance);
 
+// Comparar Decimals
+const isZero = account.balance.equals(new Prisma.Decimal(0));
+const isPositive = account.balance.toNumber() > 0; // ✅
+// const isPositive = account.balance > 0;          // ❌ TS2367
+```
 
-## Patrones Clave
+## Campos Derivados en Service
 
-Ver `examples.md` para código real del proyecto.
+```typescript
+export async function getAccountSummary(userId: string) {
+  const accounts = await prisma.account.findMany({ where: { userId } });
 
-## Best Practices
+  return accounts.map(account => ({
+    ...account,
+    balance: account.balance.toNumber(),           // Decimal → number
+    available: account.type === 'credit_card'
+      ? account.creditLimit!.toNumber() - Math.abs(account.balance.toNumber())
+      : null,
+  }));
+}
+```
 
-1. Sigue los patrones documentados
-2. Consulta `conventions.md` para convenciones backend
-3. Usa TypeScript types explícitos
-4. Valida siempre los datos
-5. Filtra siempre por userId (CRÍTICO)
-6. Maneja errores apropiadamente
+## Seleccionar Solo Campos Necesarios
 
-## Anti-Patterns
+```typescript
+// Evitar enviar campos sensibles o innecesarios al cliente
+const user = await prisma.user.findUnique({
+  where: { id },
+  select: {
+    id: true,
+    email: true,
+    name: true,
+    // password: false  — nunca retornar el hash
+  },
+});
+```
 
-- No filtrar por userId (⚠️ CRÍTICO)
-- Validación manual sin Zod
-- Código sin TypeScript types
-- Sin manejo de errores
-- Queries sin optimizar
+## Agregar Datos de Múltiples Modelos
 
-## Ejemplos
+```typescript
+export async function getDashboardSummary(userId: string) {
+  const [accounts, pendingDebts] = await Promise.all([
+    prisma.account.findMany({ where: { userId }, select: { balance: true, type: true } }),
+    prisma.debt.findMany({ where: { userId, isPaid: false }, select: { remainingAmount: true } }),
+  ]);
 
-Ver `examples.md`
+  const totalBalance = accounts.reduce((sum, a) => sum + a.balance.toNumber(), 0);
+  const totalDebt = pendingDebts.reduce((sum, d) => sum + d.remainingAmount.toNumber(), 0);
+
+  return { totalBalance, totalDebt };
+}
+```
+
+## Anti-patterns
+
+- ❌ Retornar objetos Prisma crudos con campos `Decimal` sin convertir
+- ❌ Calcular en el controller — lógica de negocio va en el service
+- ❌ `JSON.stringify` de Decimal sin convertir — serializa como objeto, no número
+- ❌ Retornar campos de password o datos internos al cliente
