@@ -69,7 +69,9 @@ export async function getByCategory(userId: string, type: 'expense' | 'income' =
     },
   });
 
-  const byCategory = transactions.reduce<Record<string, { category: typeof transactions[0]['category']; total: number }>>((acc, t) => {
+  const byCategory = transactions.reduce<
+    Record<string, { category: (typeof transactions)[0]['category']; total: number }>
+  >((acc, t) => {
     const catId = t.category.id;
     if (!acc[catId]) {
       acc[catId] = { category: t.category, total: 0 };
@@ -135,6 +137,53 @@ export async function getMonthlyTrend(userId: string, months = 6) {
   }));
 }
 
+export async function getMonthlySummary(userId: string, month: number, year: number) {
+  const startOfMonth = new Date(year, month - 1, 1);
+  const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+
+  const transactions = await prisma.transaction.findMany({
+    where: {
+      userId,
+      date: { gte: startOfMonth, lte: endOfMonth },
+    },
+    include: {
+      category: { select: { id: true, name: true, icon: true, color: true } },
+    },
+  });
+
+  const totalExpenses = transactions
+    .filter((t) => t.type === 'expense')
+    .reduce((sum, t) => sum + Number(t.amount), 0);
+
+  const totalIncome = transactions
+    .filter((t) => t.type === 'income')
+    .reduce((sum, t) => sum + Number(t.amount), 0);
+
+  const expenseTransactions = transactions.filter((t) => t.type === 'expense');
+
+  const byCategory = expenseTransactions.reduce<
+    Record<string, { category: (typeof expenseTransactions)[0]['category']; total: number }>
+  >((acc, t) => {
+    const catId = t.category.id;
+    if (!acc[catId]) acc[catId] = { category: t.category, total: 0 };
+    acc[catId].total += Number(t.amount);
+    return acc;
+  }, {});
+
+  const categories = Object.values(byCategory)
+    .map((c) => ({
+      id: c.category.id,
+      name: c.category.name,
+      icon: c.category.icon,
+      color: c.category.color,
+      total: c.total,
+      percentage: totalExpenses > 0 ? Math.round((c.total / totalExpenses) * 100) : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  return { month, year, totalExpenses, totalIncome, net: totalIncome - totalExpenses, categories };
+}
+
 export async function getFixedVsVariable(userId: string) {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -150,10 +199,7 @@ export async function getFixedVsVariable(userId: string) {
     select: { amount: true },
   });
 
-  const fixedExpensesTotal = fixedExpensesConfig.reduce(
-    (sum, fe) => sum + Number(fe.amount),
-    0
-  );
+  const fixedExpensesTotal = fixedExpensesConfig.reduce((sum, fe) => sum + Number(fe.amount), 0);
 
   // Obtener transacciones variables (gastos sin fixedExpenseId)
   const variableTransactions = await prisma.transaction.findMany({
@@ -169,10 +215,7 @@ export async function getFixedVsVariable(userId: string) {
     select: { amount: true },
   });
 
-  const variableExpensesTotal = variableTransactions.reduce(
-    (sum, t) => sum + Number(t.amount),
-    0
-  );
+  const variableExpensesTotal = variableTransactions.reduce((sum, t) => sum + Number(t.amount), 0);
 
   const total = fixedExpensesTotal + variableExpensesTotal;
 
