@@ -41,6 +41,18 @@ export async function getFixedVsVariable(req: AuthRequest, res: Response, next: 
   }
 }
 
+export async function getMonthlySummary(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const now = new Date();
+    const month = parseInt(req.query.month as string) || now.getMonth() + 1;
+    const year = parseInt(req.query.year as string) || now.getFullYear();
+    const data = await dashboardService.getMonthlySummary(req.user!.userId, month, year);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getNextMonthProjection(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const projection = await projectionService.getNextMonthProjection(req.user!.userId);

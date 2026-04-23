@@ -10,6 +10,7 @@ router.get('/summary', dashboardController.getSummary);
 router.get('/by-category', dashboardController.getByCategory);
 router.get('/monthly-trend', dashboardController.getMonthlyTrend);
 router.get('/fixed-vs-variable', dashboardController.getFixedVsVariable);
+router.get('/monthly-summary', dashboardController.getMonthlySummary);
 router.get('/next-month-projection', dashboardController.getNextMonthProjection);
 
 export default router;
