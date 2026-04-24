@@ -9,8 +9,13 @@ export const createFixedExpenseSchema = z.object({
   accountId: z.string().uuid('ID de cuenta inválido'),
   categoryId: z.string().uuid('ID de categoría inválido'),
   isActive: z.boolean().default(true),
+  autoGenerate: z.boolean().default(false),
   creditCardAccountId: z.string().uuid('ID de tarjeta de crédito inválido').optional().nullable(),
-  recurringDebtPaymentId: z.string().uuid('ID de pago recurrente de deuda inválido').optional().nullable(),
+  recurringDebtPaymentId: z
+    .string()
+    .uuid('ID de pago recurrente de deuda inválido')
+    .optional()
+    .nullable(),
 });
 
 export const updateFixedExpenseSchema = createFixedExpenseSchema.partial();

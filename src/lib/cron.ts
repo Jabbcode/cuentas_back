@@ -2,8 +2,28 @@ import cron from 'node-cron';
 import { prisma } from './prisma.js';
 import { createNotification, getPreferences } from '../services/notifications.service.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
+import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
 
 function startCronJobs() {
+  // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
+  cron.schedule('0 7 * * *', async () => {
+    try {
+      const createdByUser = await autoGenerateFixedExpenseTransactions(new Date());
+
+      for (const [userId, count] of Object.entries(createdByUser)) {
+        await createNotification(
+          userId,
+          'auto_generated',
+          'Transacciones generadas automáticamente',
+          `Se generaron ${count} transacción${count > 1 ? 'es' : ''} automática${count > 1 ? 's' : ''} hoy.`,
+          { created: count }
+        );
+      }
+    } catch {
+      // Cron errors should not crash the server
+    }
+  });
+
   // Daily at 9 AM: alert for debts due in next 3 days
   cron.schedule('0 9 * * *', async () => {
     const now = new Date();
