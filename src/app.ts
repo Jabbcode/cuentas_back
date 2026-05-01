@@ -15,6 +15,7 @@ import receiptsRoutes from './routes/receipts.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import budgetsRoutes from './routes/budgets.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
+import tagsRoutes from './routes/tags.routes.js';
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use('/api/receipts', receiptsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/budgets', budgetsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/tags', tagsRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

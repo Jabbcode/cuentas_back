@@ -26,6 +26,7 @@ model User {
   transfers              Transfer[]
   budgets                Budget[]
   notifications          Notification[]
+  tags                   Tag[]
 }
 
 model Account {
@@ -118,6 +119,7 @@ model Transaction {
   creditCardPayment CreditCardPayment?
   debtPayment       DebtPayment?
   receiptItems      ReceiptItem[]
+  tags              TransactionTag[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -318,6 +320,28 @@ model Notification {
   @@index([userId])
   @@index([userId, read])
   @@index([createdAt])
+}
+
+model Tag {
+  id           String           @id @default(uuid())
+  name         String
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions TransactionTag[]
+  createdAt    DateTime         @default(now())
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model TransactionTag {
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tagId         String
+  tag           Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+  @@index([tagId])
 }
 
 model ReceiptItem {
