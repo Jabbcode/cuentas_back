@@ -6,9 +6,10 @@ import {
 } from '../schemas/transaction.schema.js';
 import { updateAccountBalance } from './accounts.service.js';
 import { checkBudgetAndNotify } from './notifications.service.js';
+import { upsertTags } from './tags.service.js';
 
 export async function getTransactions(userId: string, query: TransactionQuery) {
-  const { startDate, endDate, accountId, categoryId, type, limit = 50, offset = 0 } = query;
+  const { startDate, endDate, accountId, categoryId, type, limit = 50, offset = 0, tag } = query;
 
   const where: Record<string, unknown> = { userId };
 
@@ -21,6 +22,7 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
   if (accountId) where.accountId = accountId;
   if (categoryId) where.categoryId = categoryId;
   if (type) where.type = type;
+  if (tag) where.tags = { some: { tag: { name: tag.toLowerCase(), userId } } };
 
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
@@ -29,9 +31,8 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
         account: { select: { id: true, name: true, color: true } },
         category: { select: { id: true, name: true, icon: true, color: true } },
         fixedExpense: { select: { id: true, name: true } },
-        _count: {
-          select: { receiptItems: true },
-        },
+        tags: { include: { tag: { select: { id: true, name: true } } } },
+        _count: { select: { receiptItems: true } },
       },
       orderBy: { date: 'desc' },
       take: limit,
@@ -50,6 +51,7 @@ export async function getTransactionById(id: string, userId: string) {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
       receiptItems: true,
+      tags: { include: { tag: { select: { id: true, name: true } } } },
     },
   });
 
@@ -61,6 +63,8 @@ export async function getTransactionById(id: string, userId: string) {
 }
 
 export async function createTransaction(data: CreateTransactionInput, userId: string) {
+  const tagIds = data.tagNames?.length ? await upsertTags(userId, data.tagNames) : [];
+
   const transaction = await prisma.transaction.create({
     data: {
       amount: data.amount,
@@ -83,15 +87,16 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
             })),
           }
         : undefined,
+      tags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
     },
     include: {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
       receiptItems: true,
+      tags: { include: { tag: { select: { id: true, name: true } } } },
     },
   });
 
-  // Update account balance
   await updateAccountBalance(data.accountId, data.amount, data.type);
 
   if (data.type === 'expense') {
@@ -104,15 +109,13 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
 export async function updateTransaction(id: string, data: UpdateTransactionInput, userId: string) {
   const existing = await getTransactionById(id, userId);
 
-  // Revert old balance change
   await updateAccountBalance(
     existing.accountId,
     Number(existing.amount),
     existing.type === 'income' ? 'expense' : 'income'
   );
 
-  // Build update data object with only defined fields
-  const updateData: Record<string, any> = {};
+  const updateData: Record<string, unknown> = {};
   if (data.amount !== undefined) updateData.amount = data.amount;
   if (data.type !== undefined) updateData.type = data.type;
   if (data.description !== undefined) updateData.description = data.description;
@@ -122,16 +125,24 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
   if (data.imageHash !== undefined) updateData.imageHash = data.imageHash;
   if (data.date !== undefined) updateData.date = new Date(data.date);
 
+  if (data.tagNames !== undefined) {
+    const tagIds = data.tagNames.length ? await upsertTags(userId, data.tagNames) : [];
+    updateData.tags = {
+      deleteMany: {},
+      create: tagIds.map((tagId) => ({ tagId })),
+    };
+  }
+
   const updated = await prisma.transaction.update({
     where: { id },
     data: updateData,
     include: {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
+      tags: { include: { tag: { select: { id: true, name: true } } } },
     },
   });
 
-  // Apply new balance change
   await updateAccountBalance(
     updated.accountId,
     Number(updated.amount),
