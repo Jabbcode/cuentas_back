@@ -28,10 +28,16 @@ export const transactionQuerySchema = z.object({
   endDate: z.string().optional(),
   accountId: z.string().uuid().optional(),
   categoryId: z.string().uuid().optional(),
+  categoryIds: z.preprocess(
+    (val) => (val === undefined ? undefined : Array.isArray(val) ? val : [val]),
+    z.array(z.string().uuid()).optional()
+  ),
   type: z.enum(['expense', 'income']).optional(),
   limit: z.string().transform(Number).optional(),
   offset: z.string().transform(Number).optional(),
   tag: z.string().optional(),
+  minAmount: z.string().transform(Number).optional(),
+  maxAmount: z.string().transform(Number).optional(),
 });
 
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;

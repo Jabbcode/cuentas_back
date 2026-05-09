@@ -9,7 +9,19 @@ import { checkBudgetAndNotify } from './notifications.service.js';
 import { upsertTags } from './tags.service.js';
 
 export async function getTransactions(userId: string, query: TransactionQuery) {
-  const { startDate, endDate, accountId, categoryId, type, limit = 50, offset = 0, tag } = query;
+  const {
+    startDate,
+    endDate,
+    accountId,
+    categoryId,
+    categoryIds,
+    type,
+    limit = 50,
+    offset = 0,
+    tag,
+    minAmount,
+    maxAmount,
+  } = query;
 
   const where: Record<string, unknown> = { userId };
 
@@ -20,9 +32,22 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
   }
 
   if (accountId) where.accountId = accountId;
-  if (categoryId) where.categoryId = categoryId;
+
+  if (categoryIds?.length) {
+    where.categoryId = { in: categoryIds };
+  } else if (categoryId) {
+    where.categoryId = categoryId;
+  }
+
   if (type) where.type = type;
   if (tag) where.tags = { some: { tag: { name: tag.toLowerCase(), userId } } };
+
+  if (minAmount !== undefined || maxAmount !== undefined) {
+    const amountFilter: Record<string, number> = {};
+    if (minAmount !== undefined) amountFilter.gte = minAmount;
+    if (maxAmount !== undefined) amountFilter.lte = maxAmount;
+    where.amount = amountFilter;
+  }
 
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
@@ -165,6 +190,66 @@ export async function deleteTransaction(id: string, userId: string) {
   return prisma.transaction.delete({
     where: { id },
   });
+}
+
+export async function getTransactionSummary(
+  userId: string,
+  query: Pick<TransactionQuery, 'startDate' | 'endDate' | 'accountId' | 'type'>
+) {
+  const { startDate, endDate, accountId, type } = query;
+
+  const where: Record<string, unknown> = { userId };
+
+  if (startDate || endDate) {
+    where.date = {};
+    if (startDate) (where.date as Record<string, Date>).gte = new Date(startDate);
+    if (endDate) (where.date as Record<string, Date>).lte = new Date(endDate);
+  }
+
+  if (accountId) where.accountId = accountId;
+  if (type) where.type = type;
+
+  const rows = await prisma.transaction.groupBy({
+    by: ['categoryId', 'type'],
+    where,
+    _sum: { amount: true },
+    _count: { _all: true },
+  });
+
+  const categoryMap = new Map<
+    string,
+    { expenseTotal: number; incomeTotal: number; count: number }
+  >();
+
+  for (const row of rows) {
+    if (!row.categoryId) continue;
+    const entry = categoryMap.get(row.categoryId) ?? { expenseTotal: 0, incomeTotal: 0, count: 0 };
+    entry.count += row._count._all;
+    if (row.type === 'expense') entry.expenseTotal += Number(row._sum.amount ?? 0);
+    else entry.incomeTotal += Number(row._sum.amount ?? 0);
+    categoryMap.set(row.categoryId, entry);
+  }
+
+  const categoryIds = Array.from(categoryMap.keys());
+  if (categoryIds.length === 0) return [];
+
+  const cats = await prisma.category.findMany({
+    where: { id: { in: categoryIds } },
+    select: { id: true, name: true, icon: true, color: true },
+  });
+
+  return cats
+    .map((cat) => {
+      const data = categoryMap.get(cat.id) ?? { expenseTotal: 0, incomeTotal: 0, count: 0 };
+      return {
+        category: cat,
+        expenseTotal: data.expenseTotal,
+        incomeTotal: data.incomeTotal,
+        count: data.count,
+        netTotal: data.incomeTotal - data.expenseTotal,
+      };
+    })
+    .sort((a, b) => b.expenseTotal - a.expenseTotal);
 }
 
 export async function getReceiptItems(transactionId: string, userId: string) {

@@ -1,6 +1,10 @@
 import { Response, NextFunction } from 'express';
 import * as transactionsService from '../services/transactions.service.js';
-import { createTransactionSchema, updateTransactionSchema, transactionQuerySchema } from '../schemas/transaction.schema.js';
+import {
+  createTransactionSchema,
+  updateTransactionSchema,
+  transactionQuerySchema,
+} from '../schemas/transaction.schema.js';
 import { AuthRequest } from '../types/index.js';
 
 export async function getTransactions(req: AuthRequest, res: Response, next: NextFunction) {
@@ -62,6 +66,16 @@ export async function deleteTransaction(req: AuthRequest, res: Response, next: N
       res.status(404).json({ error: error.message });
       return;
     }
+    next(error);
+  }
+}
+
+export async function getTransactionSummary(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const query = transactionQuerySchema.parse(req.query);
+    const result = await transactionsService.getTransactionSummary(req.user!.userId, query);
+    res.json(result);
+  } catch (error) {
     next(error);
   }
 }
