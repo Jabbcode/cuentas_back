@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { CreateBudgetInput, UpdateBudgetInput } from '../schemas/budget.schema.js';
+import { NotFoundError, ConflictError } from '../lib/errors.js';
 
 const categorySelect = { select: { id: true, name: true, icon: true, color: true } };
 
@@ -53,7 +54,7 @@ export async function getBudgetById(id: string, userId: string) {
     include: { category: categorySelect },
   });
 
-  if (!budget) throw new Error('Presupuesto no encontrado');
+  if (!budget) throw new NotFoundError('Presupuesto no encontrado');
 
   return budget;
 }
@@ -64,7 +65,7 @@ export async function createBudget(data: CreateBudgetInput, userId: string) {
   });
 
   if (existing) {
-    throw new Error('Ya existe un presupuesto para esta categoría en este mes');
+    throw new ConflictError('Ya existe un presupuesto para esta categoría en este mes');
   }
 
   return prisma.budget.create({

@@ -4,6 +4,7 @@ import type {
   UpdateRecurringDebtPaymentInput,
 } from '../schemas/recurring-debt-payment.schema.js';
 import * as debtsService from './debts.service.js';
+import { NotFoundError, ConflictError } from '../lib/errors.js';
 
 /**
  * Calculate the next due date based on frequency and current date
@@ -57,11 +58,11 @@ export async function createRecurringDebtPayment(
   });
 
   if (!debt) {
-    throw new Error('Deuda no encontrada');
+    throw new NotFoundError('Deuda no encontrada');
   }
 
   if (debt.status === 'paid') {
-    throw new Error('No se pueden configurar pagos recurrentes para una deuda pagada');
+    throw new ConflictError('No se pueden configurar pagos recurrentes para una deuda pagada');
   }
 
   // Verify account exists and belongs to user
@@ -70,7 +71,7 @@ export async function createRecurringDebtPayment(
   });
 
   if (!account) {
-    throw new Error('Cuenta no encontrada');
+    throw new NotFoundError('Cuenta no encontrada');
   }
 
   // Calculate next due date
@@ -155,7 +156,7 @@ export async function getRecurringDebtPaymentById(id: string, userId: string) {
   });
 
   if (!recurringPayment) {
-    throw new Error('Pago recurrente no encontrado');
+    throw new NotFoundError('Pago recurrente no encontrado');
   }
 
   return recurringPayment;
@@ -174,16 +175,12 @@ export async function updateRecurringDebtPayment(
   });
 
   if (!existing) {
-    throw new Error('Pago recurrente no encontrado');
+    throw new NotFoundError('Pago recurrente no encontrado');
   }
 
   // If frequency changes, recalculate nextDueDate
   let nextDueDate = existing.nextDueDate;
-  if (
-    data.frequency ||
-    data.dayOfMonth !== undefined ||
-    data.dayOfWeek !== undefined
-  ) {
+  if (data.frequency || data.dayOfMonth !== undefined || data.dayOfWeek !== undefined) {
     const frequency = data.frequency || existing.frequency;
     const dayOfMonth = data.dayOfMonth !== undefined ? data.dayOfMonth : existing.dayOfMonth;
     const dayOfWeek = data.dayOfWeek !== undefined ? data.dayOfWeek : existing.dayOfWeek;
@@ -222,7 +219,7 @@ export async function deleteRecurringDebtPayment(id: string, userId: string) {
   });
 
   if (!recurringPayment) {
-    throw new Error('Pago recurrente no encontrado');
+    throw new NotFoundError('Pago recurrente no encontrado');
   }
 
   await prisma.recurringDebtPayment.delete({
@@ -265,7 +262,11 @@ export async function processPendingRecurringPayments() {
           where: { id: recurringPayment.id },
           data: { isActive: false },
         });
-        results.push({ id: recurringPayment.id, status: 'deactivated', reason: 'End date reached' });
+        results.push({
+          id: recurringPayment.id,
+          status: 'deactivated',
+          reason: 'End date reached',
+        });
         continue;
       }
 
@@ -280,15 +281,11 @@ export async function processPendingRecurringPayments() {
       }
 
       // Process the payment
-      await debtsService.payDebt(
-        recurringPayment.debtId,
-        recurringPayment.userId,
-        {
-          amount: Number(recurringPayment.amount),
-          accountId: recurringPayment.accountId,
-          notes: `Pago automático (recurrente) - ${recurringPayment.notes || ''}`,
-        }
-      );
+      await debtsService.payDebt(recurringPayment.debtId, recurringPayment.userId, {
+        amount: Number(recurringPayment.amount),
+        accountId: recurringPayment.accountId,
+        notes: `Pago automático (recurrente) - ${recurringPayment.notes || ''}`,
+      });
 
       // Calculate next due date
       const nextDueDate = calculateNextDueDate(

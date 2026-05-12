@@ -1,11 +1,16 @@
 import { prisma } from '../lib/prisma.js';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
 import { calculateNextDueDate } from './recurring-debt-payments.service.js';
+import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 
 /**
  * Calculate interest based on debt configuration
  */
-function calculateInterest(remainingAmount: number, interestRate: number, interestType: string): number {
+function calculateInterest(
+  remainingAmount: number,
+  interestRate: number,
+  interestType: string
+): number {
   if (interestType === 'percentage') {
     return (remainingAmount * interestRate) / 100;
   } else if (interestType === 'fixed') {
@@ -98,7 +103,7 @@ export async function getDebtById(debtId: string, userId: string) {
   });
 
   if (!debt) {
-    throw new Error('Deuda no encontrada');
+    throw new NotFoundError('Deuda no encontrada');
   }
 
   return debt;
@@ -113,7 +118,7 @@ export async function updateDebt(debtId: string, userId: string, data: UpdateDeb
   });
 
   if (!existingDebt) {
-    throw new Error('Deuda no encontrada');
+    throw new NotFoundError('Deuda no encontrada');
   }
 
   const debt = await prisma.debt.update({
@@ -140,7 +145,7 @@ export async function deleteDebt(debtId: string, userId: string) {
   });
 
   if (!debt) {
-    throw new Error('Deuda no encontrada');
+    throw new NotFoundError('Deuda no encontrada');
   }
 
   // Cascade delete will handle payments and transactions
@@ -160,11 +165,11 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
   });
 
   if (!debt) {
-    throw new Error('Deuda no encontrada');
+    throw new NotFoundError('Deuda no encontrada');
   }
 
   if (debt.status === 'paid') {
-    throw new Error('Esta deuda ya está pagada');
+    throw new ConflictError('Esta deuda ya está pagada');
   }
 
   // Verify account exists and belongs to user
@@ -173,18 +178,22 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
   });
 
   if (!account) {
-    throw new Error('Cuenta no encontrada');
+    throw new NotFoundError('Cuenta no encontrada');
   }
 
   // Verify sufficient balance
   if (Number(account.balance) < data.amount) {
-    throw new Error('Saldo insuficiente en la cuenta');
+    throw new ValidationError('Saldo insuficiente en la cuenta');
   }
 
   // Calculate interest if applicable
   let interest = 0;
   if (debt.interestRate && debt.interestType) {
-    interest = calculateInterest(Number(debt.remainingAmount), Number(debt.interestRate), debt.interestType);
+    interest = calculateInterest(
+      Number(debt.remainingAmount),
+      Number(debt.interestRate),
+      debt.interestType
+    );
   }
 
   // Calculate principal amount (what goes to reduce the debt)
@@ -327,15 +336,18 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
       // Only create if there's no payment this month
       if (!existingPayment) {
         try {
-          await createTransaction({
-            amount: data.amount,
-            type: 'expense',
-            description: `Pago: ${fixedExpense.name}`,
-            date: new Date().toISOString(),
-            accountId: data.accountId,
-            categoryId: fixedExpense.categoryId,
-            fixedExpenseId: fixedExpense.id,
-          }, userId);
+          await createTransaction(
+            {
+              amount: data.amount,
+              type: 'expense',
+              description: `Pago: ${fixedExpense.name}`,
+              date: new Date().toISOString(),
+              accountId: data.accountId,
+              categoryId: fixedExpense.categoryId,
+              fixedExpenseId: fixedExpense.id,
+            },
+            userId
+          );
         } catch (error) {
           // Log error but don't fail the whole transaction
           console.error('Error creating fixed expense transaction:', error);
@@ -359,14 +371,8 @@ export async function getDebtsSummary(userId: string) {
   const overdueDebts = debts.filter((d) => d.status === 'overdue');
 
   // Total debt should include both active and overdue debts
-  const totalActiveAmount = activeDebts.reduce(
-    (sum, d) => sum + Number(d.remainingAmount),
-    0
-  );
-  const totalOverdueAmount = overdueDebts.reduce(
-    (sum, d) => sum + Number(d.remainingAmount),
-    0
-  );
+  const totalActiveAmount = activeDebts.reduce((sum, d) => sum + Number(d.remainingAmount), 0);
+  const totalOverdueAmount = overdueDebts.reduce((sum, d) => sum + Number(d.remainingAmount), 0);
   const totalDebt = totalActiveAmount + totalOverdueAmount;
 
   // Get debts due soon (within 7 days)

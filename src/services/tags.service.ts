@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { NotFoundError } from '../lib/errors.js';
 
 export async function getTags(userId: string, nameFilter?: string) {
   return prisma.tag.findMany({
@@ -39,7 +40,7 @@ export async function getTagsSummary(userId: string) {
 
 export async function deleteTag(id: string, userId: string) {
   const tag = await prisma.tag.findFirst({ where: { id, userId } });
-  if (!tag) throw new Error('Etiqueta no encontrada');
+  if (!tag) throw new NotFoundError('Etiqueta no encontrada');
   return prisma.tag.delete({ where: { id } });
 }
 

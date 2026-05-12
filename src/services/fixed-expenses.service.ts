@@ -4,6 +4,7 @@ import {
   UpdateFixedExpenseInput,
   PayFixedExpenseInput,
 } from '../schemas/fixed-expense.schema.js';
+import { NotFoundError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
 import { calculateNextDueDate } from './recurring-debt-payments.service.js';
 
@@ -35,7 +36,7 @@ export async function getFixedExpenseById(id: string, userId: string) {
   });
 
   if (!fixedExpense) {
-    throw new Error('Gasto fijo no encontrado');
+    throw new NotFoundError('Gasto fijo no encontrado');
   }
 
   return fixedExpense;
@@ -267,7 +268,7 @@ export async function reorderFixedExpenses(
   });
 
   if (items.length !== itemIds.length) {
-    throw new Error('Algunos gastos fijos no fueron encontrados');
+    throw new NotFoundError('Algunos gastos fijos no fueron encontrados');
   }
 
   // Actualizar el orden de cada item

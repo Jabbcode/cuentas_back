@@ -4,6 +4,7 @@ import {
   UpdateAccountInput,
   TransferInput,
 } from '../schemas/account.schema.js';
+import { NotFoundError, ValidationError } from '../lib/errors.js';
 
 export async function getAccounts(userId: string) {
   return prisma.account.findMany({
@@ -18,7 +19,7 @@ export async function getAccountById(id: string, userId: string) {
   });
 
   if (!account) {
-    throw new Error('Cuenta no encontrada');
+    throw new NotFoundError('Cuenta no encontrada');
   }
 
   return account;
@@ -54,7 +55,7 @@ export async function transferFunds(data: TransferInput, userId: string) {
   const { fromAccountId, toAccountId, amount, note } = data;
 
   if (fromAccountId === toAccountId) {
-    throw new Error('Las cuentas de origen y destino deben ser diferentes');
+    throw new ValidationError('Las cuentas de origen y destino deben ser diferentes');
   }
 
   const [fromAccount, toAccount] = await Promise.all([
@@ -62,10 +63,10 @@ export async function transferFunds(data: TransferInput, userId: string) {
     prisma.account.findFirst({ where: { id: toAccountId, userId } }),
   ]);
 
-  if (!fromAccount) throw new Error('Cuenta origen no encontrada');
-  if (!toAccount) throw new Error('Cuenta destino no encontrada');
+  if (!fromAccount) throw new NotFoundError('Cuenta origen no encontrada');
+  if (!toAccount) throw new NotFoundError('Cuenta destino no encontrada');
   if (Number(fromAccount.balance) < amount)
-    throw new Error('Saldo insuficiente en la cuenta origen');
+    throw new ValidationError('Saldo insuficiente en la cuenta origen');
 
   return prisma.$transaction(async (tx) => {
     await tx.account.update({
@@ -105,7 +106,7 @@ export async function updateAccountBalance(
   });
 
   if (!account) {
-    throw new Error('Cuenta no encontrada');
+    throw new NotFoundError('Cuenta no encontrada');
   }
 
   const currentBalance = Number(account.balance);

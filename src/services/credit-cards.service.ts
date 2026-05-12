@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { NotFoundError, ValidationError, ConflictError } from '../lib/errors.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -85,17 +86,20 @@ function normalizeToUTC(date: Date): Date {
 /**
  * Get credit card statement with current and closed periods
  */
-export async function getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement> {
+export async function getCreditCardStatement(
+  accountId: string,
+  userId: string
+): Promise<CreditCardStatement> {
   const account = await prisma.account.findFirst({
     where: { id: accountId, userId, type: 'credit_card' },
   });
 
   if (!account) {
-    throw new Error('Cuenta no encontrada o no es una tarjeta de crédito');
+    throw new NotFoundError('Cuenta no encontrada o no es una tarjeta de crédito');
   }
 
   if (!account.cutoffDay || !account.paymentDueDay) {
-    throw new Error('La tarjeta no tiene configuradas las fechas de corte y pago');
+    throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
   }
 
   const today = new Date();
@@ -145,14 +149,8 @@ export async function getCreditCardStatement(accountId: string, userId: string):
   });
 
   // Calculate balances
-  const currentBalance = currentPeriodTransactions.reduce(
-    (sum, tx) => sum + Number(tx.amount),
-    0
-  );
-  const closedBalance = closedPeriodTransactions.reduce(
-    (sum, tx) => sum + Number(tx.amount),
-    0
-  );
+  const currentBalance = currentPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
+  const closedBalance = closedPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
 
   // Calculate period end dates (one day before the next cutoff)
   const closedPeriodEnd = new Date(lastCutoff);
@@ -321,7 +319,7 @@ export async function payCreditCardStatement(
   const statement = await getCreditCardStatement(accountId, userId);
 
   if (statement.closedPeriod.isPaid) {
-    throw new Error('El estado de cuenta ya está pagado');
+    throw new ConflictError('El estado de cuenta ya está pagado');
   }
 
   const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
@@ -331,26 +329,32 @@ export async function payCreditCardStatement(
 
   // Create payment transaction (income to credit card)
   // This automatically updates the credit card balance
-  const transaction = await createTransaction({
-    amount: data.amount,
-    type: 'income',
-    description: `Pago estado de cuenta ${statement.account.name}`,
-    date: paymentDate.toISOString(),
-    accountId: accountId,
-    categoryId: (await getOrCreatePaymentCategory(userId)).id,
-  }, userId);
+  const transaction = await createTransaction(
+    {
+      amount: data.amount,
+      type: 'income',
+      description: `Pago estado de cuenta ${statement.account.name}`,
+      date: paymentDate.toISOString(),
+      accountId: accountId,
+      categoryId: (await getOrCreatePaymentCategory(userId)).id,
+    },
+    userId
+  );
 
   // If paying from another account, create expense transaction
   // This automatically updates the payment account balance
   if (data.paymentAccountId !== accountId) {
-    await createTransaction({
-      amount: data.amount,
-      type: 'expense',
-      description: `Pago tarjeta ${statement.account.name}`,
-      date: paymentDate.toISOString(),
-      accountId: data.paymentAccountId,
-      categoryId: (await getOrCreatePaymentCategory(userId)).id,
-    }, userId);
+    await createTransaction(
+      {
+        amount: data.amount,
+        type: 'expense',
+        description: `Pago tarjeta ${statement.account.name}`,
+        date: paymentDate.toISOString(),
+        accountId: data.paymentAccountId,
+        categoryId: (await getOrCreatePaymentCategory(userId)).id,
+      },
+      userId
+    );
   }
 
   // Record payment
@@ -393,15 +397,18 @@ export async function payCreditCardStatement(
 
     // Only create if there's no payment this month
     if (!existingPayment) {
-      await createTransaction({
-        amount: data.amount,
-        type: 'expense',
-        description: `Pago: ${fixedExpense.name}`,
-        date: paymentDate.toISOString(),
-        accountId: data.paymentAccountId,
-        categoryId: fixedExpense.categoryId,
-        fixedExpenseId: fixedExpense.id,
-      }, userId);
+      await createTransaction(
+        {
+          amount: data.amount,
+          type: 'expense',
+          description: `Pago: ${fixedExpense.name}`,
+          date: paymentDate.toISOString(),
+          accountId: data.paymentAccountId,
+          categoryId: fixedExpense.categoryId,
+          fixedExpenseId: fixedExpense.id,
+        },
+        userId
+      );
     }
   }
 

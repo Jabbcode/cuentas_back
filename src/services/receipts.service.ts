@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { buildReceiptAnalysisPrompt } from '../prompts/receipt-analysis.prompt.js';
 import type { ScanReceiptResponse, DuplicateCheckResponse } from '../schemas/receipt.schema.js';
+import { AppError, ValidationError } from '../lib/errors.js';
 
 // Initialize Claude API client
 const anthropic = new Anthropic({
@@ -78,8 +79,8 @@ async function checkSimilarTransactions(
       const txDescLower = tx.description.toLowerCase();
 
       // Simple similarity: check if one contains key words from the other
-      const words = descLower.split(/\s+/).filter(w => w.length > 3);
-      const matchedWords = words.filter(word => txDescLower.includes(word));
+      const words = descLower.split(/\s+/).filter((w) => w.length > 3);
+      const matchedWords = words.filter((word) => txDescLower.includes(word));
 
       return matchedWords.length >= Math.min(2, words.length * 0.5);
     });
@@ -96,13 +97,13 @@ async function checkSimilarTransactions(
 async function extractTextFromImage(imageBuffer: Buffer): Promise<string> {
   try {
     const result = await Tesseract.recognize(imageBuffer, 'spa', {
-    // Removed console.log
+      // Removed console.log
     });
 
     return result.data.text;
   } catch (error) {
     // Removed console.error
-    throw new Error('Error al extraer texto de la imagen');
+    throw new AppError('Error al extraer texto de la imagen', 500, 'INTEGRATION_ERROR');
   }
 }
 
@@ -130,7 +131,11 @@ async function processReceiptWithClaude(ocrText: string): Promise<ScanReceiptRes
     // Try to parse JSON from the response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('No se pudo extraer JSON de la respuesta de Claude');
+      throw new AppError(
+        'No se pudo extraer JSON de la respuesta de Claude',
+        500,
+        'INTEGRATION_ERROR'
+      );
     }
 
     const data = JSON.parse(jsonMatch[0]);
@@ -143,16 +148,18 @@ async function processReceiptWithClaude(ocrText: string): Promise<ScanReceiptRes
       confidence: data.confidence || 'low',
       rawText: ocrText,
       imageHash: '', // Will be set by caller
-      items: Array.isArray(data.items) ? data.items.map((item: any) => ({
-        name: item.name || 'Producto sin nombre',
-        quantity: parseFloat(item.quantity) || 1,
-        unitPrice: parseFloat(item.unitPrice) || 0,
-        totalPrice: parseFloat(item.totalPrice) || 0,
-      })) : [],
+      items: Array.isArray(data.items)
+        ? data.items.map((item: any) => ({
+            name: item.name || 'Producto sin nombre',
+            quantity: parseFloat(item.quantity) || 1,
+            unitPrice: parseFloat(item.unitPrice) || 0,
+            totalPrice: parseFloat(item.totalPrice) || 0,
+          }))
+        : [],
     };
   } catch (error) {
     // Removed console.error
-    throw new Error('Error al procesar la factura con IA');
+    throw new AppError('Error al procesar la factura con IA', 500, 'INTEGRATION_ERROR');
   }
 }
 
@@ -165,10 +172,10 @@ export async function scanReceipt(
 ): Promise<DuplicateCheckResponse> {
   // Step 1: Calculate image hash
   const imageHash = calculateImageHash(imageBuffer);
-    // Removed console.log
+  // Removed console.log
 
   // Step 2: Check for exact duplicate (same image)
-    // Removed console.log
+  // Removed console.log
   const exactDuplicate = await checkExactDuplicate(imageHash, userId);
 
   if (exactDuplicate) {
@@ -189,24 +196,24 @@ export async function scanReceipt(
   }
 
   // Step 3: Extract text with OCR
-    // Removed console.log
+  // Removed console.log
   const ocrText = await extractTextFromImage(imageBuffer);
 
   if (!ocrText || ocrText.trim().length < 10) {
-    throw new Error('No se pudo extraer texto legible de la imagen');
+    throw new ValidationError('No se pudo extraer texto legible de la imagen');
   }
 
-    // Removed console.log
+  // Removed console.log
 
   // Step 4: Process with Claude
-    // Removed console.log
+  // Removed console.log
   const structuredData = await processReceiptWithClaude(ocrText);
   structuredData.imageHash = imageHash; // Add hash to structured data
 
-    // Removed console.log
+  // Removed console.log
 
   // Step 5: Check for similar transactions
-    // Removed console.log
+  // Removed console.log
   const similarTransaction = await checkSimilarTransactions(
     structuredData.amount,
     structuredData.date,
@@ -233,7 +240,7 @@ export async function scanReceipt(
   }
 
   // Step 6: No duplicates found
-    // Removed console.log
+  // Removed console.log
   return {
     duplicate: false,
     matchType: 'none',
@@ -245,14 +252,14 @@ export async function scanReceipt(
  * OCR-only function: Extract text without AI processing (FREE)
  */
 export async function ocrOnly(imageBuffer: Buffer): Promise<{ rawText: string }> {
-    // Removed console.log
+  // Removed console.log
   const rawText = await extractTextFromImage(imageBuffer);
 
   if (!rawText || rawText.trim().length < 10) {
-    throw new Error('No se pudo extraer texto legible de la imagen');
+    throw new ValidationError('No se pudo extraer texto legible de la imagen');
   }
 
-    // Removed console.log
+  // Removed console.log
 
   return { rawText };
 }
