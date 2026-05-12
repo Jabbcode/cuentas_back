@@ -153,10 +153,16 @@ Mensaje de PR: `✅ BUILD SUCCESSFUL — TypeScript: 0 errors | Architecture: la
 
 ## Restricciones Críticas
 
-### Nunca pushear a main
-- ❌ Push directo a main — PROHIBIDO
-- ✅ Solo mergear si usuario dice explícitamente "pushea a main" o "mergea a main"
-- ✅ Siempre rama feature + PR
+### Flujo de ramas — CRÍTICO
+
+```
+feature/<descripcion>  →  PR (base: develop)  →  develop  →  main
+```
+
+- ❌ PR con base `main` — PROHIBIDO
+- ❌ Push directo a `main` o `develop` — PROHIBIDO
+- ✅ Siempre rama `feature/<descripcion>` + PR apuntando a `develop`
+- ✅ Solo mergear `develop → main` si usuario dice explícitamente "pushea a main" o "mergea a main"
 
 ### userId Filtering — CRÍTICO
 - ✅ SIEMPRE `where: { userId }` en queries Prisma

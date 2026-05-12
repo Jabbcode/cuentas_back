@@ -310,11 +310,18 @@ const accounts = await prisma.account.findMany({
 - `db: add index on transactions.userId`
 - `refactor: extract account validation to helper`
 
-### Ramas
-- `main` - Producción
-- `feature/<descripcion>` - Nueva funcionalidad
-- `fix/<descripcion>` - Bug fix
-- `db/<descripcion>` - Migration
+### Flujo de ramas
+
+```
+feature/<descripcion>  →  PR  →  develop  →  (release)  →  main
+```
+
+- `main` — Producción. Solo recibe merges desde `develop` con confirmación explícita del usuario.
+- `develop` — Integración. **Todos los PRs apuntan aquí**, nunca a `main` directamente.
+- `feature/<descripcion>` — Nueva funcionalidad
+- `fix/<descripcion>` — Bug fix
+- `refactor/<descripcion>` — Refactor
+- `db/<descripcion>` — Migration
 
 ## 💅 Estilo de Código
 
