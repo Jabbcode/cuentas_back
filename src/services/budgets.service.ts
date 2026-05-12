@@ -1,6 +1,8 @@
 import { prisma } from '../lib/prisma.js';
 import type { CreateBudgetInput, UpdateBudgetInput } from '../schemas/budget.schema.js';
 import { NotFoundError, ConflictError } from '../lib/errors.js';
+import type { NotificationPreferences } from '../schemas/notification.schema.js';
+import { createNotification } from './notifications.service.js';
 
 const categorySelect = { select: { id: true, name: true, icon: true, color: true } };
 
@@ -87,4 +89,72 @@ export async function updateBudget(id: string, data: UpdateBudgetInput, userId: 
 export async function deleteBudget(id: string, userId: string) {
   await getBudgetById(id, userId);
   return prisma.budget.delete({ where: { id } });
+}
+
+export async function checkBudgetAndNotify(userId: string, categoryId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { notificationPreferences: true },
+  });
+  const prefs = user?.notificationPreferences as NotificationPreferences | null;
+  if (!prefs?.categoryLimit) return;
+
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+
+  const budget = await prisma.budget.findFirst({
+    where: { userId, categoryId, month, year },
+    include: { category: { select: { name: true } } },
+  });
+  if (!budget) return;
+
+  const startOfMonth = new Date(year, month - 1, 1);
+  const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+
+  const result = await prisma.transaction.aggregate({
+    where: { userId, categoryId, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
+    _sum: { amount: true },
+  });
+
+  const spent = Number(result._sum.amount ?? 0);
+  const limit = Number(budget.amount);
+  const alertAt = budget.alertAt ? Number(budget.alertAt) : 80;
+  const percentage = limit > 0 ? (spent / limit) * 100 : 0;
+
+  const isOver = spent > limit;
+  const isNear = !isOver && percentage >= alertAt;
+
+  if (!isOver && !isNear) return;
+
+  // Avoid duplicate notifications of the same type this month
+  const existing = await prisma.notification.findFirst({
+    where: {
+      userId,
+      type: 'category_limit',
+      metadata: { path: ['categoryId'], equals: categoryId },
+      createdAt: { gte: startOfMonth },
+    },
+  });
+  if (existing) return;
+
+  const categoryName = budget.category.name;
+
+  if (isOver) {
+    await createNotification(
+      userId,
+      'category_limit',
+      `Presupuesto superado: ${categoryName}`,
+      `Has superado el presupuesto de €${limit.toFixed(2)} en ${categoryName}. Gasto actual: €${spent.toFixed(2)}.`,
+      { categoryId, spent, limit, percentage }
+    );
+  } else {
+    await createNotification(
+      userId,
+      'category_limit',
+      `Presupuesto al ${Math.round(percentage)}%: ${categoryName}`,
+      `Llevas €${spent.toFixed(2)} de €${limit.toFixed(2)} en ${categoryName} este mes.`,
+      { categoryId, spent, limit, percentage }
+    );
+  }
 }
