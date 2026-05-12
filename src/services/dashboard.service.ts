@@ -1,4 +1,7 @@
-import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
+import * as accountRepo from '../repositories/account.repository.js';
+import * as transactionRepo from '../repositories/transaction.repository.js';
+import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 
 export async function getSummary(userId: string) {
   const now = new Date();
@@ -6,20 +9,8 @@ export async function getSummary(userId: string) {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
   const [accounts, monthlyTransactions] = await Promise.all([
-    prisma.account.findMany({
-      where: { userId },
-      select: { balance: true, type: true, creditLimit: true },
-    }),
-    prisma.transaction.findMany({
-      where: {
-        userId,
-        date: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
-      },
-      select: { amount: true, type: true },
-    }),
+    accountRepo.findAllByUser(userId),
+    transactionRepo.findMany({ userId, date: { gte: startOfMonth, lte: endOfMonth } }),
   ]);
 
   const totalBalance = accounts.reduce((sum, acc) => {
@@ -55,22 +46,22 @@ export async function getByCategory(userId: string, type: 'expense' | 'income' =
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      type,
-      date: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-    },
+  type TxWithCategory = Prisma.TransactionGetPayload<{
     include: {
-      category: { select: { id: true, name: true, icon: true, color: true, monthlyLimit: true } },
-    },
-  });
+      category: { select: { id: true; name: true; icon: true; color: true; monthlyLimit: true } };
+    };
+  }>;
+  const transactions = (await transactionRepo.findMany(
+    { userId, type, date: { gte: startOfMonth, lte: endOfMonth } },
+    {
+      include: {
+        category: { select: { id: true, name: true, icon: true, color: true, monthlyLimit: true } },
+      },
+    }
+  )) as unknown as TxWithCategory[];
 
   const byCategory = transactions.reduce<
-    Record<string, { category: (typeof transactions)[0]['category']; total: number }>
+    Record<string, { category: TxWithCategory['category']; total: number }>
   >((acc, t) => {
     const catId = t.category.id;
     if (!acc[catId]) {
@@ -99,13 +90,7 @@ export async function getMonthlyTrend(userId: string, months = 6) {
   const now = new Date();
   const startDate = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
 
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      date: { gte: startDate },
-    },
-    select: { amount: true, type: true, date: true },
-  });
+  const transactions = await transactionRepo.findMany({ userId, date: { gte: startDate } });
 
   const monthlyData: Record<string, { income: number; expenses: number }> = {};
 
@@ -141,15 +126,13 @@ export async function getMonthlySummary(userId: string, month: number, year: num
   const startOfMonth = new Date(year, month - 1, 1);
   const endOfMonth = new Date(year, month, 0, 23, 59, 59);
 
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      date: { gte: startOfMonth, lte: endOfMonth },
-    },
-    include: {
-      category: { select: { id: true, name: true, icon: true, color: true } },
-    },
-  });
+  type TxWithCat = Prisma.TransactionGetPayload<{
+    include: { category: { select: { id: true; name: true; icon: true; color: true } } };
+  }>;
+  const transactions = (await transactionRepo.findMany(
+    { userId, date: { gte: startOfMonth, lte: endOfMonth } },
+    { include: { category: { select: { id: true, name: true, icon: true, color: true } } } }
+  )) as unknown as TxWithCat[];
 
   const totalExpenses = transactions
     .filter((t) => t.type === 'expense')
@@ -162,7 +145,7 @@ export async function getMonthlySummary(userId: string, month: number, year: num
   const expenseTransactions = transactions.filter((t) => t.type === 'expense');
 
   const byCategory = expenseTransactions.reduce<
-    Record<string, { category: (typeof expenseTransactions)[0]['category']; total: number }>
+    Record<string, { category: TxWithCat['category']; total: number }>
   >((acc, t) => {
     const catId = t.category.id;
     if (!acc[catId]) acc[catId] = { category: t.category, total: 0 };
@@ -190,29 +173,19 @@ export async function getFixedVsVariable(userId: string) {
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
   // Obtener el total de gastos fijos configurados (activos, tipo expense)
-  const fixedExpensesConfig = await prisma.fixedExpense.findMany({
-    where: {
-      userId,
-      isActive: true,
-      type: 'expense',
-    },
-    select: { amount: true },
+  const fixedExpensesConfig = await fixedExpenseRepo.findAllByUser(userId, {
+    isActive: true,
+    type: 'expense',
   });
 
   const fixedExpensesTotal = fixedExpensesConfig.reduce((sum, fe) => sum + Number(fe.amount), 0);
 
   // Obtener transacciones variables (gastos sin fixedExpenseId)
-  const variableTransactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      type: 'expense',
-      fixedExpenseId: null,
-      date: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-    },
-    select: { amount: true },
+  const variableTransactions = await transactionRepo.findMany({
+    userId,
+    type: 'expense',
+    fixedExpenseId: null,
+    date: { gte: startOfMonth, lte: endOfMonth },
   });
 
   const variableExpensesTotal = variableTransactions.reduce((sum, t) => sum + Number(t.amount), 0);

@@ -1,35 +1,32 @@
-import { prisma } from '../lib/prisma.js';
 import type { NotificationPreferences } from '../schemas/notification.schema.js';
 import { NotFoundError } from '../lib/errors.js';
+import * as notificationRepo from '../repositories/notification.repository.js';
+import * as userRepo from '../repositories/user.repository.js';
 
 export async function getNotifications(userId: string) {
-  return prisma.notification.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-  });
+  return notificationRepo.findAllByUser(userId);
 }
 
 export async function getUnreadCount(userId: string) {
-  return prisma.notification.count({ where: { userId, read: false } });
+  return notificationRepo.countUnread(userId);
 }
 
 export async function markAsRead(id: string, userId: string) {
-  const notification = await prisma.notification.findFirst({ where: { id, userId } });
+  const notification = await notificationRepo.findByIdAndUser(id, userId);
   if (!notification) throw new NotFoundError('Notificación no encontrada');
 
-  return prisma.notification.update({ where: { id }, data: { read: true } });
+  return notificationRepo.update(id, { read: true });
 }
 
 export async function markAllAsRead(userId: string) {
-  return prisma.notification.updateMany({ where: { userId, read: false }, data: { read: true } });
+  return notificationRepo.updateMany({ userId, read: false }, { read: true });
 }
 
 export async function deleteNotification(id: string, userId: string) {
-  const notification = await prisma.notification.findFirst({ where: { id, userId } });
+  const notification = await notificationRepo.findByIdAndUser(id, userId);
   if (!notification) throw new NotFoundError('Notificación no encontrada');
 
-  return prisma.notification.delete({ where: { id } });
+  return notificationRepo.remove(id);
 }
 
 export async function createNotification(
@@ -39,28 +36,19 @@ export async function createNotification(
   message: string,
   metadata?: Record<string, unknown>
 ) {
-  return prisma.notification.create({
-    data: {
-      userId,
-      type,
-      title,
-      message,
-      ...(metadata !== undefined
-        ? {
-            metadata: metadata as Parameters<
-              typeof prisma.notification.create
-            >[0]['data']['metadata'],
-          }
-        : {}),
-    },
+  return notificationRepo.create({
+    user: { connect: { id: userId } },
+    type,
+    title,
+    message,
+    ...(metadata !== undefined
+      ? { metadata: metadata as Parameters<typeof notificationRepo.create>[0]['metadata'] }
+      : {}),
   });
 }
 
 export async function getPreferences(userId: string): Promise<NotificationPreferences> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { notificationPreferences: true },
-  });
+  const user = await userRepo.findById(userId, { notificationPreferences: true });
   if (!user) throw new NotFoundError('Usuario no encontrado');
 
   return user.notificationPreferences as NotificationPreferences;
@@ -70,10 +58,7 @@ export async function updatePreferences(userId: string, prefs: Partial<Notificat
   const current = await getPreferences(userId);
   const updated = { ...current, ...prefs };
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { notificationPreferences: updated },
-  });
+  await userRepo.update(userId, { notificationPreferences: updated });
 
   return updated;
 }

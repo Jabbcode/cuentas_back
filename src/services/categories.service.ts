@@ -1,21 +1,14 @@
-import { prisma } from '../lib/prisma.js';
 import { CreateCategoryInput, UpdateCategoryInput } from '../schemas/category.schema.js';
 import { NotFoundError, ConflictError } from '../lib/errors.js';
+import * as categoryRepo from '../repositories/category.repository.js';
+import * as transactionRepo from '../repositories/transaction.repository.js';
 
 export async function getCategories(userId: string, type?: 'expense' | 'income') {
-  return prisma.category.findMany({
-    where: {
-      userId,
-      ...(type && { type }),
-    },
-    orderBy: { name: 'asc' },
-  });
+  return categoryRepo.findAllByUser(userId, type);
 }
 
 export async function getCategoryById(id: string, userId: string) {
-  const category = await prisma.category.findFirst({
-    where: { id, userId },
-  });
+  const category = await categoryRepo.findByIdAndUser(id, userId);
 
   if (!category) {
     throw new NotFoundError('Categoría no encontrada');
@@ -25,38 +18,26 @@ export async function getCategoryById(id: string, userId: string) {
 }
 
 export async function createCategory(data: CreateCategoryInput, userId: string) {
-  return prisma.category.create({
-    data: {
-      ...data,
-      userId,
-    },
-  });
+  return categoryRepo.create({ ...data, user: { connect: { id: userId } } });
 }
 
 export async function updateCategory(id: string, data: UpdateCategoryInput, userId: string) {
   await getCategoryById(id, userId);
 
-  return prisma.category.update({
-    where: { id },
-    data,
-  });
+  return categoryRepo.update(id, data);
 }
 
 export async function deleteCategory(id: string, userId: string) {
   await getCategoryById(id, userId);
 
   // Check if category has transactions
-  const transactionCount = await prisma.transaction.count({
-    where: { categoryId: id },
-  });
+  const transactionCount = await transactionRepo.count({ categoryId: id });
 
   if (transactionCount > 0) {
     throw new ConflictError('No se puede eliminar una categoría con transacciones asociadas');
   }
 
-  return prisma.category.delete({
-    where: { id },
-  });
+  return categoryRepo.remove(id);
 }
 
 export async function getCategorySpending(categoryId: string, userId: string) {
@@ -66,16 +47,11 @@ export async function getCategorySpending(categoryId: string, userId: string) {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      categoryId,
-      userId,
-      type: 'expense',
-      date: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-    },
+  const transactions = await transactionRepo.findMany({
+    categoryId,
+    userId,
+    type: 'expense',
+    date: { gte: startOfMonth, lte: endOfMonth },
   });
 
   const spent = transactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
