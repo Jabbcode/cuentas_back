@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
-import { calculateNextDueDate } from './recurring-debt-payments.service.js';
+import { calculateNextDueDate } from '../lib/utils/date.utils.js';
 import { createTransaction } from './transactions.service.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { calculateDebtPaymentBreakdown, getDebtStatus } from '../lib/utils/debt.utils.js';

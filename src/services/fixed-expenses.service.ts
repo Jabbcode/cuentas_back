@@ -6,7 +6,7 @@ import {
 } from '../schemas/fixed-expense.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
-import { calculateNextDueDate } from './recurring-debt-payments.service.js';
+import { calculateNextDueDate } from '../lib/utils/date.utils.js';
 
 export async function getFixedExpenses(userId: string, activeOnly = false) {
   return prisma.fixedExpense.findMany({
