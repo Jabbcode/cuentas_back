@@ -1,36 +1,9 @@
 import { prisma } from '../lib/prisma.js';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
 import { calculateNextDueDate } from './recurring-debt-payments.service.js';
+import { createTransaction } from './transactions.service.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
-
-/**
- * Calculate interest based on debt configuration
- */
-function calculateInterest(
-  remainingAmount: number,
-  interestRate: number,
-  interestType: string
-): number {
-  if (interestType === 'percentage') {
-    return (remainingAmount * interestRate) / 100;
-  } else if (interestType === 'fixed') {
-    return interestRate;
-  }
-  return 0;
-}
-
-/**
- * Update debt status based on remaining amount and due date
- */
-function getDebtStatus(remainingAmount: number, dueDate: Date | null): string {
-  if (remainingAmount <= 0) {
-    return 'paid';
-  }
-  if (dueDate && new Date() > dueDate) {
-    return 'overdue';
-  }
-  return 'active';
-}
+import { calculateDebtPaymentBreakdown, getDebtStatus } from '../lib/utils/debt.utils.js';
 
 /**
  * Create a new debt
@@ -156,100 +129,104 @@ export async function deleteDebt(debtId: string, userId: string) {
   return { message: 'Deuda eliminada correctamente' };
 }
 
+async function handleRecurringPaymentSideEffects(
+  debtId: string,
+  userId: string,
+  accountId: string,
+  amount: number
+): Promise<void> {
+  const recurringPayment = await prisma.recurringDebtPayment.findFirst({
+    where: { debtId, isActive: true, frequency: 'monthly' },
+  });
+
+  if (!recurringPayment) return;
+
+  const newNextDueDate = calculateNextDueDate(
+    recurringPayment.frequency,
+    recurringPayment.dayOfMonth,
+    recurringPayment.dayOfWeek,
+    new Date()
+  );
+
+  await prisma.recurringDebtPayment.update({
+    where: { id: recurringPayment.id },
+    data: { nextDueDate: newNextDueDate, lastProcessed: new Date() },
+  });
+
+  const fixedExpense = await prisma.fixedExpense.findFirst({
+    where: { userId, recurringDebtPaymentId: recurringPayment.id, isActive: true },
+  });
+
+  if (!fixedExpense) return;
+
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+  const existingPayment = await prisma.transaction.findFirst({
+    where: { fixedExpenseId: fixedExpense.id, date: { gte: startOfMonth, lte: endOfMonth } },
+  });
+
+  if (!existingPayment) {
+    try {
+      await createTransaction(
+        {
+          amount,
+          type: 'expense',
+          description: `Pago: ${fixedExpense.name}`,
+          date: new Date().toISOString(),
+          accountId,
+          categoryId: fixedExpense.categoryId,
+          fixedExpenseId: fixedExpense.id,
+        },
+        userId
+      );
+    } catch (error) {
+      // Silent: fixed expense transaction failure must not roll back the debt payment
+    }
+  }
+}
+
 /**
  * Pay a debt (partial or full)
  */
 export async function payDebt(debtId: string, userId: string, data: PayDebtInput) {
-  const debt = await prisma.debt.findFirst({
-    where: { id: debtId, userId },
-  });
-
-  if (!debt) {
-    throw new NotFoundError('Deuda no encontrada');
-  }
-
-  if (debt.status === 'paid') {
-    throw new ConflictError('Esta deuda ya está pagada');
-  }
-
-  // Verify account exists and belongs to user
-  const account = await prisma.account.findFirst({
-    where: { id: data.accountId, userId },
-  });
-
-  if (!account) {
-    throw new NotFoundError('Cuenta no encontrada');
-  }
-
-  // Verify sufficient balance
-  if (Number(account.balance) < data.amount) {
+  const debt = await prisma.debt.findFirst({ where: { id: debtId, userId } });
+  if (!debt) throw new NotFoundError('Deuda no encontrada');
+  if (debt.status === 'paid') throw new ConflictError('Esta deuda ya está pagada');
+  const account = await prisma.account.findFirst({ where: { id: data.accountId, userId } });
+  if (!account) throw new NotFoundError('Cuenta no encontrada');
+  if (Number(account.balance) < data.amount)
     throw new ValidationError('Saldo insuficiente en la cuenta');
-  }
-
-  // Calculate interest if applicable
-  let interest = 0;
-  if (debt.interestRate && debt.interestType) {
-    interest = calculateInterest(
-      Number(debt.remainingAmount),
-      Number(debt.interestRate),
-      debt.interestType
-    );
-  }
-
-  // Calculate principal amount (what goes to reduce the debt)
-  const principal = Math.min(data.amount - interest, Number(debt.remainingAmount));
-
-  // If payment is less than interest, all goes to interest
-  if (data.amount < interest) {
-    interest = data.amount;
-  }
-
-  // Calculate new remaining amount
-  const newRemainingAmount = Number(debt.remainingAmount) - principal;
-
-  // Get or create "Pago de deuda" category
-  let category = await prisma.category.findFirst({
-    where: { userId, name: 'Pago de deuda', type: 'expense' },
-  });
-
-  if (!category) {
-    category = await prisma.category.create({
-      data: {
-        userId,
-        name: 'Pago de deuda',
-        type: 'expense',
-        icon: '💳',
-        color: '#EF4444',
-      },
-    });
-  }
-
-  // Use transaction to ensure atomicity
+  const { principal, interest, newRemainingAmount } = calculateDebtPaymentBreakdown(
+    Number(debt.remainingAmount),
+    data.amount,
+    debt.interestRate ? Number(debt.interestRate) : null,
+    debt.interestType
+  );
   const result = await prisma.$transaction(async (tx) => {
-    // Create transaction
+    let cat = await tx.category.findFirst({
+      where: { userId, name: 'Pago de deuda', type: 'expense' },
+    });
+    if (!cat)
+      cat = await tx.category.create({
+        data: { userId, name: 'Pago de deuda', type: 'expense', icon: '💳', color: '#EF4444' },
+      });
     const transaction = await tx.transaction.create({
       data: {
         userId,
         accountId: data.accountId,
-        categoryId: category.id,
+        categoryId: cat.id,
         amount: data.amount,
         type: 'expense',
         description: `Pago de deuda: ${debt.creditor} - ${debt.description}`,
         date: new Date(),
       },
     });
-
-    // Update account balance
     await tx.account.update({
       where: { id: data.accountId },
-      data: {
-        balance: {
-          decrement: data.amount,
-        },
-      },
+      data: { balance: { decrement: data.amount } },
     });
-
-    // Create debt payment record
     const payment = await tx.debtPayment.create({
       data: {
         debtId: debt.id,
@@ -263,99 +240,17 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
         paymentDate: new Date(),
       },
     });
-
-    // Update debt
-    const newStatus = getDebtStatus(newRemainingAmount, debt.dueDate);
     const updatedDebt = await tx.debt.update({
       where: { id: debt.id },
       data: {
         remainingAmount: newRemainingAmount,
-        status: newStatus,
+        status: getDebtStatus(newRemainingAmount, debt.dueDate),
       },
-      include: {
-        payments: {
-          orderBy: { paymentDate: 'desc' },
-        },
-      },
+      include: { payments: { orderBy: { paymentDate: 'desc' } } },
     });
-
     return { debt: updatedDebt, payment, transaction };
   });
-
-  // Mark associated fixed expense as paid and update nextDueDate (if exists)
-  const recurringPayment = await prisma.recurringDebtPayment.findFirst({
-    where: {
-      debtId: debt.id,
-      isActive: true,
-      frequency: 'monthly',
-    },
-  });
-
-  if (recurringPayment) {
-    // Actualizar nextDueDate del recurring payment
-    const newNextDueDate = calculateNextDueDate(
-      recurringPayment.frequency,
-      recurringPayment.dayOfMonth,
-      recurringPayment.dayOfWeek,
-      new Date()
-    );
-
-    await prisma.recurringDebtPayment.update({
-      where: { id: recurringPayment.id },
-      data: {
-        nextDueDate: newNextDueDate,
-        lastProcessed: new Date(),
-      },
-    });
-
-    const fixedExpense = await prisma.fixedExpense.findFirst({
-      where: {
-        userId,
-        recurringDebtPaymentId: recurringPayment.id,
-        isActive: true,
-      },
-    });
-
-    if (fixedExpense) {
-      const { createTransaction } = await import('./transactions.service.js');
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-      // Check if there's already a payment this month
-      const existingPayment = await prisma.transaction.findFirst({
-        where: {
-          fixedExpenseId: fixedExpense.id,
-          date: {
-            gte: startOfMonth,
-            lte: endOfMonth,
-          },
-        },
-      });
-
-      // Only create if there's no payment this month
-      if (!existingPayment) {
-        try {
-          await createTransaction(
-            {
-              amount: data.amount,
-              type: 'expense',
-              description: `Pago: ${fixedExpense.name}`,
-              date: new Date().toISOString(),
-              accountId: data.accountId,
-              categoryId: fixedExpense.categoryId,
-              fixedExpenseId: fixedExpense.id,
-            },
-            userId
-          );
-        } catch (error) {
-          // Log error but don't fail the whole transaction
-          console.error('Error creating fixed expense transaction:', error);
-        }
-      }
-    }
-  }
-
+  await handleRecurringPaymentSideEffects(debt.id, userId, data.accountId, data.amount);
   return result;
 }
 
