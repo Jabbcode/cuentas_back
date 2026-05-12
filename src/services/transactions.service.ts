@@ -6,7 +6,7 @@ import {
 } from '../schemas/transaction.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import { updateAccountBalance } from './accounts.service.js';
-import { checkBudgetAndNotify } from './notifications.service.js';
+import { checkBudgetAndNotify } from './budgets.service.js';
 import { upsertTags } from './tags.service.js';
 
 export async function getTransactions(userId: string, query: TransactionQuery) {
