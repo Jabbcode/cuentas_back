@@ -1,5 +1,220 @@
 import { prisma } from '../lib/prisma.js';
 
+// ─── Financial Projection (days-based) ────────────────────────────────────────
+
+export interface ProjectedFixedExpense {
+  id: string;
+  name: string;
+  amount: number;
+  type: 'expense' | 'income';
+  dueDate: string;
+  categoryName: string | null;
+  categoryIcon: string | null;
+  categoryColor: string | null;
+}
+
+export interface ProjectedDebtPayment {
+  id: string;
+  debtName: string;
+  amount: number;
+  dueDate: string;
+  frequency: string;
+}
+
+export interface TimelinePoint {
+  date: string;
+  projectedBalance: number;
+}
+
+export interface FinancialProjection {
+  period: { days: number; from: string; to: string };
+  currentBalance: number;
+  projectedBalance: number;
+  outflows: {
+    fixedExpenses: ProjectedFixedExpense[];
+    fixedIncome: ProjectedFixedExpense[];
+    debtPayments: ProjectedDebtPayment[];
+    totalExpenses: number;
+    totalIncome: number;
+    totalDebt: number;
+  };
+  historical: { monthlyAverage: number; forPeriod: number };
+  timeline: TimelinePoint[];
+}
+
+export async function getFinancialProjection(
+  userId: string,
+  days: number
+): Promise<FinancialProjection> {
+  const from = new Date();
+  from.setHours(0, 0, 0, 0);
+  const to = new Date(from);
+  to.setDate(to.getDate() + days);
+  to.setHours(23, 59, 59, 999);
+
+  const threeMonthsAgo = new Date(from.getFullYear(), from.getMonth() - 3, 1);
+
+  const [accountsResult, fixedExpenses, debtPayments, historicalData] = await Promise.all([
+    prisma.account.aggregate({ where: { userId }, _sum: { balance: true } }),
+    prisma.fixedExpense.findMany({
+      where: { userId, isActive: true },
+      include: { category: { select: { name: true, icon: true, color: true } } },
+    }),
+    prisma.recurringDebtPayment.findMany({
+      where: {
+        userId,
+        isActive: true,
+        nextDueDate: { lte: to },
+        OR: [{ endDate: null }, { endDate: { gte: from } }],
+        debt: { status: { not: 'paid' } },
+      },
+      include: { debt: { select: { creditor: true, description: true } } },
+    }),
+    prisma.transaction.aggregate({
+      where: { userId, type: 'expense', date: { gte: threeMonthsAgo } },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const currentBalance = Number(accountsResult._sum.balance ?? 0);
+
+  const projectedFixed = fixedExpenses.flatMap((fe) =>
+    getDatesInPeriod(fe.dueDay, from, to).map((date) => ({
+      id: fe.id,
+      name: fe.name,
+      amount: Number(fe.amount),
+      type: fe.type as 'expense' | 'income',
+      dueDate: date.toISOString(),
+      categoryName: fe.category?.name ?? null,
+      categoryIcon: fe.category?.icon ?? null,
+      categoryColor: fe.category?.color ?? null,
+    }))
+  );
+
+  const projectedFixedExpenses = projectedFixed
+    .filter((fe) => fe.type === 'expense')
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+
+  const projectedFixedIncome = projectedFixed
+    .filter((fe) => fe.type === 'income')
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+
+  const projectedDebtPayments: ProjectedDebtPayment[] = debtPayments
+    .map((dp) => ({
+      id: dp.id,
+      debtName: dp.debt.creditor ?? dp.debt.description ?? 'Deuda',
+      amount: Number(dp.amount),
+      dueDate: dp.nextDueDate.toISOString(),
+      frequency: dp.frequency,
+    }))
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+
+  const monthlyAverage = Number(historicalData._sum.amount ?? 0) / 3;
+  const forPeriod = (monthlyAverage / 30) * days;
+
+  const totalExpenses = projectedFixedExpenses.reduce((s, fe) => s + fe.amount, 0);
+  const totalIncome = projectedFixedIncome.reduce((s, fe) => s + fe.amount, 0);
+  const totalDebt = projectedDebtPayments.reduce((s, dp) => s + dp.amount, 0);
+  const projectedBalance = currentBalance + totalIncome - totalExpenses - totalDebt - forPeriod;
+
+  const timeline = buildTimeline(
+    currentBalance,
+    projectedFixed,
+    projectedDebtPayments,
+    monthlyAverage,
+    from,
+    to
+  );
+
+  return {
+    period: { days, from: from.toISOString(), to: to.toISOString() },
+    currentBalance,
+    projectedBalance,
+    outflows: {
+      fixedExpenses: projectedFixedExpenses,
+      fixedIncome: projectedFixedIncome,
+      debtPayments: projectedDebtPayments,
+      totalExpenses,
+      totalIncome,
+      totalDebt,
+    },
+    historical: { monthlyAverage, forPeriod },
+    timeline,
+  };
+}
+
+function getDatesInPeriod(dueDay: number, from: Date, to: Date): Date[] {
+  const dates: Date[] = [];
+  const cursor = new Date(from.getFullYear(), from.getMonth(), 1);
+  const end = new Date(to.getFullYear(), to.getMonth(), 1);
+
+  while (cursor <= end) {
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const day = Math.min(dueDay, daysInMonth);
+    const date = new Date(year, month, day);
+
+    if (date >= from && date <= to) dates.push(date);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return dates;
+}
+
+function buildTimeline(
+  currentBalance: number,
+  fixedItems: ProjectedFixedExpense[],
+  debtPayments: ProjectedDebtPayment[],
+  monthlyAverage: number,
+  from: Date,
+  to: Date
+): TimelinePoint[] {
+  const dailyHistorical = monthlyAverage / 30;
+  type Event = { date: Date; delta: number };
+
+  const events: Event[] = [
+    ...fixedItems.map((fe) => ({
+      date: new Date(fe.dueDate),
+      delta: fe.type === 'income' ? fe.amount : -fe.amount,
+    })),
+    ...debtPayments.map((dp) => ({ date: new Date(dp.dueDate), delta: -dp.amount })),
+  ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  const points: TimelinePoint[] = [];
+  let balance = currentBalance;
+  let eventIndex = 0;
+  let lastDate = new Date(from);
+
+  points.push({ date: from.toISOString(), projectedBalance: roundTwo(balance) });
+
+  const cursor = new Date(from);
+  while (cursor < to) {
+    cursor.setDate(cursor.getDate() + 7);
+    const checkpoint = cursor > to ? new Date(to) : new Date(cursor);
+
+    while (eventIndex < events.length && events[eventIndex].date <= checkpoint) {
+      balance += events[eventIndex].delta;
+      eventIndex++;
+    }
+
+    const daysDiff = Math.round((checkpoint.getTime() - lastDate.getTime()) / 86_400_000);
+    balance -= dailyHistorical * daysDiff;
+    lastDate = new Date(checkpoint);
+
+    points.push({ date: checkpoint.toISOString(), projectedBalance: roundTwo(balance) });
+    if (cursor >= to) break;
+  }
+
+  return points;
+}
+
+function roundTwo(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+// ─── End Financial Projection ──────────────────────────────────────────────────
+
 interface ProjectionData {
   month: string;
   year: number;
@@ -55,10 +270,7 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
         },
       },
     },
-    orderBy: [
-      { sortOrder: 'asc' },
-      { dueDay: 'asc' },
-    ],
+    orderBy: [{ sortOrder: 'asc' }, { dueDay: 'asc' }],
   });
 
   // Separar por tipo
@@ -82,13 +294,13 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
   const incomeDiff = totalIncome - currentMonthSummary.totalIncome;
   const netDiff = netBalance - currentMonthSummary.netBalance;
 
-  const expensesPercentage = currentMonthSummary.totalExpenses > 0
-    ? ((expensesDiff / currentMonthSummary.totalExpenses) * 100)
-    : 0;
+  const expensesPercentage =
+    currentMonthSummary.totalExpenses > 0
+      ? (expensesDiff / currentMonthSummary.totalExpenses) * 100
+      : 0;
 
-  const incomePercentage = currentMonthSummary.totalIncome > 0
-    ? ((incomeDiff / currentMonthSummary.totalIncome) * 100)
-    : 0;
+  const incomePercentage =
+    currentMonthSummary.totalIncome > 0 ? (incomeDiff / currentMonthSummary.totalIncome) * 100 : 0;
 
   return {
     month: nextMonth.toISOString(),
