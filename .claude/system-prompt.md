@@ -125,14 +125,29 @@ npx tsc --noEmit   # debe retornar 0 errors
 npm run build      # debe completar sin errores
 ```
 
+**TypeScript & Calidad**
 - ✅ Sin `any` ni `@ts-ignore`
-- ✅ userId filtering en TODAS las queries
-- ✅ Validación Zod en controllers
-- ✅ try/catch → next(error) en controllers
+- ✅ Sin `Record<string, unknown>` como workaround de tipado Prisma — usar `Prisma.XWhereInput`
 - ✅ Sin `console.log` en código final
+- ✅ Sin `throw new Error()` — usar `NotFoundError`, `ConflictError`, etc. de `lib/errors.ts`
+
+**Arquitectura — Clean Architecture + SOLID**
+- ✅ Controllers solo validan (Zod) y llaman services — sin Prisma directo
+- ✅ Services solo orquestan lógica de negocio — sin Prisma directo
+- ✅ Repositories son la única capa que importa `prisma`
+- ✅ Cada función de service tiene una sola responsabilidad (S de SOLID)
+- ✅ Sin `await import()` dinámicos entre services — señal de dependencia circular
+- ✅ Lógica reutilizable en `lib/utils/` antes de duplicar
+- ✅ `checkBudgetAndNotify` y lógica de presupuestos → `budgets.service`, no `notifications.service`
+
+**Seguridad**
+- ✅ userId filtering en TODAS las queries — siempre via repository con `findByIdAndUser`
+- ✅ `updateAccountBalance` / `decrementBalance` siempre valida ownership (userId)
+- ✅ userId SIEMPRE de `req.user!.userId` — nunca de body, params ni query
+- ✅ try/catch → next(error) en todos los controllers
 - ✅ Acceptance criteria cubiertos
 
-Mensaje de PR: `✅ BUILD SUCCESSFUL — TypeScript: 0 errors | Security: userId verified`
+Mensaje de PR: `✅ BUILD SUCCESSFUL — TypeScript: 0 errors | Architecture: layers verified | Security: userId verified`
 
 ---
 

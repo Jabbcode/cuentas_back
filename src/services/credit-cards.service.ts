@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { NotFoundError, ValidationError, ConflictError } from '../lib/errors.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -94,11 +95,11 @@ export async function getCreditCardStatement(
   });
 
   if (!account) {
-    throw new Error('Cuenta no encontrada o no es una tarjeta de crédito');
+    throw new NotFoundError('Cuenta no encontrada o no es una tarjeta de crédito');
   }
 
   if (!account.cutoffDay || !account.paymentDueDay) {
-    throw new Error('La tarjeta no tiene configuradas las fechas de corte y pago');
+    throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
   }
 
   const today = new Date();
@@ -317,7 +318,7 @@ export async function payCreditCardStatement(
   const statement = await getCreditCardStatement(accountId, userId);
 
   if (statement.closedPeriod.isPaid) {
-    throw new Error('El estado de cuenta ya está pagado');
+    throw new ConflictError('El estado de cuenta ya está pagado');
   }
 
   const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();

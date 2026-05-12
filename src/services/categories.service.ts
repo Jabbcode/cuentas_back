@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { CreateCategoryInput, UpdateCategoryInput } from '../schemas/category.schema.js';
+import { NotFoundError, ConflictError } from '../lib/errors.js';
 
 export async function getCategories(userId: string, type?: 'expense' | 'income') {
   return prisma.category.findMany({
@@ -17,7 +18,7 @@ export async function getCategoryById(id: string, userId: string) {
   });
 
   if (!category) {
-    throw new Error('Categoría no encontrada');
+    throw new NotFoundError('Categoría no encontrada');
   }
 
   return category;
@@ -50,7 +51,7 @@ export async function deleteCategory(id: string, userId: string) {
   });
 
   if (transactionCount > 0) {
-    throw new Error('No se puede eliminar una categoría con transacciones asociadas');
+    throw new ConflictError('No se puede eliminar una categoría con transacciones asociadas');
   }
 
   return prisma.category.delete({

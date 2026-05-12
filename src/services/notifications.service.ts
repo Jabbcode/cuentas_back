@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { NotificationPreferences } from '../schemas/notification.schema.js';
+import { NotFoundError } from '../lib/errors.js';
 
 export async function getNotifications(userId: string) {
   return prisma.notification.findMany({
@@ -15,7 +16,7 @@ export async function getUnreadCount(userId: string) {
 
 export async function markAsRead(id: string, userId: string) {
   const notification = await prisma.notification.findFirst({ where: { id, userId } });
-  if (!notification) throw new Error('Notificación no encontrada');
+  if (!notification) throw new NotFoundError('Notificación no encontrada');
 
   return prisma.notification.update({ where: { id }, data: { read: true } });
 }
@@ -26,7 +27,7 @@ export async function markAllAsRead(userId: string) {
 
 export async function deleteNotification(id: string, userId: string) {
   const notification = await prisma.notification.findFirst({ where: { id, userId } });
-  if (!notification) throw new Error('Notificación no encontrada');
+  if (!notification) throw new NotFoundError('Notificación no encontrada');
 
   return prisma.notification.delete({ where: { id } });
 }
@@ -60,7 +61,7 @@ export async function getPreferences(userId: string): Promise<NotificationPrefer
     where: { id: userId },
     select: { notificationPreferences: true },
   });
-  if (!user) throw new Error('Usuario no encontrado');
+  if (!user) throw new NotFoundError('Usuario no encontrado');
 
   return user.notificationPreferences as NotificationPreferences;
 }
