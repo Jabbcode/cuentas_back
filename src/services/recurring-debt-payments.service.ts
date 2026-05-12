@@ -5,45 +5,7 @@ import type {
 } from '../schemas/recurring-debt-payment.schema.js';
 import * as debtsService from './debts.service.js';
 import { NotFoundError, ConflictError } from '../lib/errors.js';
-
-/**
- * Calculate the next due date based on frequency and current date
- */
-export function calculateNextDueDate(
-  frequency: string,
-  dayOfMonth: number | null,
-  dayOfWeek: number | null,
-  fromDate: Date = new Date()
-): Date {
-  const today = new Date(fromDate);
-  today.setHours(0, 0, 0, 0);
-  const nextDate = new Date(today);
-
-  if (frequency === 'monthly') {
-    // Monthly: next occurrence of dayOfMonth
-    const targetDay = dayOfMonth || 1;
-    nextDate.setDate(targetDay);
-
-    // Si la fecha ya pasó este mes, ir al próximo mes
-    if (nextDate <= today) {
-      nextDate.setMonth(nextDate.getMonth() + 1);
-      nextDate.setDate(targetDay);
-    }
-  } else if (frequency === 'biweekly') {
-    // Biweekly: add 14 days
-    nextDate.setDate(nextDate.getDate() + 14);
-  } else if (frequency === 'weekly') {
-    // Weekly: next occurrence of dayOfWeek
-    const currentDay = nextDate.getDay();
-    const targetDay = dayOfWeek || 0;
-    const daysUntilNext = (targetDay - currentDay + 7) % 7 || 7;
-    nextDate.setDate(nextDate.getDate() + daysUntilNext);
-  }
-
-  // Set time to start of day
-  nextDate.setHours(0, 0, 0, 0);
-  return nextDate;
-}
+import { calculateNextDueDate } from '../lib/utils/date.utils.js';
 
 /**
  * Create a new recurring debt payment

@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { groupByCategory } from '../lib/utils/projection.utils.js';
 
 interface ProjectionData {
   month: string;
@@ -55,10 +56,7 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
         },
       },
     },
-    orderBy: [
-      { sortOrder: 'asc' },
-      { dueDay: 'asc' },
-    ],
+    orderBy: [{ sortOrder: 'asc' }, { dueDay: 'asc' }],
   });
 
   // Separar por tipo
@@ -82,13 +80,13 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
   const incomeDiff = totalIncome - currentMonthSummary.totalIncome;
   const netDiff = netBalance - currentMonthSummary.netBalance;
 
-  const expensesPercentage = currentMonthSummary.totalExpenses > 0
-    ? ((expensesDiff / currentMonthSummary.totalExpenses) * 100)
-    : 0;
+  const expensesPercentage =
+    currentMonthSummary.totalExpenses > 0
+      ? (expensesDiff / currentMonthSummary.totalExpenses) * 100
+      : 0;
 
-  const incomePercentage = currentMonthSummary.totalIncome > 0
-    ? ((incomeDiff / currentMonthSummary.totalIncome) * 100)
-    : 0;
+  const incomePercentage =
+    currentMonthSummary.totalIncome > 0 ? (incomeDiff / currentMonthSummary.totalIncome) * 100 : 0;
 
   return {
     month: nextMonth.toISOString(),
@@ -108,39 +106,6 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
       incomePercentage: Math.round(incomePercentage * 10) / 10,
     },
   };
-}
-
-function groupByCategory(items: any[]): CategoryProjection[] {
-  const grouped = new Map<string, CategoryProjection>();
-
-  items.forEach((item) => {
-    const catId = item.category?.id || 'uncategorized';
-    const catName = item.category?.name || 'Sin categoría';
-    const catIcon = item.category?.icon || null;
-    const catColor = item.category?.color || null;
-
-    if (!grouped.has(catId)) {
-      grouped.set(catId, {
-        categoryId: catId,
-        categoryName: catName,
-        categoryIcon: catIcon,
-        categoryColor: catColor,
-        total: 0,
-        items: [],
-      });
-    }
-
-    const category = grouped.get(catId)!;
-    category.total += Number(item.amount);
-    category.items.push({
-      id: item.id,
-      name: item.name,
-      amount: Number(item.amount),
-      dueDay: item.dueDay,
-    });
-  });
-
-  return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
 }
 
 async function getCurrentMonthSummary(userId: string, currentMonth: Date) {

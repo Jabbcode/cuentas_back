@@ -1,5 +1,11 @@
 import { prisma } from '../lib/prisma.js';
 import { NotFoundError, ValidationError, ConflictError } from '../lib/errors.js';
+import {
+  getCutoffDates,
+  getPaymentDueDate,
+  getDaysBetween,
+  normalizeToUTC,
+} from '../lib/utils/credit-card.utils.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -26,61 +32,6 @@ interface CreditCardStatement {
     message: string;
     severity: 'info' | 'warning' | 'error';
   }[];
-}
-
-/**
- * Calculate the last and next cutoff dates for a credit card
- */
-function getCutoffDates(cutoffDay: number): { lastCutoff: Date; nextCutoff: Date } {
-  const today = new Date();
-  const currentDay = today.getDate();
-  const currentMonth = today.getMonth();
-  const currentYear = today.getFullYear();
-
-  let lastCutoff: Date;
-  let nextCutoff: Date;
-
-  if (currentDay >= cutoffDay) {
-    // Last cutoff was this month
-    lastCutoff = new Date(currentYear, currentMonth, cutoffDay);
-    nextCutoff = new Date(currentYear, currentMonth + 1, cutoffDay);
-  } else {
-    // Last cutoff was last month
-    lastCutoff = new Date(currentYear, currentMonth - 1, cutoffDay);
-    nextCutoff = new Date(currentYear, currentMonth, cutoffDay);
-  }
-
-  return { lastCutoff, nextCutoff };
-}
-
-/**
- * Calculate payment due date based on cutoff date and payment due day
- */
-function getPaymentDueDate(cutoffDate: Date, paymentDueDay: number): Date {
-  const cutoffMonth = cutoffDate.getMonth();
-  const cutoffYear = cutoffDate.getFullYear();
-
-  // Payment is due in the same month or next month
-  if (paymentDueDay > cutoffDate.getDate()) {
-    return new Date(cutoffYear, cutoffMonth, paymentDueDay);
-  } else {
-    return new Date(cutoffYear, cutoffMonth + 1, paymentDueDay);
-  }
-}
-
-/**
- * Get days between two dates
- */
-function getDaysBetween(from: Date, to: Date): number {
-  const diff = to.getTime() - from.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-}
-
-/**
- * Normalize date to midnight UTC to avoid timezone issues
- */
-function normalizeToUTC(date: Date): Date {
-  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0));
 }
 
 /**
