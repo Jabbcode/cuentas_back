@@ -1,16 +1,14 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { prisma } from '../lib/prisma.js';
 import { RegisterInput, LoginInput } from '../schemas/auth.schema.js';
 import { seedCategories } from '../lib/seed.js';
+import * as userRepo from '../repositories/user.repository.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const SALT_ROUNDS = 10;
 
 export async function register(data: RegisterInput) {
-  const existingUser = await prisma.user.findUnique({
-    where: { email: data.email },
-  });
+  const existingUser = await userRepo.findByEmail(data.email);
 
   if (existingUser) {
     throw new Error('El email ya está registrado');
@@ -18,12 +16,10 @@ export async function register(data: RegisterInput) {
 
   const hashedPassword = await bcrypt.hash(data.password, SALT_ROUNDS);
 
-  const user = await prisma.user.create({
-    data: {
-      email: data.email,
-      password: hashedPassword,
-      name: data.name,
-    },
+  const user = await userRepo.create({
+    email: data.email,
+    password: hashedPassword,
+    name: data.name,
   });
 
   // Create default categories for new user
@@ -44,9 +40,7 @@ export async function register(data: RegisterInput) {
 }
 
 export async function login(data: LoginInput) {
-  const user = await prisma.user.findUnique({
-    where: { email: data.email },
-  });
+  const user = await userRepo.findByEmail(data.email);
 
   if (!user) {
     throw new Error('Credenciales inválidas');
@@ -73,14 +67,11 @@ export async function login(data: LoginInput) {
 }
 
 export async function getMe(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      createdAt: true,
-    },
+  const user = await userRepo.findById(userId, {
+    id: true,
+    email: true,
+    name: true,
+    createdAt: true,
   });
 
   if (!user) {

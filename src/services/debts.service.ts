@@ -5,24 +5,27 @@ import { calculateNextDueDate } from '../lib/utils/date.utils.js';
 import { createTransaction } from './transactions.service.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { calculateDebtPaymentBreakdown, getDebtStatus } from '../lib/utils/debt.utils.js';
+import * as debtRepo from '../repositories/debt.repository.js';
+import * as accountRepo from '../repositories/account.repository.js';
+import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
+import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
+import * as transactionRepo from '../repositories/transaction.repository.js';
 
 /**
  * Create a new debt
  */
 export async function createDebt(userId: string, data: CreateDebtInput) {
-  const debt = await prisma.debt.create({
-    data: {
-      userId,
-      creditor: data.creditor,
-      description: data.description,
-      totalAmount: data.totalAmount,
-      remainingAmount: data.totalAmount, // Initially, remaining = total
-      interestRate: data.interestRate,
-      interestType: data.interestType,
-      startDate: data.startDate ? new Date(data.startDate) : new Date(),
-      dueDate: data.dueDate ? new Date(data.dueDate) : null,
-      status: 'active',
-    },
+  const debt = await debtRepo.create({
+    user: { connect: { id: userId } },
+    creditor: data.creditor,
+    description: data.description,
+    totalAmount: data.totalAmount,
+    remainingAmount: data.totalAmount,
+    interestRate: data.interestRate,
+    interestType: data.interestType,
+    startDate: data.startDate ? new Date(data.startDate) : new Date(),
+    dueDate: data.dueDate ? new Date(data.dueDate) : null,
+    status: 'active',
   });
 
   return debt;
@@ -38,24 +41,13 @@ export async function getDebts(userId: string, status?: string) {
     where.status = status;
   }
 
-  const debts = await prisma.debt.findMany({
-    where,
-    include: {
-      payments: {
-        include: {
-          account: { select: { id: true, name: true } },
-        },
-        orderBy: { paymentDate: 'desc' },
-      },
-      _count: {
-        select: { payments: true },
-      },
+  const debts = await debtRepo.findAllByUser(where, {
+    payments: {
+      include: { account: { select: { id: true, name: true } } },
+      orderBy: { paymentDate: 'desc' },
     },
-    orderBy: [
-      { status: 'asc' }, // active first, then paid
-      { dueDate: 'asc' }, // closest due date first
-    ],
-  });
+    _count: { select: { payments: true } },
+  } as Prisma.DebtInclude);
 
   return debts;
 }
@@ -64,17 +56,12 @@ export async function getDebts(userId: string, status?: string) {
  * Get a single debt by ID
  */
 export async function getDebtById(debtId: string, userId: string) {
-  const debt = await prisma.debt.findFirst({
-    where: { id: debtId, userId },
-    include: {
-      payments: {
-        include: {
-          account: { select: { id: true, name: true } },
-        },
-        orderBy: { paymentDate: 'desc' },
-      },
+  const debt = await debtRepo.findByIdAndUser(debtId, userId, {
+    payments: {
+      include: { account: { select: { id: true, name: true } } },
+      orderBy: { paymentDate: 'desc' },
     },
-  });
+  } as Prisma.DebtInclude);
 
   if (!debt) {
     throw new NotFoundError('Deuda no encontrada');
@@ -87,24 +74,19 @@ export async function getDebtById(debtId: string, userId: string) {
  * Update a debt
  */
 export async function updateDebt(debtId: string, userId: string, data: UpdateDebtInput) {
-  const existingDebt = await prisma.debt.findFirst({
-    where: { id: debtId, userId },
-  });
+  const existingDebt = await debtRepo.findByIdAndUser(debtId, userId);
 
   if (!existingDebt) {
     throw new NotFoundError('Deuda no encontrada');
   }
 
-  const debt = await prisma.debt.update({
-    where: { id: debtId },
-    data: {
-      creditor: data.creditor,
-      description: data.description,
-      interestRate: data.interestRate,
-      interestType: data.interestType,
-      dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
-      status: data.status,
-    },
+  const debt = await debtRepo.update(debtId, {
+    creditor: data.creditor,
+    description: data.description,
+    interestRate: data.interestRate,
+    interestType: data.interestType,
+    dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+    status: data.status,
   });
 
   return debt;
@@ -114,18 +96,14 @@ export async function updateDebt(debtId: string, userId: string, data: UpdateDeb
  * Delete a debt
  */
 export async function deleteDebt(debtId: string, userId: string) {
-  const debt = await prisma.debt.findFirst({
-    where: { id: debtId, userId },
-  });
+  const debt = await debtRepo.findByIdAndUser(debtId, userId);
 
   if (!debt) {
     throw new NotFoundError('Deuda no encontrada');
   }
 
   // Cascade delete will handle payments and transactions
-  await prisma.debt.delete({
-    where: { id: debtId },
-  });
+  await debtRepo.remove(debtId);
 
   return { message: 'Deuda eliminada correctamente' };
 }
@@ -136,8 +114,10 @@ async function handleRecurringPaymentSideEffects(
   accountId: string,
   amount: number
 ): Promise<void> {
-  const recurringPayment = await prisma.recurringDebtPayment.findFirst({
-    where: { debtId, isActive: true, frequency: 'monthly' },
+  const recurringPayment = await recurringRepo.findFirst({
+    debtId,
+    isActive: true,
+    frequency: 'monthly',
   });
 
   if (!recurringPayment) return;
@@ -149,13 +129,15 @@ async function handleRecurringPaymentSideEffects(
     new Date()
   );
 
-  await prisma.recurringDebtPayment.update({
-    where: { id: recurringPayment.id },
-    data: { nextDueDate: newNextDueDate, lastProcessed: new Date() },
+  await recurringRepo.update(recurringPayment.id, {
+    nextDueDate: newNextDueDate,
+    lastProcessed: new Date(),
   });
 
-  const fixedExpense = await prisma.fixedExpense.findFirst({
-    where: { userId, recurringDebtPaymentId: recurringPayment.id, isActive: true },
+  const fixedExpense = await fixedExpenseRepo.findFirst({
+    userId,
+    recurringDebtPaymentId: recurringPayment.id,
+    isActive: true,
   });
 
   if (!fixedExpense) return;
@@ -164,8 +146,9 @@ async function handleRecurringPaymentSideEffects(
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-  const existingPayment = await prisma.transaction.findFirst({
-    where: { fixedExpenseId: fixedExpense.id, date: { gte: startOfMonth, lte: endOfMonth } },
+  const existingPayment = await transactionRepo.findFirst({
+    fixedExpenseId: fixedExpense.id,
+    date: { gte: startOfMonth, lte: endOfMonth },
   });
 
   if (!existingPayment) {
@@ -192,10 +175,10 @@ async function handleRecurringPaymentSideEffects(
  * Pay a debt (partial or full)
  */
 export async function payDebt(debtId: string, userId: string, data: PayDebtInput) {
-  const debt = await prisma.debt.findFirst({ where: { id: debtId, userId } });
+  const debt = await debtRepo.findByIdAndUser(debtId, userId);
   if (!debt) throw new NotFoundError('Deuda no encontrada');
   if (debt.status === 'paid') throw new ConflictError('Esta deuda ya está pagada');
-  const account = await prisma.account.findFirst({ where: { id: data.accountId, userId } });
+  const account = await accountRepo.findByIdAndUser(data.accountId, userId);
   if (!account) throw new NotFoundError('Cuenta no encontrada');
   if (Number(account.balance) < data.amount)
     throw new ValidationError('Saldo insuficiente en la cuenta');
@@ -259,9 +242,7 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
  * Get debts summary for dashboard
  */
 export async function getDebtsSummary(userId: string) {
-  const debts = await prisma.debt.findMany({
-    where: { userId },
-  });
+  const debts = await debtRepo.findAllByUser({ userId });
 
   const activeDebts = debts.filter((d) => d.status === 'active');
   const overdueDebts = debts.filter((d) => d.status === 'overdue');

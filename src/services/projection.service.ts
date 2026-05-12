@@ -1,5 +1,5 @@
-import { prisma } from '../lib/prisma.js';
 import { groupByCategory } from '../lib/utils/projection.utils.js';
+import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 
 interface ProjectionData {
   month: string;
@@ -41,23 +41,20 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
   const monthNumber = nextMonth.getMonth() + 1;
 
   // Obtener todos los gastos/ingresos fijos activos
-  const fixedExpenses = await prisma.fixedExpense.findMany({
-    where: {
-      userId,
-      isActive: true,
-    },
-    include: {
-      category: {
-        select: {
-          id: true,
-          name: true,
-          icon: true,
-          color: true,
-        },
-      },
-    },
-    orderBy: [{ sortOrder: 'asc' }, { dueDay: 'asc' }],
-  });
+  type FeWithCat = {
+    id: string;
+    name: string;
+    amount: number | { toString(): string };
+    dueDay: number;
+    type: string;
+    category: { id: string; name: string; icon: string | null; color: string | null } | null;
+  };
+  const fixedExpenses = (await fixedExpenseRepo.findAllByUser(
+    userId,
+    { isActive: true },
+    { category: { select: { id: true, name: true, icon: true, color: true } } },
+    [{ sortOrder: 'asc' }, { dueDay: 'asc' }]
+  )) as unknown as FeWithCat[];
 
   // Separar por tipo
   const expenses = fixedExpenses.filter((fe) => fe.type === 'expense');
@@ -109,12 +106,7 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
 }
 
 async function getCurrentMonthSummary(userId: string, currentMonth: Date) {
-  const fixedExpenses = await prisma.fixedExpense.findMany({
-    where: {
-      userId,
-      isActive: true,
-    },
-  });
+  const fixedExpenses = await fixedExpenseRepo.findAllByUser(userId, { isActive: true });
 
   const expenses = fixedExpenses.filter((fe) => fe.type === 'expense');
   const incomes = fixedExpenses.filter((fe) => fe.type === 'income');

@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import Tesseract from 'tesseract.js';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import { buildReceiptAnalysisPrompt } from '../prompts/receipt-analysis.prompt.js';
+import * as transactionRepo from '../repositories/transaction.repository.js';
 import type { ScanReceiptResponse, DuplicateCheckResponse } from '../schemas/receipt.schema.js';
 import { AppError, ValidationError } from '../lib/errors.js';
 
@@ -21,17 +22,24 @@ function calculateImageHash(imageBuffer: Buffer): string {
 /**
  * Check for exact duplicate by image hash
  */
-async function checkExactDuplicate(imageHash: string, userId: string) {
-  return await prisma.transaction.findFirst({
-    where: {
-      userId,
-      imageHash,
-    },
-    include: {
+type TxWithAccountCategory = Prisma.TransactionGetPayload<{
+  include: {
+    account: { select: { id: true; name: true } };
+    category: { select: { id: true; name: true } };
+  };
+}>;
+
+async function checkExactDuplicate(
+  imageHash: string,
+  userId: string
+): Promise<TxWithAccountCategory | null> {
+  return transactionRepo.findFirst(
+    { userId, imageHash },
+    {
       account: { select: { id: true, name: true } },
       category: { select: { id: true, name: true } },
-    },
-  });
+    }
+  ) as Promise<TxWithAccountCategory | null>;
 }
 
 /**
@@ -50,26 +58,20 @@ async function checkSimilarTransactions(
   twoDaysAfter.setDate(twoDaysAfter.getDate() + 2);
 
   // Find transactions with similar amount (±0.50€) and date (±2 days)
-  const similarTransactions = await prisma.transaction.findMany({
-    where: {
+  const similarTransactions = (await transactionRepo.findMany(
+    {
       userId,
-      amount: {
-        gte: amount - 0.5,
-        lte: amount + 0.5,
+      amount: { gte: amount - 0.5, lte: amount + 0.5 },
+      date: { gte: twoDaysBefore, lte: twoDaysAfter },
+    },
+    {
+      include: {
+        account: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
       },
-      date: {
-        gte: twoDaysBefore,
-        lte: twoDaysAfter,
-      },
-    },
-    include: {
-      account: { select: { id: true, name: true } },
-      category: { select: { id: true, name: true } },
-    },
-    orderBy: {
-      date: 'desc',
-    },
-  });
+      orderBy: { date: 'desc' },
+    }
+  )) as unknown as TxWithAccountCategory[];
 
   // Filter by description similarity (if description exists)
   if (description && similarTransactions.length > 0) {

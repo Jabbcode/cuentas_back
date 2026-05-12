@@ -5,18 +5,14 @@ import {
   TransferInput,
 } from '../schemas/account.schema.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
+import * as accountRepo from '../repositories/account.repository.js';
 
 export async function getAccounts(userId: string) {
-  return prisma.account.findMany({
-    where: { userId },
-    orderBy: { createdAt: 'desc' },
-  });
+  return accountRepo.findAllByUser(userId);
 }
 
 export async function getAccountById(id: string, userId: string) {
-  const account = await prisma.account.findFirst({
-    where: { id, userId },
-  });
+  const account = await accountRepo.findByIdAndUser(id, userId);
 
   if (!account) {
     throw new NotFoundError('Cuenta no encontrada');
@@ -26,29 +22,19 @@ export async function getAccountById(id: string, userId: string) {
 }
 
 export async function createAccount(data: CreateAccountInput, userId: string) {
-  return prisma.account.create({
-    data: {
-      ...data,
-      userId,
-    },
-  });
+  return accountRepo.create({ ...data, user: { connect: { id: userId } } });
 }
 
 export async function updateAccount(id: string, data: UpdateAccountInput, userId: string) {
   await getAccountById(id, userId);
 
-  return prisma.account.update({
-    where: { id },
-    data,
-  });
+  return accountRepo.update(id, data);
 }
 
 export async function deleteAccount(id: string, userId: string) {
   await getAccountById(id, userId);
 
-  return prisma.account.delete({
-    where: { id },
-  });
+  return accountRepo.remove(id);
 }
 
 export async function transferFunds(data: TransferInput, userId: string) {
@@ -59,8 +45,8 @@ export async function transferFunds(data: TransferInput, userId: string) {
   }
 
   const [fromAccount, toAccount] = await Promise.all([
-    prisma.account.findFirst({ where: { id: fromAccountId, userId } }),
-    prisma.account.findFirst({ where: { id: toAccountId, userId } }),
+    accountRepo.findByIdAndUser(fromAccountId, userId),
+    accountRepo.findByIdAndUser(toAccountId, userId),
   ]);
 
   if (!fromAccount) throw new NotFoundError('Cuenta origen no encontrada');
@@ -86,14 +72,7 @@ export async function transferFunds(data: TransferInput, userId: string) {
 
 export async function getTransfersByAccount(accountId: string, userId: string) {
   await getAccountById(accountId, userId);
-  return prisma.transfer.findMany({
-    where: {
-      userId,
-      OR: [{ fromAccountId: accountId }, { toAccountId: accountId }],
-    },
-    include: { fromAccount: true, toAccount: true },
-    orderBy: { date: 'desc' },
-  });
+  return accountRepo.findTransfersByAccount(accountId, userId);
 }
 
 export async function updateAccountBalance(
@@ -102,9 +81,7 @@ export async function updateAccountBalance(
   amount: number,
   type: 'expense' | 'income'
 ) {
-  const account = await prisma.account.findFirst({
-    where: { id: accountId, userId },
-  });
+  const account = await accountRepo.findByIdAndUser(accountId, userId);
 
   if (!account) {
     throw new NotFoundError('Cuenta no encontrada');
@@ -113,8 +90,5 @@ export async function updateAccountBalance(
   const currentBalance = Number(account.balance);
   const newBalance = type === 'income' ? currentBalance + amount : currentBalance - amount;
 
-  return prisma.account.update({
-    where: { id: accountId },
-    data: { balance: newBalance },
-  });
+  return accountRepo.updateBalance(accountId, newBalance);
 }
