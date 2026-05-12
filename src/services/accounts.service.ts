@@ -98,11 +98,12 @@ export async function getTransfersByAccount(accountId: string, userId: string) {
 
 export async function updateAccountBalance(
   accountId: string,
+  userId: string,
   amount: number,
   type: 'expense' | 'income'
 ) {
-  const account = await prisma.account.findUnique({
-    where: { id: accountId },
+  const account = await prisma.account.findFirst({
+    where: { id: accountId, userId },
   });
 
   if (!account) {

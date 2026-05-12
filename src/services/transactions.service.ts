@@ -123,7 +123,7 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
     },
   });
 
-  await updateAccountBalance(data.accountId, data.amount, data.type);
+  await updateAccountBalance(data.accountId, userId, data.amount, data.type);
 
   if (data.type === 'expense') {
     checkBudgetAndNotify(userId, data.categoryId).catch(() => {});
@@ -137,6 +137,7 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
 
   await updateAccountBalance(
     existing.accountId,
+    userId,
     Number(existing.amount),
     existing.type === 'income' ? 'expense' : 'income'
   );
@@ -171,6 +172,7 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
 
   await updateAccountBalance(
     updated.accountId,
+    userId,
     Number(updated.amount),
     updated.type as 'expense' | 'income'
   );
@@ -184,6 +186,7 @@ export async function deleteTransaction(id: string, userId: string) {
   // Revert balance change
   await updateAccountBalance(
     transaction.accountId,
+    userId,
     Number(transaction.amount),
     transaction.type === 'income' ? 'expense' : 'income'
   );
