@@ -38,8 +38,12 @@ Claude:  → Listo para PR
 Cuando el usuario confirme leer una tarea:
 
 1. Lee Notion vía MCP, extrae contexto
-2. Identifica agents/skills necesarios
-3. Verifica que userId filtering aplica
+2. Busca SPECs relacionados en `.claude/specs/` — decisiones arquitectónicas ya tomadas que afectan esta tarea:
+   - Si la tarea depende de otra ya implementada, lee su SPEC para respetar los patrones establecidos
+   - Si hay un SPEC con el mismo ID, está aprobado — úsalo directamente en Fase 2
+3. Busca contexto en el codebase (archivos existentes, patrones en uso)
+4. Identifica agents/skills necesarios
+5. Verifica que userId filtering aplica
 
 ```
 ## 📋 PROPUESTA: [Nombre de tarea]
