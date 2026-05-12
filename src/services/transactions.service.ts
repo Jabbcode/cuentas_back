@@ -4,6 +4,7 @@ import {
   UpdateTransactionInput,
   TransactionQuery,
 } from '../schemas/transaction.schema.js';
+import { buildTransactionWhereInput } from '../lib/utils/transaction.utils.js';
 import { NotFoundError } from '../lib/errors.js';
 import { updateAccountBalance } from './accounts.service.js';
 import { checkBudgetAndNotify } from './budgets.service.js';
@@ -24,31 +25,17 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
     maxAmount,
   } = query;
 
-  const where: Record<string, unknown> = { userId };
-
-  if (startDate || endDate) {
-    where.date = {};
-    if (startDate) (where.date as Record<string, Date>).gte = new Date(startDate);
-    if (endDate) (where.date as Record<string, Date>).lte = new Date(endDate);
-  }
-
-  if (accountId) where.accountId = accountId;
-
-  if (categoryIds?.length) {
-    where.categoryId = { in: categoryIds };
-  } else if (categoryId) {
-    where.categoryId = categoryId;
-  }
-
-  if (type) where.type = type;
-  if (tag) where.tags = { some: { tag: { name: tag.toLowerCase(), userId } } };
-
-  if (minAmount !== undefined || maxAmount !== undefined) {
-    const amountFilter: Record<string, number> = {};
-    if (minAmount !== undefined) amountFilter.gte = minAmount;
-    if (maxAmount !== undefined) amountFilter.lte = maxAmount;
-    where.amount = amountFilter;
-  }
+  const where = buildTransactionWhereInput(userId, {
+    startDate,
+    endDate,
+    accountId,
+    categoryId,
+    categoryIds,
+    type,
+    tag,
+    minAmount,
+    maxAmount,
+  });
 
   const [transactions, total] = await Promise.all([
     prisma.transaction.findMany({
