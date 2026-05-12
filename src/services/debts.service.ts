@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
 import { calculateNextDueDate } from './recurring-debt-payments.service.js';
 import { createTransaction } from './transactions.service.js';
@@ -31,7 +32,7 @@ export async function createDebt(userId: string, data: CreateDebtInput) {
  * Get all debts for a user with optional filters
  */
 export async function getDebts(userId: string, status?: string) {
-  const where: any = { userId };
+  const where: Prisma.DebtWhereInput = { userId };
 
   if (status) {
     where.status = status;
