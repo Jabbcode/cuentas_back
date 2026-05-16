@@ -3,6 +3,7 @@ import { prisma } from './prisma.js';
 import { createNotification, getPreferences } from '../services/notifications.service.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
+import * as SyncJob from '../banking/sync/SyncJob.js';
 
 function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
@@ -62,6 +63,15 @@ function startCronJobs() {
         `Tu deuda con ${debt.creditor} vence el ${dueDate}. Monto pendiente: €${Number(debt.remainingAmount).toFixed(2)}.`,
         { debtId: debt.id, dueDate: debt.dueDate }
       );
+    }
+  });
+
+  // Every 10 minutes: sync active bank connections via TrueLayer
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await SyncJob.run();
+    } catch {
+      // Cron errors should not crash the server
     }
   });
 

@@ -1,0 +1,900 @@
+{
+  "info": {
+    "name": "Cuentas App API",
+    "_postman_id": "cuentas-app-api-v1",
+    "description": "Colección completa del API de Cuentas App. Usa la variable {{baseUrl}} para la URL base y {{token}} para el JWT.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\",\n  \"name\": \"Juan García\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Me",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "item": [
+        {
+          "name": "Get All Accounts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/accounts", "host": ["{{baseUrl}}"], "path": ["accounts"] }
+          }
+        },
+        {
+          "name": "Create Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/accounts", "host": ["{{baseUrl}}"], "path": ["accounts"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cuenta Corriente\",\n  \"type\": \"bank\",\n  \"balance\": 1000,\n  \"currency\": \"EUR\",\n  \"color\": \"#3B82F6\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Account by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/accounts/:id", "host": ["{{baseUrl}}"], "path": ["accounts", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Update Account",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/accounts/:id", "host": ["{{baseUrl}}"], "path": ["accounts", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cuenta Corriente Actualizada\",\n  \"color\": \"#10B981\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Account",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/accounts/:id", "host": ["{{baseUrl}}"], "path": ["accounts", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Transfer Funds",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/accounts/transfer", "host": ["{{baseUrl}}"], "path": ["accounts", "transfer"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fromAccountId\": \"uuid-from\",\n  \"toAccountId\": \"uuid-to\",\n  \"amount\": 200,\n  \"note\": \"Transferencia mensual\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Transfers by Account",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/accounts/:id/transfers", "host": ["{{baseUrl}}"], "path": ["accounts", ":id", "transfers"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Categories",
+      "item": [
+        {
+          "name": "Get All Categories",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/categories?type=expense", "host": ["{{baseUrl}}"], "path": ["categories"], "query": [{ "key": "type", "value": "expense", "disabled": true }] }
+          }
+        },
+        {
+          "name": "Create Category",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/categories", "host": ["{{baseUrl}}"], "path": ["categories"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alimentación\",\n  \"type\": \"expense\",\n  \"icon\": \"🍔\",\n  \"color\": \"#F59E0B\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Category by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/categories/:id", "host": ["{{baseUrl}}"], "path": ["categories", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Update Category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/categories/:id", "host": ["{{baseUrl}}"], "path": ["categories", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Comida\",\n  \"color\": \"#EF4444\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Category",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/categories/:id", "host": ["{{baseUrl}}"], "path": ["categories", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Get Category Spending",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/categories/:id/spending", "host": ["{{baseUrl}}"], "path": ["categories", ":id", "spending"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "Get Transactions",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/transactions?startDate=2025-01-01&endDate=2025-12-31&type=expense&limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions"],
+              "query": [
+                { "key": "startDate", "value": "2025-01-01", "disabled": true },
+                { "key": "endDate", "value": "2025-12-31", "disabled": true },
+                { "key": "accountId", "value": "", "disabled": true },
+                { "key": "categoryId", "value": "", "disabled": true },
+                { "key": "type", "value": "expense", "disabled": true },
+                { "key": "tag", "value": "", "disabled": true },
+                { "key": "minAmount", "value": "", "disabled": true },
+                { "key": "maxAmount", "value": "", "disabled": true },
+                { "key": "limit", "value": "20", "disabled": true },
+                { "key": "offset", "value": "0", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/transactions", "host": ["{{baseUrl}}"], "path": ["transactions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 50.00,\n  \"type\": \"expense\",\n  \"description\": \"Supermercado\",\n  \"date\": \"2025-05-13T10:00:00.000Z\",\n  \"accountId\": \"uuid-account\",\n  \"categoryId\": \"uuid-category\",\n  \"tagNames\": [\"supermercado\", \"alimentacion\"]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Transaction by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/transactions/:id", "host": ["{{baseUrl}}"], "path": ["transactions", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Update Transaction",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/transactions/:id", "host": ["{{baseUrl}}"], "path": ["transactions", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Supermercado actualizado\",\n  \"amount\": 55.00\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Transaction",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/transactions/:id", "host": ["{{baseUrl}}"], "path": ["transactions", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Get Transaction Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/transactions/summary?startDate=2025-01-01&endDate=2025-12-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["transactions", "summary"],
+              "query": [
+                { "key": "startDate", "value": "2025-01-01", "disabled": true },
+                { "key": "endDate", "value": "2025-12-31", "disabled": true },
+                { "key": "accountId", "value": "", "disabled": true },
+                { "key": "categoryId", "value": "", "disabled": true },
+                { "key": "type", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Receipt Items",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/transactions/:id/items", "host": ["{{baseUrl}}"], "path": ["transactions", ":id", "items"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Budgets",
+      "item": [
+        {
+          "name": "Get Budgets",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/budgets?month=5&year=2025",
+              "host": ["{{baseUrl}}"],
+              "path": ["budgets"],
+              "query": [
+                { "key": "month", "value": "5" },
+                { "key": "year", "value": "2025" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Budget",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/budgets", "host": ["{{baseUrl}}"], "path": ["budgets"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoryId\": \"uuid-category\",\n  \"amount\": 500,\n  \"month\": 5,\n  \"year\": 2025,\n  \"alertAt\": 80\n}"
+            }
+          }
+        },
+        {
+          "name": "Update Budget",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/budgets/:id", "host": ["{{baseUrl}}"], "path": ["budgets", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 600,\n  \"alertAt\": 90\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Budget",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/budgets/:id", "host": ["{{baseUrl}}"], "path": ["budgets", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fixed Expenses",
+      "item": [
+        {
+          "name": "Get Fixed Expenses",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses?active=true", "host": ["{{baseUrl}}"], "path": ["fixed-expenses"], "query": [{ "key": "active", "value": "true", "disabled": true }] }
+          }
+        },
+        {
+          "name": "Create Fixed Expense",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses", "host": ["{{baseUrl}}"], "path": ["fixed-expenses"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Netflix\",\n  \"amount\": 15.99,\n  \"type\": \"expense\",\n  \"dueDay\": 15,\n  \"description\": \"Suscripción mensual\",\n  \"accountId\": \"uuid-account\",\n  \"categoryId\": \"uuid-category\",\n  \"isActive\": true,\n  \"autoGenerate\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Fixed Expense by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses/:id", "host": ["{{baseUrl}}"], "path": ["fixed-expenses", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Update Fixed Expense",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses/:id", "host": ["{{baseUrl}}"], "path": ["fixed-expenses", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 17.99,\n  \"isActive\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Fixed Expense",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses/:id", "host": ["{{baseUrl}}"], "path": ["fixed-expenses", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Pay Fixed Expense",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses/:id/pay", "host": ["{{baseUrl}}"], "path": ["fixed-expenses", ":id", "pay"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2025-05-13T10:00:00.000Z\",\n  \"amount\": 15.99\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Fixed Expenses Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses/summary", "host": ["{{baseUrl}}"], "path": ["fixed-expenses", "summary"] }
+          }
+        },
+        {
+          "name": "Reorder Fixed Expenses",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/fixed-expenses/reorder", "host": ["{{baseUrl}}"], "path": ["fixed-expenses", "reorder"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"id\": \"uuid-1\", \"sortOrder\": 0 },\n    { \"id\": \"uuid-2\", \"sortOrder\": 1 }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Debts",
+      "item": [
+        {
+          "name": "Get Debts",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/debts?status=active", "host": ["{{baseUrl}}"], "path": ["debts"], "query": [{ "key": "status", "value": "active", "disabled": true }] }
+          }
+        },
+        {
+          "name": "Create Debt",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/debts", "host": ["{{baseUrl}}"], "path": ["debts"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"creditor\": \"Banco Santander\",\n  \"description\": \"Préstamo personal\",\n  \"totalAmount\": 5000,\n  \"interestRate\": 5.5,\n  \"interestType\": \"percentage\",\n  \"startDate\": \"2025-01-01T00:00:00.000Z\",\n  \"dueDate\": \"2026-01-01T00:00:00.000Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Debt by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/debts/:id", "host": ["{{baseUrl}}"], "path": ["debts", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Update Debt",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/debts/:id", "host": ["{{baseUrl}}"], "path": ["debts", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Préstamo personal renovado\",\n  \"dueDate\": \"2027-01-01T00:00:00.000Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Debt",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/debts/:id", "host": ["{{baseUrl}}"], "path": ["debts", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Pay Debt",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/debts/:id/pay", "host": ["{{baseUrl}}"], "path": ["debts", ":id", "pay"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 300,\n  \"accountId\": \"uuid-account\",\n  \"notes\": \"Pago mensual\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Debts Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/debts/summary", "host": ["{{baseUrl}}"], "path": ["debts", "summary"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recurring Debt Payments",
+      "item": [
+        {
+          "name": "Get Recurring Payments",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/recurring-debt-payments?debtId=", "host": ["{{baseUrl}}"], "path": ["recurring-debt-payments"], "query": [{ "key": "debtId", "value": "", "disabled": true }] }
+          }
+        },
+        {
+          "name": "Create Recurring Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/recurring-debt-payments", "host": ["{{baseUrl}}"], "path": ["recurring-debt-payments"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"debtId\": \"uuid-debt\",\n  \"amount\": 300,\n  \"accountId\": \"uuid-account\",\n  \"frequency\": \"monthly\",\n  \"dayOfMonth\": 1,\n  \"startDate\": \"2025-06-01T00:00:00.000Z\",\n  \"notes\": \"Pago automático mensual\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Recurring Payment by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/recurring-debt-payments/:id", "host": ["{{baseUrl}}"], "path": ["recurring-debt-payments", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Update Recurring Payment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/recurring-debt-payments/:id", "host": ["{{baseUrl}}"], "path": ["recurring-debt-payments", ":id"], "variable": [{ "key": "id", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 350,\n  \"isActive\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Recurring Payment",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/recurring-debt-payments/:id", "host": ["{{baseUrl}}"], "path": ["recurring-debt-payments", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Process Pending Payments",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/recurring-debt-payments/process", "host": ["{{baseUrl}}"], "path": ["recurring-debt-payments", "process"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Credit Cards",
+      "item": [
+        {
+          "name": "Get Credit Cards Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/credit-cards/summary", "host": ["{{baseUrl}}"], "path": ["credit-cards", "summary"] }
+          }
+        },
+        {
+          "name": "Get Credit Card Statement",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/credit-cards/:accountId/statement", "host": ["{{baseUrl}}"], "path": ["credit-cards", ":accountId", "statement"], "variable": [{ "key": "accountId", "value": "" }] }
+          }
+        },
+        {
+          "name": "Pay Credit Card",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/credit-cards/:accountId/pay", "host": ["{{baseUrl}}"], "path": ["credit-cards", ":accountId", "pay"], "variable": [{ "key": "accountId", "value": "" }] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 500,\n  \"paymentAccountId\": \"uuid-bank-account\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Get Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/summary", "host": ["{{baseUrl}}"], "path": ["dashboard", "summary"] }
+          }
+        },
+        {
+          "name": "Get By Category",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/by-category?type=expense", "host": ["{{baseUrl}}"], "path": ["dashboard", "by-category"], "query": [{ "key": "type", "value": "expense" }] }
+          }
+        },
+        {
+          "name": "Get Monthly Trend",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/monthly-trend?months=6", "host": ["{{baseUrl}}"], "path": ["dashboard", "monthly-trend"], "query": [{ "key": "months", "value": "6" }] }
+          }
+        },
+        {
+          "name": "Get Fixed vs Variable",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/fixed-vs-variable", "host": ["{{baseUrl}}"], "path": ["dashboard", "fixed-vs-variable"] }
+          }
+        },
+        {
+          "name": "Get Monthly Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/monthly-summary?month=5&year=2025", "host": ["{{baseUrl}}"], "path": ["dashboard", "monthly-summary"], "query": [{ "key": "month", "value": "5" }, { "key": "year", "value": "2025" }] }
+          }
+        },
+        {
+          "name": "Get Next Month Projection",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/next-month-projection", "host": ["{{baseUrl}}"], "path": ["dashboard", "next-month-projection"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Receipts",
+      "item": [
+        {
+          "name": "Scan Receipt",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/receipts/scan", "host": ["{{baseUrl}}"], "path": ["receipts", "scan"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "image", "type": "file", "src": "" }]
+            }
+          }
+        },
+        {
+          "name": "OCR Receipt",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/receipts/ocr", "host": ["{{baseUrl}}"], "path": ["receipts", "ocr"] },
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "image", "type": "file", "src": "" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "Get Notifications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications", "host": ["{{baseUrl}}"], "path": ["notifications"] }
+          }
+        },
+        {
+          "name": "Mark as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/:id/read", "host": ["{{baseUrl}}"], "path": ["notifications", ":id", "read"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Mark All as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/read-all", "host": ["{{baseUrl}}"], "path": ["notifications", "read-all"] }
+          }
+        },
+        {
+          "name": "Delete Notification",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/:id", "host": ["{{baseUrl}}"], "path": ["notifications", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        },
+        {
+          "name": "Get Notification Preferences",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/preferences", "host": ["{{baseUrl}}"], "path": ["notifications", "preferences"] }
+          }
+        },
+        {
+          "name": "Update Notification Preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/notifications/preferences", "host": ["{{baseUrl}}"], "path": ["notifications", "preferences"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoryLimit\": true,\n  \"debtDue\": true,\n  \"monthlyEmail\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Send Test Email",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications/test-email", "host": ["{{baseUrl}}"], "path": ["notifications", "test-email"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tags",
+      "item": [
+        {
+          "name": "Get Tags",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/tags?name=", "host": ["{{baseUrl}}"], "path": ["tags"], "query": [{ "key": "name", "value": "", "disabled": true }] }
+          }
+        },
+        {
+          "name": "Get Tags Summary",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/tags/summary", "host": ["{{baseUrl}}"], "path": ["tags", "summary"] }
+          }
+        },
+        {
+          "name": "Delete Tag",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/tags/:id", "host": ["{{baseUrl}}"], "path": ["tags", ":id"], "variable": [{ "key": "id", "value": "" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/settings/profile", "host": ["{{baseUrl}}"], "path": ["settings", "profile"] }
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/settings/profile", "host": ["{{baseUrl}}"], "path": ["settings", "profile"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nuevo Nombre\",\n  \"email\": \"newemail@example.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/settings/change-password", "host": ["{{baseUrl}}"], "path": ["settings", "change-password"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"password123\",\n  \"newPassword\": \"newpassword456\",\n  \"confirmPassword\": \"newpassword456\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/settings/account", "host": ["{{baseUrl}}"], "path": ["settings", "account"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"password123\",\n  \"confirmation\": \"DELETE\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Statistics",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": { "raw": "{{baseUrl}}/settings/statistics", "host": ["{{baseUrl}}"], "path": ["settings", "statistics"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        }
+      ]
+    }
+  ]
+}

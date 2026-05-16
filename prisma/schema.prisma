@@ -27,6 +27,7 @@ model User {
   budgets                Budget[]
   notifications          Notification[]
   tags                   Tag[]
+  bankConnections        BankConnection[]
 }
 
 model Account {
@@ -57,6 +58,7 @@ model Account {
   recurringDebtPayments         RecurringDebtPayment[]
   transfersFrom                 Transfer[] @relation("TransferFrom")
   transfersTo                   Transfer[] @relation("TransferTo")
+  bankConnections               BankConnection[]
   createdAt                     DateTime @default(now())
 
   @@index([userId])
@@ -116,6 +118,10 @@ model Transaction {
   fixedExpenseId String?
   fixedExpense   FixedExpense? @relation(fields: [fixedExpenseId], references: [id], onDelete: SetNull)
 
+  source       String  @default("manual") // "manual" | "bank_sync"
+  externalId   String? @unique            // TrueLayer transaction_id — deduplication at DB level
+  bankMetadata Json?                      // raw bank data (merchant, TrueLayer category, etc.)
+
   creditCardPayment CreditCardPayment?
   debtPayment       DebtPayment?
   receiptItems      ReceiptItem[]
@@ -129,6 +135,8 @@ model Transaction {
   @@index([categoryId])
   @@index([date])
   @@index([imageHash])
+  @@index([source])
+  @@index([externalId])
 }
 
 model FixedExpense {
@@ -357,4 +365,53 @@ model ReceiptItem {
   createdAt DateTime @default(now())
 
   @@index([transactionId])
+}
+
+model OAuthState {
+  id        String   @id @default(uuid()) // opaque state token sent in OAuth URL
+  userId    String
+  expiresAt DateTime                      // now + 10 minutes
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PendingBankAuth {
+  id                String   @id @default(uuid()) // pendingAuthId returned to frontend
+  userId            String
+  accessToken       String
+  refreshToken      String
+  tokenExpiresAt    DateTime
+  truelayerAccounts Json     // array of available TrueLayer accounts
+  expiresAt         DateTime // now + 15 minutes
+  createdAt         DateTime @default(now())
+
+  @@index([userId])
+}
+
+model BankConnection {
+  id                 String   @id @default(uuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider           String   @default("truelayer")
+  truelayerAccountId String   // ID of the sub-account in TrueLayer
+  accountName        String   // sub-account name (e.g. "Cuenta Corriente Imagin")
+  bankName           String   // bank name (e.g. "CaixaBank")
+  currency           String   @default("EUR")
+  accessToken        String
+  refreshToken       String
+  tokenExpiresAt     DateTime
+  lastSyncedAt       DateTime?
+  isActive           Boolean  @default(true)
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, truelayerAccountId])
+  @@index([userId])
+  @@index([userId, isActive])
+  @@index([accountId])
 }
