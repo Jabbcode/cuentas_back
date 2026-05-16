@@ -1,0 +1,205 @@
+{
+  "info": {
+    "name": "Banking Sync — TrueLayer",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Pruebas del módulo de integración bancaria con TrueLayer. Ejecutar en orden: 0 → 1 → 2 → ..."
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3001/api", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "pending_auth_id", "value": "", "type": "string" },
+    { "key": "connection_id", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Login (obtener token)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"tu@email.com\",\n  \"password\": \"tu_password\"\n}"
+        }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "const json = pm.response.json();",
+            "if (json.token) {",
+            "  pm.collectionVariables.set('token', json.token);",
+            "  console.log('Token guardado');",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "1. Listar bancos disponibles",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/banking/providers?country=ES",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "providers"],
+          "query": [
+            { "key": "country", "value": "ES", "description": "Opcional. Filtra por país (ES, GB, FR...). Quitar para ver todos." }
+          ]
+        },
+        "description": "Endpoint público — no requiere token. Retorna los bancos disponibles para tu plan de TrueLayer."
+      }
+    },
+    {
+      "name": "2. Iniciar conexión OAuth",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": { "raw": "{{base_url}}/banking/connect", "host": ["{{base_url}}"], "path": ["banking", "connect"] },
+        "description": "Retorna { authUrl }. Abre esa URL en el navegador para autorizar con TrueLayer."
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "const json = pm.response.json();",
+            "if (json.authUrl) {",
+            "  console.log('Abre esta URL en el navegador:');",
+            "  console.log(json.authUrl);",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "3. Callback (copia code y state de la URL de redirect)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/banking/callback?code=PEGA_CODE_AQUI&state=PEGA_STATE_UUID_AQUI",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "callback"],
+          "query": [
+            { "key": "code", "value": "PEGA_CODE_AQUI" },
+            { "key": "state", "value": "PEGA_STATE_UUID_AQUI" }
+          ]
+        },
+        "description": "TrueLayer redirige aquí automáticamente. En pruebas manuales copia el code y state de la URL de redirect. El backend responde 302 → copia el pending ID de la Location header."
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "const location = pm.response.headers.get('Location');",
+            "if (location) {",
+            "  const url = new URL(location);",
+            "  const pendingId = url.searchParams.get('pending');",
+            "  if (pendingId) {",
+            "    pm.collectionVariables.set('pending_auth_id', pendingId);",
+            "    console.log('pending_auth_id guardado:', pendingId);",
+            "  }",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "4. Sub-cuentas disponibles para mapear",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{base_url}}/banking/pending/{{pending_auth_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "pending", "{{pending_auth_id}}"]
+        },
+        "description": "Retorna las sub-cuentas TrueLayer disponibles. Copia los account_id para el siguiente request."
+      }
+    },
+    {
+      "name": "5. Confirmar mapeos (crear BankConnections)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{base_url}}/banking/connections/map",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "connections", "map"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"pendingAuthId\": \"{{pending_auth_id}}\",\n  \"mappings\": [\n    {\n      \"truelayerAccountId\": \"ACCOUNT_ID_DEL_PASO_4\",\n      \"appAccountId\": \"UUID_CUENTA_APP\"\n    }\n  ]\n}",
+          "options": { "raw": { "language": "json" } }
+        }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "const json = pm.response.json();",
+            "if (json.connections && json.connections.length > 0) {",
+            "  pm.collectionVariables.set('connection_id', json.connections[0].id);",
+            "  console.log('connection_id guardado:', json.connections[0].id);",
+            "}"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "6. Listar conexiones activas",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{base_url}}/banking/connections",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "connections"]
+        }
+      }
+    },
+    {
+      "name": "7. Status (para el frontend)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{base_url}}/banking/status",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "status"]
+        },
+        "description": "Retorna { isConnected, connections: [{ bankName, accountName, lastSyncedAt }] }."
+      }
+    },
+    {
+      "name": "8. Forzar sync manual",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{base_url}}/banking/connections/{{connection_id}}/sync",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "connections", "{{connection_id}}", "sync"]
+        },
+        "description": "Retorna { synced: N } con el número de transacciones nuevas importadas."
+      }
+    },
+    {
+      "name": "9. Desconectar cuenta bancaria",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{base_url}}/banking/connections/{{connection_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["banking", "connections", "{{connection_id}}"]
+        },
+        "description": "Soft delete — isActive = false."
+      }
+    }
+  ]
+}
