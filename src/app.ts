@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 
 import authRoutes from './routes/auth.routes.js';
@@ -24,7 +25,8 @@ const app = express();
 const allowedOrigin =
   process.env.NODE_ENV === 'production' ? process.env.CORS_ORIGIN : 'http://localhost:5173';
 
-app.use(cors({ origin: allowedOrigin }));
+app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(cookieParser());
 app.use(express.json());
 
 // Routes
