@@ -3,11 +3,19 @@ import * as authService from '../services/auth.service.js';
 import { registerSchema, loginSchema } from '../schemas/auth.schema.js';
 import { AuthRequest } from '../types/index.js';
 
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict' as const,
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
 export async function register(req: Request, res: Response, next: NextFunction) {
   try {
     const data = registerSchema.parse(req.body);
     const result = await authService.register(data);
-    res.status(201).json(result);
+    res.cookie('token', result.token, COOKIE_OPTIONS);
+    res.status(201).json({ user: result.user });
   } catch (error) {
     if (error instanceof Error && error.message === 'El email ya está registrado') {
       res.status(400).json({ error: error.message });
@@ -21,7 +29,8 @@ export async function login(req: Request, res: Response, next: NextFunction) {
   try {
     const data = loginSchema.parse(req.body);
     const result = await authService.login(data);
-    res.json(result);
+    res.cookie('token', result.token, COOKIE_OPTIONS);
+    res.json({ user: result.user });
   } catch (error) {
     if (error instanceof Error && error.message === 'Credenciales inválidas') {
       res.status(401).json({ error: error.message });
@@ -29,6 +38,15 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     }
     next(error);
   }
+}
+
+export async function logout(_req: Request, res: Response) {
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  });
+  res.json({ message: 'Sesión cerrada' });
 }
 
 export async function getMe(req: AuthRequest, res: Response, next: NextFunction) {
