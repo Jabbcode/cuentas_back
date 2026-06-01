@@ -140,27 +140,34 @@ async function processReceiptWithClaude(ocrText: string): Promise<ScanReceiptRes
       );
     }
 
-    const data = JSON.parse(jsonMatch[0]);
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+    } catch {
+      throw new AppError('La respuesta de IA contiene JSON malformado', 500, 'INTEGRATION_ERROR');
+    }
+
+    const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : [];
 
     return {
-      amount: parseFloat(data.amount) || 0,
-      description: data.description || 'Gasto sin descripción',
-      date: data.date || new Date().toISOString().split('T')[0],
-      suggestedCategory: data.suggestedCategory,
-      confidence: data.confidence || 'low',
+      amount: parseFloat(String(data.amount ?? 0)) || 0,
+      description:
+        typeof data.description === 'string' ? data.description : 'Gasto sin descripción',
+      date: typeof data.date === 'string' ? data.date : new Date().toISOString().split('T')[0],
+      suggestedCategory:
+        typeof data.suggestedCategory === 'string' ? data.suggestedCategory : undefined,
+      confidence: (data.confidence as ScanReceiptResponse['confidence']) ?? 'low',
       rawText: ocrText,
-      imageHash: '', // Will be set by caller
-      items: Array.isArray(data.items)
-        ? data.items.map((item: any) => ({
-            name: item.name || 'Producto sin nombre',
-            quantity: parseFloat(item.quantity) || 1,
-            unitPrice: parseFloat(item.unitPrice) || 0,
-            totalPrice: parseFloat(item.totalPrice) || 0,
-          }))
-        : [],
+      imageHash: '',
+      items: rawItems.map((item) => ({
+        name: typeof item.name === 'string' ? item.name : 'Producto sin nombre',
+        quantity: parseFloat(String(item.quantity ?? 1)) || 1,
+        unitPrice: parseFloat(String(item.unitPrice ?? 0)) || 0,
+        totalPrice: parseFloat(String(item.totalPrice ?? 0)) || 0,
+      })),
     };
   } catch (error) {
-    // Removed console.error
+    if (error instanceof AppError) throw error;
     throw new AppError('Error al procesar la factura con IA', 500, 'INTEGRATION_ERROR');
   }
 }
