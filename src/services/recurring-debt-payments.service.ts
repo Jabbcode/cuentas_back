@@ -1,48 +1,14 @@
-import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import type {
   CreateRecurringDebtPaymentInput,
   UpdateRecurringDebtPaymentInput,
 } from '../schemas/recurring-debt-payment.schema.js';
 import * as debtsService from './debts.service.js';
-
-/**
- * Calculate the next due date based on frequency and current date
- */
-export function calculateNextDueDate(
-  frequency: string,
-  dayOfMonth: number | null,
-  dayOfWeek: number | null,
-  fromDate: Date = new Date()
-): Date {
-  const today = new Date(fromDate);
-  today.setHours(0, 0, 0, 0);
-  const nextDate = new Date(today);
-
-  if (frequency === 'monthly') {
-    // Monthly: next occurrence of dayOfMonth
-    const targetDay = dayOfMonth || 1;
-    nextDate.setDate(targetDay);
-
-    // Si la fecha ya pasó este mes, ir al próximo mes
-    if (nextDate <= today) {
-      nextDate.setMonth(nextDate.getMonth() + 1);
-      nextDate.setDate(targetDay);
-    }
-  } else if (frequency === 'biweekly') {
-    // Biweekly: add 14 days
-    nextDate.setDate(nextDate.getDate() + 14);
-  } else if (frequency === 'weekly') {
-    // Weekly: next occurrence of dayOfWeek
-    const currentDay = nextDate.getDay();
-    const targetDay = dayOfWeek || 0;
-    const daysUntilNext = (targetDay - currentDay + 7) % 7 || 7;
-    nextDate.setDate(nextDate.getDate() + daysUntilNext);
-  }
-
-  // Set time to start of day
-  nextDate.setHours(0, 0, 0, 0);
-  return nextDate;
-}
+import { NotFoundError, ConflictError } from '../lib/errors.js';
+import { calculateNextDueDate } from '../lib/utils/date.utils.js';
+import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
+import * as debtRepo from '../repositories/debt.repository.js';
+import * as accountRepo from '../repositories/account.repository.js';
 
 /**
  * Create a new recurring debt payment
@@ -52,25 +18,21 @@ export async function createRecurringDebtPayment(
   data: CreateRecurringDebtPaymentInput
 ) {
   // Verify debt exists and belongs to user
-  const debt = await prisma.debt.findFirst({
-    where: { id: data.debtId, userId },
-  });
+  const debt = await debtRepo.findByIdAndUser(data.debtId, userId);
 
   if (!debt) {
-    throw new Error('Deuda no encontrada');
+    throw new NotFoundError('Deuda no encontrada');
   }
 
   if (debt.status === 'paid') {
-    throw new Error('No se pueden configurar pagos recurrentes para una deuda pagada');
+    throw new ConflictError('No se pueden configurar pagos recurrentes para una deuda pagada');
   }
 
   // Verify account exists and belongs to user
-  const account = await prisma.account.findFirst({
-    where: { id: data.accountId, userId },
-  });
+  const account = await accountRepo.findByIdAndUser(data.accountId, userId);
 
   if (!account) {
-    throw new Error('Cuenta no encontrada');
+    throw new NotFoundError('Cuenta no encontrada');
   }
 
   // Calculate next due date
@@ -82,12 +44,12 @@ export async function createRecurringDebtPayment(
     startDate
   );
 
-  const recurringPayment = await prisma.recurringDebtPayment.create({
-    data: {
-      userId,
-      debtId: data.debtId,
+  const recurringPayment = await recurringRepo.create(
+    {
+      user: { connect: { id: userId } },
+      debt: { connect: { id: data.debtId } },
       amount: data.amount,
-      accountId: data.accountId,
+      account: { connect: { id: data.accountId } },
       frequency: data.frequency,
       dayOfMonth: data.dayOfMonth,
       dayOfWeek: data.dayOfWeek,
@@ -96,11 +58,11 @@ export async function createRecurringDebtPayment(
       nextDueDate,
       notes: data.notes,
     },
-    include: {
+    {
       account: { select: { id: true, name: true } },
       debt: { select: { id: true, creditor: true, description: true, remainingAmount: true } },
-    },
-  });
+    }
+  );
 
   return recurringPayment;
 }
@@ -109,26 +71,11 @@ export async function createRecurringDebtPayment(
  * Get all recurring payments for a user
  */
 export async function getRecurringDebtPayments(userId: string, debtId?: string) {
-  const where: any = { userId };
-  if (debtId) {
-    where.debtId = debtId;
-  }
-
-  const recurringPayments = await prisma.recurringDebtPayment.findMany({
-    where,
-    include: {
-      account: { select: { id: true, name: true, balance: true } },
-      debt: {
-        select: {
-          id: true,
-          creditor: true,
-          description: true,
-          remainingAmount: true,
-          status: true,
-        },
-      },
+  const recurringPayments = await recurringRepo.findAllByUser(userId, debtId, {
+    account: { select: { id: true, name: true, balance: true } },
+    debt: {
+      select: { id: true, creditor: true, description: true, remainingAmount: true, status: true },
     },
-    orderBy: [{ isActive: 'desc' }, { nextDueDate: 'asc' }],
   });
 
   return recurringPayments;
@@ -138,24 +85,15 @@ export async function getRecurringDebtPayments(userId: string, debtId?: string) 
  * Get a single recurring payment by ID
  */
 export async function getRecurringDebtPaymentById(id: string, userId: string) {
-  const recurringPayment = await prisma.recurringDebtPayment.findFirst({
-    where: { id, userId },
-    include: {
-      account: { select: { id: true, name: true, balance: true } },
-      debt: {
-        select: {
-          id: true,
-          creditor: true,
-          description: true,
-          remainingAmount: true,
-          status: true,
-        },
-      },
+  const recurringPayment = await recurringRepo.findByIdAndUser(id, userId, {
+    account: { select: { id: true, name: true, balance: true } },
+    debt: {
+      select: { id: true, creditor: true, description: true, remainingAmount: true, status: true },
     },
   });
 
   if (!recurringPayment) {
-    throw new Error('Pago recurrente no encontrado');
+    throw new NotFoundError('Pago recurrente no encontrado');
   }
 
   return recurringPayment;
@@ -169,21 +107,15 @@ export async function updateRecurringDebtPayment(
   userId: string,
   data: UpdateRecurringDebtPaymentInput
 ) {
-  const existing = await prisma.recurringDebtPayment.findFirst({
-    where: { id, userId },
-  });
+  const existing = await recurringRepo.findByIdAndUser(id, userId);
 
   if (!existing) {
-    throw new Error('Pago recurrente no encontrado');
+    throw new NotFoundError('Pago recurrente no encontrado');
   }
 
   // If frequency changes, recalculate nextDueDate
   let nextDueDate = existing.nextDueDate;
-  if (
-    data.frequency ||
-    data.dayOfMonth !== undefined ||
-    data.dayOfWeek !== undefined
-  ) {
+  if (data.frequency || data.dayOfMonth !== undefined || data.dayOfWeek !== undefined) {
     const frequency = data.frequency || existing.frequency;
     const dayOfMonth = data.dayOfMonth !== undefined ? data.dayOfMonth : existing.dayOfMonth;
     const dayOfWeek = data.dayOfWeek !== undefined ? data.dayOfWeek : existing.dayOfWeek;
@@ -191,9 +123,9 @@ export async function updateRecurringDebtPayment(
     nextDueDate = calculateNextDueDate(frequency, dayOfMonth, dayOfWeek, new Date());
   }
 
-  const updated = await prisma.recurringDebtPayment.update({
-    where: { id },
-    data: {
+  const updated = await recurringRepo.update(
+    id,
+    {
       amount: data.amount,
       accountId: data.accountId,
       frequency: data.frequency,
@@ -203,12 +135,12 @@ export async function updateRecurringDebtPayment(
       isActive: data.isActive,
       notes: data.notes,
       nextDueDate,
-    },
-    include: {
+    } as unknown as Prisma.RecurringDebtPaymentUpdateInput,
+    {
       account: { select: { id: true, name: true } },
       debt: { select: { id: true, creditor: true, description: true, remainingAmount: true } },
-    },
-  });
+    }
+  );
 
   return updated;
 }
@@ -217,17 +149,13 @@ export async function updateRecurringDebtPayment(
  * Delete a recurring payment
  */
 export async function deleteRecurringDebtPayment(id: string, userId: string) {
-  const recurringPayment = await prisma.recurringDebtPayment.findFirst({
-    where: { id, userId },
-  });
+  const recurringPayment = await recurringRepo.findByIdAndUser(id, userId);
 
   if (!recurringPayment) {
-    throw new Error('Pago recurrente no encontrado');
+    throw new NotFoundError('Pago recurrente no encontrado');
   }
 
-  await prisma.recurringDebtPayment.delete({
-    where: { id },
-  });
+  await recurringRepo.remove(id);
 
   return { message: 'Pago recurrente eliminado correctamente' };
 }
@@ -240,19 +168,13 @@ export async function processPendingRecurringPayments() {
   today.setHours(0, 0, 0, 0);
 
   // Get all active recurring payments that are due
-  const duePayments = await prisma.recurringDebtPayment.findMany({
-    where: {
-      isActive: true,
-      nextDueDate: { lte: today },
-      debt: {
-        status: { not: 'paid' },
-      },
-    },
-    include: {
-      debt: true,
-      account: true,
-    },
-  });
+  type RdpWithDebtAccount = Prisma.RecurringDebtPaymentGetPayload<{
+    include: { debt: true; account: true };
+  }>;
+  const duePayments = (await recurringRepo.findDuePayments(today, {
+    debt: true,
+    account: true,
+  })) as unknown as RdpWithDebtAccount[];
 
   const results = [];
 
@@ -261,11 +183,12 @@ export async function processPendingRecurringPayments() {
       // Check if end date has passed
       if (recurringPayment.endDate && new Date(recurringPayment.endDate) < today) {
         // Deactivate if end date passed
-        await prisma.recurringDebtPayment.update({
-          where: { id: recurringPayment.id },
-          data: { isActive: false },
+        await recurringRepo.update(recurringPayment.id, { isActive: false });
+        results.push({
+          id: recurringPayment.id,
+          status: 'deactivated',
+          reason: 'End date reached',
         });
-        results.push({ id: recurringPayment.id, status: 'deactivated', reason: 'End date reached' });
         continue;
       }
 
@@ -280,15 +203,11 @@ export async function processPendingRecurringPayments() {
       }
 
       // Process the payment
-      await debtsService.payDebt(
-        recurringPayment.debtId,
-        recurringPayment.userId,
-        {
-          amount: Number(recurringPayment.amount),
-          accountId: recurringPayment.accountId,
-          notes: `Pago automático (recurrente) - ${recurringPayment.notes || ''}`,
-        }
-      );
+      await debtsService.payDebt(recurringPayment.debtId, recurringPayment.userId, {
+        amount: Number(recurringPayment.amount),
+        accountId: recurringPayment.accountId,
+        notes: `Pago automático (recurrente) - ${recurringPayment.notes || ''}`,
+      });
 
       // Calculate next due date
       const nextDueDate = calculateNextDueDate(
@@ -299,13 +218,7 @@ export async function processPendingRecurringPayments() {
       );
 
       // Update recurring payment
-      await prisma.recurringDebtPayment.update({
-        where: { id: recurringPayment.id },
-        data: {
-          lastProcessed: today,
-          nextDueDate,
-        },
-      });
+      await recurringRepo.update(recurringPayment.id, { lastProcessed: today, nextDueDate });
 
       results.push({ id: recurringPayment.id, status: 'processed', nextDueDate });
     } catch (error: any) {

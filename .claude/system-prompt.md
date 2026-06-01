@@ -38,8 +38,12 @@ Claude:  → Listo para PR
 Cuando el usuario confirme leer una tarea:
 
 1. Lee Notion vía MCP, extrae contexto
-2. Identifica agents/skills necesarios
-3. Verifica que userId filtering aplica
+2. Busca SPECs relacionados en `.claude/specs/` — decisiones arquitectónicas ya tomadas que afectan esta tarea:
+   - Si la tarea depende de otra ya implementada, lee su SPEC para respetar los patrones establecidos
+   - Si hay un SPEC con el mismo ID, está aprobado — úsalo directamente en Fase 2
+3. Busca contexto en el codebase (archivos existentes, patrones en uso)
+4. Identifica agents/skills necesarios
+5. Verifica que userId filtering aplica
 
 ```
 ## 📋 PROPUESTA: [Nombre de tarea]
@@ -125,23 +129,44 @@ npx tsc --noEmit   # debe retornar 0 errors
 npm run build      # debe completar sin errores
 ```
 
+**TypeScript & Calidad**
 - ✅ Sin `any` ni `@ts-ignore`
-- ✅ userId filtering en TODAS las queries
-- ✅ Validación Zod en controllers
-- ✅ try/catch → next(error) en controllers
+- ✅ Sin `Record<string, unknown>` como workaround de tipado Prisma — usar `Prisma.XWhereInput`
 - ✅ Sin `console.log` en código final
+- ✅ Sin `throw new Error()` — usar `NotFoundError`, `ConflictError`, etc. de `lib/errors.ts`
+
+**Arquitectura — Clean Architecture + SOLID**
+- ✅ Controllers solo validan (Zod) y llaman services — sin Prisma directo
+- ✅ Services solo orquestan lógica de negocio — sin Prisma directo
+- ✅ Repositories son la única capa que importa `prisma`
+- ✅ Cada función de service tiene una sola responsabilidad (S de SOLID)
+- ✅ Sin `await import()` dinámicos entre services — señal de dependencia circular
+- ✅ Lógica reutilizable en `lib/utils/` antes de duplicar
+- ✅ `checkBudgetAndNotify` y lógica de presupuestos → `budgets.service`, no `notifications.service`
+
+**Seguridad**
+- ✅ userId filtering en TODAS las queries — siempre via repository con `findByIdAndUser`
+- ✅ `updateAccountBalance` / `decrementBalance` siempre valida ownership (userId)
+- ✅ userId SIEMPRE de `req.user!.userId` — nunca de body, params ni query
+- ✅ try/catch → next(error) en todos los controllers
 - ✅ Acceptance criteria cubiertos
 
-Mensaje de PR: `✅ BUILD SUCCESSFUL — TypeScript: 0 errors | Security: userId verified`
+Mensaje de PR: `✅ BUILD SUCCESSFUL — TypeScript: 0 errors | Architecture: layers verified | Security: userId verified`
 
 ---
 
 ## Restricciones Críticas
 
-### Nunca pushear a main
-- ❌ Push directo a main — PROHIBIDO
-- ✅ Solo mergear si usuario dice explícitamente "pushea a main" o "mergea a main"
-- ✅ Siempre rama feature + PR
+### Flujo de ramas — CRÍTICO
+
+```
+feature/<descripcion>  →  PR (base: develop)  →  develop  →  main
+```
+
+- ❌ PR con base `main` — PROHIBIDO
+- ❌ Push directo a `main` o `develop` — PROHIBIDO
+- ✅ Siempre rama `feature/<descripcion>` + PR apuntando a `develop`
+- ✅ Solo mergear `develop → main` si usuario dice explícitamente "pushea a main" o "mergea a main"
 
 ### userId Filtering — CRÍTICO
 - ✅ SIEMPRE `where: { userId }` en queries Prisma

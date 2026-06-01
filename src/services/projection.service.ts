@@ -1,4 +1,5 @@
-import { prisma } from '../lib/prisma.js';
+import { groupByCategory } from '../lib/utils/projection.utils.js';
+import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 
 interface ProjectionData {
   month: string;
@@ -40,26 +41,20 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
   const monthNumber = nextMonth.getMonth() + 1;
 
   // Obtener todos los gastos/ingresos fijos activos
-  const fixedExpenses = await prisma.fixedExpense.findMany({
-    where: {
-      userId,
-      isActive: true,
-    },
-    include: {
-      category: {
-        select: {
-          id: true,
-          name: true,
-          icon: true,
-          color: true,
-        },
-      },
-    },
-    orderBy: [
-      { sortOrder: 'asc' },
-      { dueDay: 'asc' },
-    ],
-  });
+  type FeWithCat = {
+    id: string;
+    name: string;
+    amount: number | { toString(): string };
+    dueDay: number;
+    type: string;
+    category: { id: string; name: string; icon: string | null; color: string | null } | null;
+  };
+  const fixedExpenses = (await fixedExpenseRepo.findAllByUser(
+    userId,
+    { isActive: true },
+    { category: { select: { id: true, name: true, icon: true, color: true } } },
+    [{ sortOrder: 'asc' }, { dueDay: 'asc' }]
+  )) as unknown as FeWithCat[];
 
   // Separar por tipo
   const expenses = fixedExpenses.filter((fe) => fe.type === 'expense');
@@ -82,13 +77,13 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
   const incomeDiff = totalIncome - currentMonthSummary.totalIncome;
   const netDiff = netBalance - currentMonthSummary.netBalance;
 
-  const expensesPercentage = currentMonthSummary.totalExpenses > 0
-    ? ((expensesDiff / currentMonthSummary.totalExpenses) * 100)
-    : 0;
+  const expensesPercentage =
+    currentMonthSummary.totalExpenses > 0
+      ? (expensesDiff / currentMonthSummary.totalExpenses) * 100
+      : 0;
 
-  const incomePercentage = currentMonthSummary.totalIncome > 0
-    ? ((incomeDiff / currentMonthSummary.totalIncome) * 100)
-    : 0;
+  const incomePercentage =
+    currentMonthSummary.totalIncome > 0 ? (incomeDiff / currentMonthSummary.totalIncome) * 100 : 0;
 
   return {
     month: nextMonth.toISOString(),
@@ -110,46 +105,8 @@ export async function getNextMonthProjection(userId: string): Promise<Projection
   };
 }
 
-function groupByCategory(items: any[]): CategoryProjection[] {
-  const grouped = new Map<string, CategoryProjection>();
-
-  items.forEach((item) => {
-    const catId = item.category?.id || 'uncategorized';
-    const catName = item.category?.name || 'Sin categoría';
-    const catIcon = item.category?.icon || null;
-    const catColor = item.category?.color || null;
-
-    if (!grouped.has(catId)) {
-      grouped.set(catId, {
-        categoryId: catId,
-        categoryName: catName,
-        categoryIcon: catIcon,
-        categoryColor: catColor,
-        total: 0,
-        items: [],
-      });
-    }
-
-    const category = grouped.get(catId)!;
-    category.total += Number(item.amount);
-    category.items.push({
-      id: item.id,
-      name: item.name,
-      amount: Number(item.amount),
-      dueDay: item.dueDay,
-    });
-  });
-
-  return Array.from(grouped.values()).sort((a, b) => b.total - a.total);
-}
-
 async function getCurrentMonthSummary(userId: string, currentMonth: Date) {
-  const fixedExpenses = await prisma.fixedExpense.findMany({
-    where: {
-      userId,
-      isActive: true,
-    },
-  });
+  const fixedExpenses = await fixedExpenseRepo.findAllByUser(userId, { isActive: true });
 
   const expenses = fixedExpenses.filter((fe) => fe.type === 'expense');
   const incomes = fixedExpenses.filter((fe) => fe.type === 'income');

@@ -1,9 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import Tesseract from 'tesseract.js';
 import crypto from 'crypto';
-import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import { buildReceiptAnalysisPrompt } from '../prompts/receipt-analysis.prompt.js';
+import * as transactionRepo from '../repositories/transaction.repository.js';
 import type { ScanReceiptResponse, DuplicateCheckResponse } from '../schemas/receipt.schema.js';
+import { AppError, ValidationError } from '../lib/errors.js';
 
 // Initialize Claude API client
 const anthropic = new Anthropic({
@@ -20,17 +22,24 @@ function calculateImageHash(imageBuffer: Buffer): string {
 /**
  * Check for exact duplicate by image hash
  */
-async function checkExactDuplicate(imageHash: string, userId: string) {
-  return await prisma.transaction.findFirst({
-    where: {
-      userId,
-      imageHash,
-    },
-    include: {
+type TxWithAccountCategory = Prisma.TransactionGetPayload<{
+  include: {
+    account: { select: { id: true; name: true } };
+    category: { select: { id: true; name: true } };
+  };
+}>;
+
+async function checkExactDuplicate(
+  imageHash: string,
+  userId: string
+): Promise<TxWithAccountCategory | null> {
+  return transactionRepo.findFirst(
+    { userId, imageHash },
+    {
       account: { select: { id: true, name: true } },
       category: { select: { id: true, name: true } },
-    },
-  });
+    }
+  ) as Promise<TxWithAccountCategory | null>;
 }
 
 /**
@@ -49,26 +58,20 @@ async function checkSimilarTransactions(
   twoDaysAfter.setDate(twoDaysAfter.getDate() + 2);
 
   // Find transactions with similar amount (±0.50€) and date (±2 days)
-  const similarTransactions = await prisma.transaction.findMany({
-    where: {
+  const similarTransactions = (await transactionRepo.findMany(
+    {
       userId,
-      amount: {
-        gte: amount - 0.5,
-        lte: amount + 0.5,
+      amount: { gte: amount - 0.5, lte: amount + 0.5 },
+      date: { gte: twoDaysBefore, lte: twoDaysAfter },
+    },
+    {
+      include: {
+        account: { select: { id: true, name: true } },
+        category: { select: { id: true, name: true } },
       },
-      date: {
-        gte: twoDaysBefore,
-        lte: twoDaysAfter,
-      },
-    },
-    include: {
-      account: { select: { id: true, name: true } },
-      category: { select: { id: true, name: true } },
-    },
-    orderBy: {
-      date: 'desc',
-    },
-  });
+      orderBy: { date: 'desc' },
+    }
+  )) as unknown as TxWithAccountCategory[];
 
   // Filter by description similarity (if description exists)
   if (description && similarTransactions.length > 0) {
@@ -78,8 +81,8 @@ async function checkSimilarTransactions(
       const txDescLower = tx.description.toLowerCase();
 
       // Simple similarity: check if one contains key words from the other
-      const words = descLower.split(/\s+/).filter(w => w.length > 3);
-      const matchedWords = words.filter(word => txDescLower.includes(word));
+      const words = descLower.split(/\s+/).filter((w) => w.length > 3);
+      const matchedWords = words.filter((word) => txDescLower.includes(word));
 
       return matchedWords.length >= Math.min(2, words.length * 0.5);
     });
@@ -96,13 +99,13 @@ async function checkSimilarTransactions(
 async function extractTextFromImage(imageBuffer: Buffer): Promise<string> {
   try {
     const result = await Tesseract.recognize(imageBuffer, 'spa', {
-    // Removed console.log
+      // Removed console.log
     });
 
     return result.data.text;
   } catch (error) {
     // Removed console.error
-    throw new Error('Error al extraer texto de la imagen');
+    throw new AppError('Error al extraer texto de la imagen', 500, 'INTEGRATION_ERROR');
   }
 }
 
@@ -130,29 +133,42 @@ async function processReceiptWithClaude(ocrText: string): Promise<ScanReceiptRes
     // Try to parse JSON from the response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('No se pudo extraer JSON de la respuesta de Claude');
+      throw new AppError(
+        'No se pudo extraer JSON de la respuesta de Claude',
+        500,
+        'INTEGRATION_ERROR'
+      );
     }
 
-    const data = JSON.parse(jsonMatch[0]);
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+    } catch {
+      throw new AppError('La respuesta de IA contiene JSON malformado', 500, 'INTEGRATION_ERROR');
+    }
+
+    const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : [];
 
     return {
-      amount: parseFloat(data.amount) || 0,
-      description: data.description || 'Gasto sin descripción',
-      date: data.date || new Date().toISOString().split('T')[0],
-      suggestedCategory: data.suggestedCategory,
-      confidence: data.confidence || 'low',
+      amount: parseFloat(String(data.amount ?? 0)) || 0,
+      description:
+        typeof data.description === 'string' ? data.description : 'Gasto sin descripción',
+      date: typeof data.date === 'string' ? data.date : new Date().toISOString().split('T')[0],
+      suggestedCategory:
+        typeof data.suggestedCategory === 'string' ? data.suggestedCategory : undefined,
+      confidence: (data.confidence as ScanReceiptResponse['confidence']) ?? 'low',
       rawText: ocrText,
-      imageHash: '', // Will be set by caller
-      items: Array.isArray(data.items) ? data.items.map((item: any) => ({
-        name: item.name || 'Producto sin nombre',
-        quantity: parseFloat(item.quantity) || 1,
-        unitPrice: parseFloat(item.unitPrice) || 0,
-        totalPrice: parseFloat(item.totalPrice) || 0,
-      })) : [],
+      imageHash: '',
+      items: rawItems.map((item) => ({
+        name: typeof item.name === 'string' ? item.name : 'Producto sin nombre',
+        quantity: parseFloat(String(item.quantity ?? 1)) || 1,
+        unitPrice: parseFloat(String(item.unitPrice ?? 0)) || 0,
+        totalPrice: parseFloat(String(item.totalPrice ?? 0)) || 0,
+      })),
     };
   } catch (error) {
-    // Removed console.error
-    throw new Error('Error al procesar la factura con IA');
+    if (error instanceof AppError) throw error;
+    throw new AppError('Error al procesar la factura con IA', 500, 'INTEGRATION_ERROR');
   }
 }
 
@@ -165,10 +181,10 @@ export async function scanReceipt(
 ): Promise<DuplicateCheckResponse> {
   // Step 1: Calculate image hash
   const imageHash = calculateImageHash(imageBuffer);
-    // Removed console.log
+  // Removed console.log
 
   // Step 2: Check for exact duplicate (same image)
-    // Removed console.log
+  // Removed console.log
   const exactDuplicate = await checkExactDuplicate(imageHash, userId);
 
   if (exactDuplicate) {
@@ -189,24 +205,24 @@ export async function scanReceipt(
   }
 
   // Step 3: Extract text with OCR
-    // Removed console.log
+  // Removed console.log
   const ocrText = await extractTextFromImage(imageBuffer);
 
   if (!ocrText || ocrText.trim().length < 10) {
-    throw new Error('No se pudo extraer texto legible de la imagen');
+    throw new ValidationError('No se pudo extraer texto legible de la imagen');
   }
 
-    // Removed console.log
+  // Removed console.log
 
   // Step 4: Process with Claude
-    // Removed console.log
+  // Removed console.log
   const structuredData = await processReceiptWithClaude(ocrText);
   structuredData.imageHash = imageHash; // Add hash to structured data
 
-    // Removed console.log
+  // Removed console.log
 
   // Step 5: Check for similar transactions
-    // Removed console.log
+  // Removed console.log
   const similarTransaction = await checkSimilarTransactions(
     structuredData.amount,
     structuredData.date,
@@ -233,7 +249,7 @@ export async function scanReceipt(
   }
 
   // Step 6: No duplicates found
-    // Removed console.log
+  // Removed console.log
   return {
     duplicate: false,
     matchType: 'none',
@@ -245,14 +261,14 @@ export async function scanReceipt(
  * OCR-only function: Extract text without AI processing (FREE)
  */
 export async function ocrOnly(imageBuffer: Buffer): Promise<{ rawText: string }> {
-    // Removed console.log
+  // Removed console.log
   const rawText = await extractTextFromImage(imageBuffer);
 
   if (!rawText || rawText.trim().length < 10) {
-    throw new Error('No se pudo extraer texto legible de la imagen');
+    throw new ValidationError('No se pudo extraer texto legible de la imagen');
   }
 
-    // Removed console.log
+  // Removed console.log
 
   return { rawText };
 }

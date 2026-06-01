@@ -1,4 +1,15 @@
-import { prisma } from '../lib/prisma.js';
+import { NotFoundError, ValidationError, ConflictError } from '../lib/errors.js';
+import {
+  getCutoffDates,
+  getPaymentDueDate,
+  getDaysBetween,
+  normalizeToUTC,
+} from '../lib/utils/credit-card.utils.js';
+import * as accountRepo from '../repositories/account.repository.js';
+import * as transactionRepo from '../repositories/transaction.repository.js';
+import * as creditCardPaymentRepo from '../repositories/credit-card-payment.repository.js';
+import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
+import * as categoryRepo from '../repositories/category.repository.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -28,77 +39,20 @@ interface CreditCardStatement {
 }
 
 /**
- * Calculate the last and next cutoff dates for a credit card
- */
-function getCutoffDates(cutoffDay: number): { lastCutoff: Date; nextCutoff: Date } {
-  const today = new Date();
-  const currentDay = today.getDate();
-  const currentMonth = today.getMonth();
-  const currentYear = today.getFullYear();
-
-  let lastCutoff: Date;
-  let nextCutoff: Date;
-
-  if (currentDay >= cutoffDay) {
-    // Last cutoff was this month
-    lastCutoff = new Date(currentYear, currentMonth, cutoffDay);
-    nextCutoff = new Date(currentYear, currentMonth + 1, cutoffDay);
-  } else {
-    // Last cutoff was last month
-    lastCutoff = new Date(currentYear, currentMonth - 1, cutoffDay);
-    nextCutoff = new Date(currentYear, currentMonth, cutoffDay);
-  }
-
-  return { lastCutoff, nextCutoff };
-}
-
-/**
- * Calculate payment due date based on cutoff date and payment due day
- */
-function getPaymentDueDate(cutoffDate: Date, paymentDueDay: number): Date {
-  const cutoffMonth = cutoffDate.getMonth();
-  const cutoffYear = cutoffDate.getFullYear();
-
-  // Payment is due in the same month or next month
-  if (paymentDueDay > cutoffDate.getDate()) {
-    return new Date(cutoffYear, cutoffMonth, paymentDueDay);
-  } else {
-    return new Date(cutoffYear, cutoffMonth + 1, paymentDueDay);
-  }
-}
-
-/**
- * Get days between two dates
- */
-function getDaysBetween(from: Date, to: Date): number {
-  const diff = to.getTime() - from.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-}
-
-/**
- * Normalize date to midnight UTC to avoid timezone issues
- */
-function normalizeToUTC(date: Date): Date {
-  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0));
-}
-
-/**
  * Get credit card statement with current and closed periods
  */
 export async function getCreditCardStatement(
   accountId: string,
   userId: string
 ): Promise<CreditCardStatement> {
-  const account = await prisma.account.findFirst({
-    where: { id: accountId, userId, type: 'credit_card' },
-  });
+  const account = await accountRepo.findByIdAndUser(accountId, userId);
 
-  if (!account) {
-    throw new Error('Cuenta no encontrada o no es una tarjeta de crédito');
+  if (!account || account.type !== 'credit_card') {
+    throw new NotFoundError('Cuenta no encontrada o no es una tarjeta de crédito');
   }
 
   if (!account.cutoffDay || !account.paymentDueDay) {
-    throw new Error('La tarjeta no tiene configuradas las fechas de corte y pago');
+    throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
   }
 
   const today = new Date();
@@ -112,40 +66,28 @@ export async function getCreditCardStatement(
   const previousCutoffUTC = normalizeToUTC(previousCutoff);
 
   // Get transactions for current period (last cutoff to now)
-  const currentPeriodTransactions = await prisma.transaction.findMany({
-    where: {
-      accountId,
-      userId,
-      type: 'expense',
-      date: {
-        gte: lastCutoff,
-        lte: today,
+  const currentPeriodTransactions = await transactionRepo.findMany(
+    { accountId, userId, type: 'expense', date: { gte: lastCutoff, lte: today } },
+    {
+      include: {
+        category: { select: { id: true, name: true, icon: true, color: true } },
+        fixedExpense: { select: { id: true, name: true } },
       },
-    },
-    include: {
-      category: { select: { id: true, name: true, icon: true, color: true } },
-      fixedExpense: { select: { id: true, name: true } },
-    },
-    orderBy: { date: 'desc' },
-  });
+      orderBy: { date: 'desc' },
+    }
+  );
 
   // Get transactions for closed period (previous cutoff to last cutoff)
-  const closedPeriodTransactions = await prisma.transaction.findMany({
-    where: {
-      accountId,
-      userId,
-      type: 'expense',
-      date: {
-        gte: previousCutoff,
-        lt: lastCutoff,
+  const closedPeriodTransactions = await transactionRepo.findMany(
+    { accountId, userId, type: 'expense', date: { gte: previousCutoff, lt: lastCutoff } },
+    {
+      include: {
+        category: { select: { id: true, name: true, icon: true, color: true } },
+        fixedExpense: { select: { id: true, name: true } },
       },
-    },
-    include: {
-      category: { select: { id: true, name: true, icon: true, color: true } },
-      fixedExpense: { select: { id: true, name: true } },
-    },
-    orderBy: { date: 'desc' },
-  });
+      orderBy: { date: 'desc' },
+    }
+  );
 
   // Calculate balances
   const currentBalance = currentPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
@@ -159,12 +101,10 @@ export async function getCreditCardStatement(
   const closedPeriodEndUTC = normalizeToUTC(closedPeriodEnd);
 
   // Check if closed period is paid (use UTC normalized dates)
-  const closedPeriodPayment = await prisma.creditCardPayment.findFirst({
-    where: {
-      accountId,
-      periodStart: previousCutoffUTC,
-      periodEnd: closedPeriodEndUTC,
-    },
+  const closedPeriodPayment = await creditCardPaymentRepo.findFirst({
+    accountId,
+    periodStart: previousCutoffUTC,
+    periodEnd: closedPeriodEndUTC,
   });
 
   const paymentDueDate = getPaymentDueDate(lastCutoff, account.paymentDueDay);
@@ -249,12 +189,7 @@ export async function getCreditCardStatement(
  * Get summary of all credit cards for dashboard
  */
 export async function getCreditCardsSummary(userId: string) {
-  const creditCards = await prisma.account.findMany({
-    where: {
-      userId,
-      type: 'credit_card',
-    },
-  });
+  const creditCards = await accountRepo.findCreditCardsByUser(userId);
 
   const summaries = await Promise.all(
     creditCards
@@ -317,7 +252,7 @@ export async function payCreditCardStatement(
   const statement = await getCreditCardStatement(accountId, userId);
 
   if (statement.closedPeriod.isPaid) {
-    throw new Error('El estado de cuenta ya está pagado');
+    throw new ConflictError('El estado de cuenta ya está pagado');
   }
 
   const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
@@ -356,24 +291,20 @@ export async function payCreditCardStatement(
   }
 
   // Record payment
-  const payment = await prisma.creditCardPayment.create({
-    data: {
-      accountId,
-      amount: data.amount,
-      paymentDate,
-      periodStart: statement.closedPeriod.startDate,
-      periodEnd: statement.closedPeriod.endDate,
-      transactionId: transaction.id,
-    },
+  const payment = await creditCardPaymentRepo.create({
+    account: { connect: { id: accountId } },
+    amount: data.amount,
+    paymentDate,
+    periodStart: statement.closedPeriod.startDate,
+    periodEnd: statement.closedPeriod.endDate,
+    transaction: { connect: { id: transaction.id } },
   });
 
   // Mark associated fixed expense as paid (if exists)
-  const fixedExpense = await prisma.fixedExpense.findFirst({
-    where: {
-      userId,
-      creditCardAccountId: accountId,
-      isActive: true,
-    },
+  const fixedExpense = await fixedExpenseRepo.findFirst({
+    userId,
+    creditCardAccountId: accountId,
+    isActive: true,
   });
 
   if (fixedExpense) {
@@ -383,14 +314,9 @@ export async function payCreditCardStatement(
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
     // Check if there's already a payment this month
-    const existingPayment = await prisma.transaction.findFirst({
-      where: {
-        fixedExpenseId: fixedExpense.id,
-        date: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
-      },
+    const existingPayment = await transactionRepo.findFirst({
+      fixedExpenseId: fixedExpense.id,
+      date: { gte: startOfMonth, lte: endOfMonth },
     });
 
     // Only create if there's no payment this month
@@ -417,23 +343,15 @@ export async function payCreditCardStatement(
  * Get or create "Pago de Tarjeta" category
  */
 async function getOrCreatePaymentCategory(userId: string) {
-  let category = await prisma.category.findFirst({
-    where: {
-      userId,
-      name: 'Pago de Tarjeta',
-      type: 'expense',
-    },
-  });
+  let category = await categoryRepo.findFirst({ userId, name: 'Pago de Tarjeta', type: 'expense' });
 
   if (!category) {
-    category = await prisma.category.create({
-      data: {
-        name: 'Pago de Tarjeta',
-        type: 'expense',
-        icon: '💳',
-        color: '#8B5CF6',
-        userId,
-      },
+    category = await categoryRepo.create({
+      name: 'Pago de Tarjeta',
+      type: 'expense',
+      icon: '💳',
+      color: '#8B5CF6',
+      user: { connect: { id: userId } },
     });
   }
 

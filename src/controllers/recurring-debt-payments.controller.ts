@@ -19,8 +19,8 @@ export async function createRecurringDebtPayment(
       data
     );
     res.status(201).json(recurringPayment);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error: unknown) {
+    next(error);
   }
 }
 
@@ -37,8 +37,8 @@ export async function getRecurringDebtPayments(
       debtId
     );
     res.json(recurringPayments);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error: unknown) {
+    next(error);
   }
 }
 
@@ -55,8 +55,8 @@ export async function getRecurringDebtPaymentById(
       userId
     );
     res.json(recurringPayment);
-  } catch (error: any) {
-    res.status(404).json({ error: error.message });
+  } catch (error: unknown) {
+    next(error);
   }
 }
 
@@ -75,8 +75,8 @@ export async function updateRecurringDebtPayment(
       data
     );
     res.json(recurringPayment);
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
+  } catch (error: unknown) {
+    next(error);
   }
 }
 
@@ -90,20 +90,16 @@ export async function deleteRecurringDebtPayment(
     const id = req.params.id as string;
     const result = await recurringDebtPaymentsService.deleteRecurringDebtPayment(id, userId);
     res.json(result);
-  } catch (error: any) {
-    res.status(404).json({ error: error.message });
+  } catch (error: unknown) {
+    next(error);
   }
 }
 
-export async function processPendingPayments(
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) {
+export async function processPendingPayments(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const result = await recurringDebtPaymentsService.processPendingRecurringPayments();
     res.json(result);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error: unknown) {
+    next(error);
   }
 }

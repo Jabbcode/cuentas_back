@@ -20,7 +20,10 @@ import tagsRoutes from './routes/tags.routes.js';
 const app = express();
 
 // Middlewares
-app.use(cors());
+const allowedOrigin =
+  process.env.NODE_ENV === 'production' ? process.env.CORS_ORIGIN : 'http://localhost:5173';
+
+app.use(cors({ origin: allowedOrigin }));
 app.use(express.json());
 
 // Routes
