@@ -19,8 +19,9 @@ function startCronJobs() {
           { created: count }
         );
       }
-    } catch {
-      // Cron errors should not crash the server
+    } catch (err) {
+      // Cron errors must not crash the server
+      console.error('[cron:auto-generate]', err instanceof Error ? err.message : err);
     }
   });
 
@@ -151,8 +152,9 @@ function startCronJobs() {
           totalIncome: Number(incomeAgg._sum.amount ?? 0),
           categoryBreakdown: breakdown,
         });
-      } catch {
-        // Email send failure should not crash the cron
+      } catch (err) {
+        // Email send failure must not crash the cron
+        console.error('[cron:monthly-email]', err instanceof Error ? err.message : err);
       }
     }
   });

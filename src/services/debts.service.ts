@@ -166,7 +166,8 @@ async function handleRecurringPaymentSideEffects(
         userId
       );
     } catch (error) {
-      // Silent: fixed expense transaction failure must not roll back the debt payment
+      // Fixed expense transaction failure must not roll back the debt payment
+      console.error('[debt-pay:fixed-expense-tx]', error instanceof Error ? error.message : error);
     }
   }
 }

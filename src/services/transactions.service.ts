@@ -111,7 +111,9 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
   await updateAccountBalance(data.accountId, userId, data.amount, data.type);
 
   if (data.type === 'expense') {
-    checkBudgetAndNotify(userId, data.categoryId).catch(() => {});
+    checkBudgetAndNotify(userId, data.categoryId).catch((err: unknown) => {
+      console.error('[budget-check]', err instanceof Error ? err.message : err);
+    });
   }
 
   return transaction;
