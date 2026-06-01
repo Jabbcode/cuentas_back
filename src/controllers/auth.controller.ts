@@ -3,10 +3,12 @@ import * as authService from '../services/auth.service.js';
 import { registerSchema, loginSchema } from '../schemas/auth.schema.js';
 import { AuthRequest } from '../types/index.js';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'none' as const,
+  secure: isProduction,
+  sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
@@ -43,8 +45,8 @@ export async function login(req: Request, res: Response, next: NextFunction) {
 export async function logout(_req: Request, res: Response) {
   res.clearCookie('token', {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
   });
   res.json({ message: 'Sesión cerrada' });
 }
