@@ -11,22 +11,12 @@ export function buildTransactionWhereInput(
     | 'categoryId'
     | 'categoryIds'
     | 'type'
-    | 'tag'
     | 'minAmount'
     | 'maxAmount'
   >
 ): Prisma.TransactionWhereInput {
-  const {
-    startDate,
-    endDate,
-    accountId,
-    categoryId,
-    categoryIds,
-    type,
-    tag,
-    minAmount,
-    maxAmount,
-  } = filters;
+  const { startDate, endDate, accountId, categoryId, categoryIds, type, minAmount, maxAmount } =
+    filters;
 
   const where: Prisma.TransactionWhereInput = { userId };
 
@@ -46,7 +36,6 @@ export function buildTransactionWhereInput(
   }
 
   if (type) where.type = type;
-  if (tag) where.tags = { some: { tag: { name: tag.toLowerCase(), userId } } };
 
   if (minAmount !== undefined || maxAmount !== undefined) {
     where.amount = {

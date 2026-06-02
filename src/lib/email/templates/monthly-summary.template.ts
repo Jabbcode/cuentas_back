@@ -19,18 +19,7 @@ function progressBar(percentage: number, color: string): string {
 
 function categoryRow(c: CategoryEmailData, totalExpenses: number): string {
   const pctOfTotal = totalExpenses > 0 ? (c.spent / totalExpenses) * 100 : 0;
-  const hasBudget = c.budget !== undefined && c.budget > 0;
-  const budgetPct = hasBudget ? (c.spent / c.budget!) * 100 : 0;
-  const isOver = hasBudget && c.spent > c.budget!;
-
-  const barColor = isOver ? '#dc2626' : hasBudget && budgetPct >= 80 ? '#f59e0b' : '#2563eb';
   const icon = resolveIcon(c.icon);
-
-  const budgetLabel = hasBudget
-    ? `<span style="font-size:11px;color:${isOver ? '#dc2626' : '#6b7280'}">
-        ${isOver ? '⚠️ ' : ''}€${c.spent.toFixed(2)} / €${c.budget!.toFixed(2)} (${Math.round(budgetPct)}%)
-       </span>`
-    : `<span style="font-size:11px;color:#6b7280">€${c.spent.toFixed(2)}</span>`;
 
   return `
     <tr>
@@ -45,10 +34,12 @@ function categoryRow(c: CategoryEmailData, totalExpenses: number): string {
             </td>
           </tr>
           <tr>
-            <td colspan="2">${progressBar(hasBudget ? budgetPct : pctOfTotal, barColor)}</td>
+            <td colspan="2">${progressBar(pctOfTotal, '#2563eb')}</td>
           </tr>
           <tr>
-            <td colspan="2" style="padding-top:2px">${budgetLabel}</td>
+            <td colspan="2" style="padding-top:2px">
+              <span style="font-size:11px;color:#6b7280">€${c.spent.toFixed(2)}</span>
+            </td>
           </tr>
         </table>
       </td>
