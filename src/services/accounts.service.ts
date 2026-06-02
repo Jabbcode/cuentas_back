@@ -22,13 +22,26 @@ export async function getAccountById(id: string, userId: string) {
 }
 
 export async function createAccount(data: CreateAccountInput, userId: string) {
-  return accountRepo.create({ ...data, user: { connect: { id: userId } } });
+  const { paymentAccountId, ...rest } = data;
+  return accountRepo.create({
+    ...rest,
+    user: { connect: { id: userId } },
+    ...(paymentAccountId && { paymentAccount: { connect: { id: paymentAccountId } } }),
+  });
 }
 
 export async function updateAccount(id: string, data: UpdateAccountInput, userId: string) {
   await getAccountById(id, userId);
 
-  return accountRepo.update(id, data);
+  const { paymentAccountId, ...rest } = data;
+  return accountRepo.update(id, {
+    ...rest,
+    ...(paymentAccountId !== undefined && {
+      paymentAccount: paymentAccountId
+        ? { connect: { id: paymentAccountId } }
+        : { disconnect: true },
+    }),
+  });
 }
 
 export async function deleteAccount(id: string, userId: string) {
