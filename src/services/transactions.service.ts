@@ -7,8 +7,6 @@ import {
 import { buildTransactionWhereInput } from '../lib/utils/transaction.utils.js';
 import { NotFoundError } from '../lib/errors.js';
 import { updateAccountBalance } from './accounts.service.js';
-import { checkBudgetAndNotify } from './budgets.service.js';
-import { upsertTags } from './tags.service.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
 
@@ -22,7 +20,6 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
     type,
     limit = 50,
     offset = 0,
-    tag,
     minAmount,
     maxAmount,
   } = query;
@@ -34,7 +31,6 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
     categoryId,
     categoryIds,
     type,
-    tag,
     minAmount,
     maxAmount,
   });
@@ -45,7 +41,6 @@ export async function getTransactions(userId: string, query: TransactionQuery) {
         account: { select: { id: true, name: true, color: true } },
         category: { select: { id: true, name: true, icon: true, color: true } },
         fixedExpense: { select: { id: true, name: true } },
-        tags: { include: { tag: { select: { id: true, name: true } } } },
         _count: { select: { receiptItems: true } },
       },
       orderBy: { date: 'desc' },
@@ -63,7 +58,6 @@ export async function getTransactionById(id: string, userId: string) {
     account: { select: { id: true, name: true, color: true } },
     category: { select: { id: true, name: true, icon: true, color: true } },
     receiptItems: true,
-    tags: { include: { tag: { select: { id: true, name: true } } } },
   });
 
   if (!transaction) {
@@ -74,8 +68,6 @@ export async function getTransactionById(id: string, userId: string) {
 }
 
 export async function createTransaction(data: CreateTransactionInput, userId: string) {
-  const tagIds = data.tagNames?.length ? await upsertTags(userId, data.tagNames) : [];
-
   const transaction = await transactionRepo.create(
     {
       amount: data.amount,
@@ -98,23 +90,15 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
             })),
           }
         : undefined,
-      tags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
     },
     {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
       receiptItems: true,
-      tags: { include: { tag: { select: { id: true, name: true } } } },
     }
   );
 
   await updateAccountBalance(data.accountId, userId, data.amount, data.type);
-
-  if (data.type === 'expense') {
-    checkBudgetAndNotify(userId, data.categoryId).catch((err: unknown) => {
-      console.error('[budget-check]', err instanceof Error ? err.message : err);
-    });
-  }
 
   return transaction;
 }
@@ -139,18 +123,9 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
   if (data.imageHash !== undefined) updateData.imageHash = data.imageHash;
   if (data.date !== undefined) updateData.date = new Date(data.date);
 
-  if (data.tagNames !== undefined) {
-    const tagIds = data.tagNames.length ? await upsertTags(userId, data.tagNames) : [];
-    updateData.tags = {
-      deleteMany: {},
-      create: tagIds.map((tagId) => ({ tagId })),
-    };
-  }
-
   const updated = await transactionRepo.update(id, updateData, {
     account: { select: { id: true, name: true, color: true } },
     category: { select: { id: true, name: true, icon: true, color: true } },
-    tags: { include: { tag: { select: { id: true, name: true } } } },
   });
 
   await updateAccountBalance(
