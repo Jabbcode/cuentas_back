@@ -109,18 +109,11 @@ export async function sendTestEmail(req: AuthRequest, res: Response, next: NextF
     ]);
 
     const categoryIds = categoryData.map((c) => c.categoryId);
-    const [categories, budgets] = await Promise.all([
-      prisma.category.findMany({
-        where: { id: { in: categoryIds } },
-        select: { id: true, name: true, icon: true },
-      }),
-      prisma.budget.findMany({
-        where: { userId, categoryId: { in: categoryIds }, month, year },
-        select: { categoryId: true, amount: true },
-      }),
-    ]);
+    const categories = await prisma.category.findMany({
+      where: { id: { in: categoryIds } },
+      select: { id: true, name: true, icon: true },
+    });
     const catMap = new Map(categories.map((c) => [c.id, c]));
-    const budgetMap = new Map(budgets.map((b) => [b.categoryId, Number(b.amount)]));
 
     const monthNames = [
       'Enero',
@@ -148,7 +141,6 @@ export async function sendTestEmail(req: AuthRequest, res: Response, next: NextF
         name: catMap.get(c.categoryId)?.name ?? 'Sin categoría',
         icon: catMap.get(c.categoryId)?.icon ?? undefined,
         spent: Number(c._sum.amount ?? 0),
-        budget: budgetMap.get(c.categoryId),
       })),
     });
 
