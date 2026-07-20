@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import {
   CreateAccountInput,
   UpdateAccountInput,
@@ -92,16 +93,15 @@ export async function updateAccountBalance(
   accountId: string,
   userId: string,
   amount: number,
-  type: 'expense' | 'income'
-) {
-  const account = await accountRepo.findByIdAndUser(accountId, userId);
+  type: 'expense' | 'income',
+  tx: Prisma.TransactionClient = prisma
+): Promise<void> {
+  const result = await tx.account.updateMany({
+    where: { id: accountId, userId },
+    data: { balance: type === 'income' ? { increment: amount } : { decrement: amount } },
+  });
 
-  if (!account) {
+  if (result.count === 0) {
     throw new NotFoundError('Cuenta no encontrada');
   }
-
-  const currentBalance = Number(account.balance);
-  const newBalance = type === 'income' ? currentBalance + amount : currentBalance - amount;
-
-  return accountRepo.updateBalance(accountId, newBalance);
 }
