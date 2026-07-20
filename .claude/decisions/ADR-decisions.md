@@ -77,7 +77,7 @@ Registro de decisiones arquitectónicas del proyecto backend.
 
 ## ADR-007: Budget como fuente de verdad para límites de gasto
 
-**Fecha:** 2026-04-21 | **Estado:** Aceptada
+**Fecha:** 2026-04-21 | **Estado:** Obsoleta (2026-06-02) — el modelo `Budget` y la feature completa se eliminaron del backend (`chore: eliminar features Budgets y Tags`). Se conserva como registro histórico.
 
 **Decisión:** El modelo `Budget` (`amount`, `month`, `year`, `alertAt`) es la única fuente de verdad para límites por categoría. `Category.monthlyLimit` queda como campo legado.
 

@@ -80,7 +80,7 @@ src/
 │   └── ...
 ├── middlewares/         # Express middlewares
 │   ├── auth.middleware.ts
-│   ├── errorHandler.ts
+│   ├── error.middleware.ts
 │   └── ...
 ├── lib/                # Utilidades
 │   ├── prisma.ts       # Cliente Prisma
@@ -110,7 +110,6 @@ src/
 - **DebtPayment** - Pagos de deudas
 - **RecurringDebtPayment** - Pagos recurrentes de deudas
 - **Transfer** - Transferencias entre cuentas propias
-- **Budget** - Presupuestos mensuales por categoría (fuente de verdad para límites)
 - **Notification** - Alertas y notificaciones del sistema
 - **ReceiptItem** - Ítems individuales de recibos OCR
 
@@ -124,7 +123,6 @@ User
 ├─ Debts (1 a N)
 ├─ DebtPayments (1 a N)
 ├─ Transfers (1 a N)
-├─ Budgets (1 a N)
 └─ Notifications (1 a N)
 
 Account
@@ -245,7 +243,7 @@ Response a Client
 }
 ```
 
-Ver `guidelines/error-handling.md` para detalles.
+Ver `src/lib/errors.ts` y `src/middlewares/error.middleware.ts` para la implementación.
 
 ## 🔄 Flujos de Datos Comunes
 
@@ -383,7 +381,6 @@ npm run dev
 
 ## 📚 Documentación Adicional
 
-- `architecture/overview.md` - Diagramas de arquitectura
 - `architecture/database-schema.md` - Schema completo
-- `architecture/services.md` - Detalles de servicios
-- `architecture/api-design.md` - Endpoints documentados
+- `decisions/ADR-decisions.md` - Decisiones arquitectónicas
+- `conventions.md` - Patrones de código y convenciones

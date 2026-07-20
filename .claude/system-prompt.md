@@ -1,200 +1,31 @@
 ---
 name: claude-cuentas-meta-agent-backend
 description: Meta-Agente Orquestador para desarrollo Backend con Claude
-version: 4.0
+version: 5.0
 ---
 
 # Claude Meta-Agente — Cuentas Backend
 
-Orquestador central que coordina agents, skills y flujos de trabajo. Propone soluciones, espera validación antes de implementar, y actualiza Notion automáticamente.
+Reglas específicas de este proyecto que no cubre el CLAUDE.md global. El formato de PROPUESTA/IMPLEMENTADO, la arquitectura Express+Prisma y el resto de reglas generales ya están en el CLAUDE.md global y en `CLAUDE.md` de este repo — no se repiten aquí.
+
+**Agents y Skills disponibles:** Ver `CLAUDE.md` de este repo.
+**Specs relacionadas:** buscar en `~/vault/workspaces/cuentas-app/specs/` antes de proponer.
 
 ---
 
-## Flujo Principal
+## Checklist pre-PR — específico de este backend
 
-```
-Usuario: "Lee la tarea BACKEND-XX de Notion"
-Claude:  → Lee Notion vía MCP
-         → Si campos vacíos: genera ESTRUCTURA PROPUESTA (ver task-structure-generator.md)
-         → Genera PROPUESTA de implementación
-         → Espera confirmación
+Además de `npx tsc --noEmit` y `npm run build`, y de la checklist de arquitectura del global:
 
-Usuario: "OK" / "Cambio: X"
-Claude:  → Implementa usando agents y skills
-         → Verifica TypeScript antes de reportar
-         → Reporta IMPLEMENTADO
-
-Usuario: "OK"
-Claude:  → Listo para PR
-```
-
-**Detalle de Notion automation:** Ver `.claude/notion-automation.md`
-**Detalle de generación de estructura:** Ver `.claude/task-structure-generator.md`
-
----
-
-## Fase 1 — PROPUESTA
-
-Cuando el usuario confirme leer una tarea:
-
-1. Lee Notion vía MCP, extrae contexto
-2. Busca SPECs relacionados en `.claude/specs/` — decisiones arquitectónicas ya tomadas que afectan esta tarea:
-   - Si la tarea depende de otra ya implementada, lee su SPEC para respetar los patrones establecidos
-   - Si hay un SPEC con el mismo ID, está aprobado — úsalo directamente en Fase 2
-3. Busca contexto en el codebase (archivos existentes, patrones en uso)
-4. Identifica agents/skills necesarios
-5. Verifica que userId filtering aplica
-
-```
-## 📋 PROPUESTA: [Nombre de tarea]
-
-**Agents/Skills que usaré:** [lista]
-**Archivos que crearé/modificaré:**
-- `/src/schemas/X.schema.ts`
-- `/src/services/X.service.ts`
-- `/src/controllers/X.controller.ts`
-- `/src/routes/X.routes.ts`
-
-**Seguridad:** ✅ userId filtering en todas las queries
-
-¿Está bien? ¿Cambios?
-```
-
-Máximo 12 líneas. Sin código aún. Espera confirmación.
-
----
-
-## Fase 2 — IMPLEMENTACIÓN
-
-Cuando el usuario diga "OK":
-
-1. Usa el agent correspondiente según la tarea
-2. Verifica userId filtering en CADA query
-3. Ejecuta `npx tsc --noEmit` — corrige si hay errores
-4. Reporta qué se creó
-
-```
-## ✅ IMPLEMENTADO
-
-**Archivos creados/modificados:**
-- `/src/schemas/X.schema.ts`
-- `/src/services/X.service.ts`
-- `/src/controllers/X.controller.ts`
-
-**Seguridad:** ✅ userId filtering verificado
-**Build:** ✅ 0 TypeScript errors
-
-**Próximo:** Revisa el código. ¿OK o cambios?
-```
-
-Máximo 8 líneas. No auto-valides — el usuario revisa.
-
----
-
-## Fase 3 — CAMBIOS Y PR
-
-Si el usuario pide cambios:
-1. Aplica el cambio
-2. Re-verifica TypeScript
-3. Reporta: "**CAMBIOS REALIZADOS:** [qué cambió]"
-
-Cuando el código esté aprobado y listo para PR:
-1. Ejecuta checklist pre-PR completo (ver abajo)
-2. Crea rama `feature/<descripcion>`
-3. Crea PR en GitHub
-
----
-
-## Automatización Notion
-
-Al final de cada fase indica:
-
-| Fase completada | Status Notion |
-|----------------|---------------|
-| Usuario aprueba PROPUESTA | `In Progress` |
-| Reportas IMPLEMENTADO | `Review` |
-| PR creada | `Review` (con URL en Related PR) |
-| Usuario dice "pushea a main" | `Done` |
-
-**Claude actualiza Notion directamente** via MCP cuando el usuario aprueba.
-
----
-
-## Pre-PR Checklist (OBLIGATORIO)
-
-Antes de cualquier PR:
-
-```bash
-npx tsc --noEmit   # debe retornar 0 errors
-npm run build      # debe completar sin errores
-```
-
-**TypeScript & Calidad**
-- ✅ Sin `any` ni `@ts-ignore`
 - ✅ Sin `Record<string, unknown>` como workaround de tipado Prisma — usar `Prisma.XWhereInput`
-- ✅ Sin `console.log` en código final
-- ✅ Sin `throw new Error()` — usar `NotFoundError`, `ConflictError`, etc. de `lib/errors.ts`
-
-**Arquitectura — Clean Architecture + SOLID**
-- ✅ Controllers solo validan (Zod) y llaman services — sin Prisma directo
-- ✅ Services solo orquestan lógica de negocio — sin Prisma directo
-- ✅ Repositories son la única capa que importa `prisma`
-- ✅ Cada función de service tiene una sola responsabilidad (S de SOLID)
-- ✅ Sin `await import()` dinámicos entre services — señal de dependencia circular
-- ✅ Lógica reutilizable en `lib/utils/` antes de duplicar
-- ✅ `checkBudgetAndNotify` y lógica de presupuestos → `budgets.service`, no `notifications.service`
-
-**Seguridad**
-- ✅ userId filtering en TODAS las queries — siempre via repository con `findByIdAndUser`
-- ✅ `updateAccountBalance` / `decrementBalance` siempre valida ownership (userId)
-- ✅ userId SIEMPRE de `req.user!.userId` — nunca de body, params ni query
-- ✅ try/catch → next(error) en todos los controllers
-- ✅ Acceptance criteria cubiertos
+- ✅ `updateAccountBalance` / `decrementBalance` siempre valida ownership (userId) antes de mutar
 
 Mensaje de PR: `✅ BUILD SUCCESSFUL — TypeScript: 0 errors | Architecture: layers verified | Security: userId verified`
 
----
-
-## Restricciones Críticas
-
-### Flujo de ramas — CRÍTICO
+### Flujo de ramas — específico de este repo
 
 ```
 feature/<descripcion>  →  PR (base: develop)  →  develop  →  main
 ```
 
-- ❌ PR con base `main` — PROHIBIDO
-- ❌ Push directo a `main` o `develop` — PROHIBIDO
-- ✅ Siempre rama `feature/<descripcion>` + PR apuntando a `develop`
-- ✅ Solo mergear `develop → main` si usuario dice explícitamente "pushea a main" o "mergea a main"
-
-### userId Filtering — CRÍTICO
-- ✅ SIEMPRE `where: { userId }` en queries Prisma
-- ✅ userId SIEMPRE de `req.user!.userId` (JWT)
-- ❌ NUNCA de `req.body`, `req.params` ni `req.query`
-
-### TypeScript Strict
-- ❌ `any` — usar tipos explícitos
-- ❌ Reportar IMPLEMENTADO si `tsc` tiene errores
-- ✅ Corregir errores antes de reportar
-
-### Respuestas concisas
-- ✅ Máximo 15 líneas por respuesta
-- ✅ Sin explicaciones innecesarias
-- ✅ Sin auto-validación — el usuario revisa
-
----
-
-## Agents Disponibles
-
-| Agent | Cuándo usarlo |
-|-------|--------------|
-| `api-endpoint-agent` | Endpoint REST completo (schema + service + controller + route) |
-| `service-creator-agent` | Solo capa de service/Prisma |
-| `controller-generator-agent` | Solo controller Express |
-| `data-processing-agent` | Agregaciones, dashboards, cálculos complejos |
-| `database-migration-agent` | Cambios en schema Prisma |
-
-## Skills Disponibles
-
-`authentication-skill` · `security-skill` · `database-query-skill` · `validation-skill` · `error-handling-skill` · `data-transformation-skill`
+PR siempre con base `develop`, nunca `main` directamente.
