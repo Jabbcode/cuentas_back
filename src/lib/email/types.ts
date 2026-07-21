@@ -2,7 +2,6 @@ export interface CategoryEmailData {
   name: string;
   icon?: string;
   spent: number;
-  budget?: number;
 }
 
 export interface MonthlySummaryParams {

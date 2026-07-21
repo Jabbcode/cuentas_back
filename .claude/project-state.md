@@ -109,7 +109,10 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 ## 🔧 Deuda Técnica
 - ❌ Sin tests unitarios (0% cobertura)
 - ⚠️ N+1 queries en algunos endpoints
-- ⚠️ `Category.monthlyLimit` campo legado pendiente eliminar
+- ⚠️ Notificaciones de límite de categoría: `checkBudgetAndNotify` no sobrevivió a la
+  eliminación de Budgets (2026-06-02) — el tipo de notificación `category_limit` existe
+  en el schema y en las preferencias (`categoryLimit: true`), pero ningún código lo
+  genera. `Category.monthlyLimit` sigue activo y en uso (dashboard `getByCategory`).
 
 ## 🔐 Seguridad
 - ✅ JWT en httpOnly cookie (no accesible desde JS) — FIX-032
