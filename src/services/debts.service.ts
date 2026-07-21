@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
-import { calculateNextDueDate } from '../lib/utils/date.utils.js';
+import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import { createTransaction } from './transactions.service.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { calculateDebtPaymentBreakdown, getDebtStatus } from '../lib/utils/debt.utils.js';
@@ -10,6 +10,10 @@ import * as accountRepo from '../repositories/account.repository.js';
 import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
+import {
+  CATEGORY_SYSTEM_KEYS,
+  SYSTEM_CATEGORY_DEFAULTS,
+} from '../lib/constants/category-system-keys.js';
 
 /**
  * Create a new debt
@@ -143,12 +147,11 @@ async function handleRecurringPaymentSideEffects(
   if (!fixedExpense) return;
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   const existingPayment = await transactionRepo.findFirst({
     fixedExpenseId: fixedExpense.id,
-    date: { gte: startOfMonth, lte: endOfMonth },
+    date: { gte: startOfMonth, lt: endOfMonth },
   });
 
   if (!existingPayment) {
@@ -190,13 +193,21 @@ export async function payDebt(debtId: string, userId: string, data: PayDebtInput
     debt.interestType
   );
   const result = await prisma.$transaction(async (tx) => {
-    let cat = await tx.category.findFirst({
-      where: { userId, name: 'Pago de deuda', type: 'expense' },
+    const debtPaymentDefaults = SYSTEM_CATEGORY_DEFAULTS[CATEGORY_SYSTEM_KEYS.DEBT_PAYMENT];
+    const cat = await tx.category.upsert({
+      where: {
+        userId_systemKey: { userId, systemKey: CATEGORY_SYSTEM_KEYS.DEBT_PAYMENT },
+      },
+      update: {},
+      create: {
+        userId,
+        systemKey: CATEGORY_SYSTEM_KEYS.DEBT_PAYMENT,
+        name: debtPaymentDefaults.name,
+        type: debtPaymentDefaults.type,
+        icon: debtPaymentDefaults.icon,
+        color: debtPaymentDefaults.color,
+      },
     });
-    if (!cat)
-      cat = await tx.category.create({
-        data: { userId, name: 'Pago de deuda', type: 'expense', icon: '💳', color: '#EF4444' },
-      });
     const transaction = await tx.transaction.create({
       data: {
         userId,

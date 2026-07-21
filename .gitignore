@@ -11,3 +11,8 @@ src/scripts/
 # Tesseract language data
 *.traineddata
 .gstack/
+
+# graphify knowledge graph (generated, regenerable with /graphify)
+graphify-out/
+.claude/settings.json
+.claude/scheduled_tasks.lock

@@ -2,8 +2,8 @@ import { Response, NextFunction } from 'express';
 import * as notificationsService from '../services/notifications.service.js';
 import { notificationPreferencesSchema } from '../schemas/notification.schema.js';
 import { AuthRequest } from '../types/index.js';
-import { prisma } from '../lib/prisma.js';
 import { sendMonthlySummaryEmail } from '../lib/email/index.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
 
 export async function getNotifications(req: AuthRequest, res: Response, next: NextFunction) {
   try {
@@ -75,10 +75,7 @@ export async function updatePreferences(req: AuthRequest, res: Response, next: N
 export async function sendTestEmail(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const userId = req.user!.userId;
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { email: true, name: true },
-    });
+    const user = await notificationsService.getUserContactInfo(userId);
     if (!user) {
       res.status(404).json({ error: 'Usuario no encontrado' });
       return;
@@ -87,33 +84,9 @@ export async function sendTestEmail(req: AuthRequest, res: Response, next: NextF
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    const startOfMonth = new Date(year, month - 1, 1);
-    const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+    const range = getMonthRange(year, month - 1);
 
-    const [expenseAgg, incomeAgg, categoryData] = await Promise.all([
-      prisma.transaction.aggregate({
-        where: { userId, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.aggregate({
-        where: { userId, type: 'income', date: { gte: startOfMonth, lte: endOfMonth } },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.groupBy({
-        by: ['categoryId'],
-        where: { userId, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: 'desc' } },
-        take: 10,
-      }),
-    ]);
-
-    const categoryIds = categoryData.map((c) => c.categoryId);
-    const categories = await prisma.category.findMany({
-      where: { id: { in: categoryIds } },
-      select: { id: true, name: true, icon: true },
-    });
-    const catMap = new Map(categories.map((c) => [c.id, c]));
+    const summary = await notificationsService.buildMonthlySummary(userId, range);
 
     const monthNames = [
       'Enero',
@@ -135,13 +108,7 @@ export async function sendTestEmail(req: AuthRequest, res: Response, next: NextF
       userName: user.name,
       month: monthNames[month - 1],
       year,
-      totalExpenses: Number(expenseAgg._sum.amount ?? 0),
-      totalIncome: Number(incomeAgg._sum.amount ?? 0),
-      categoryBreakdown: categoryData.map((c) => ({
-        name: catMap.get(c.categoryId)?.name ?? 'Sin categoría',
-        icon: catMap.get(c.categoryId)?.icon ?? undefined,
-        spent: Number(c._sum.amount ?? 0),
-      })),
+      ...summary,
     });
 
     res.json({ message: `Email enviado a ${user.email}` });

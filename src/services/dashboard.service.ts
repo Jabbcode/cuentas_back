@@ -2,15 +2,25 @@ import type { Prisma } from '@prisma/client';
 import * as accountRepo from '../repositories/account.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
+import * as categoryRepo from '../repositories/category.repository.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
 
 export async function getSummary(userId: string) {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
-  const [accounts, monthlyTransactions] = await Promise.all([
+  const [accounts, incomeAgg, expenseAgg] = await Promise.all([
     accountRepo.findAllByUser(userId),
-    transactionRepo.findMany({ userId, date: { gte: startOfMonth, lte: endOfMonth } }),
+    transactionRepo.aggregate({
+      userId,
+      type: 'income',
+      date: { gte: startOfMonth, lt: endOfMonth },
+    }),
+    transactionRepo.aggregate({
+      userId,
+      type: 'expense',
+      date: { gte: startOfMonth, lt: endOfMonth },
+    }),
   ]);
 
   const totalBalance = accounts.reduce((sum, acc) => {
@@ -24,13 +34,8 @@ export async function getSummary(userId: string) {
     return sum + Number(acc.balance);
   }, 0);
 
-  const monthlyIncome = monthlyTransactions
-    .filter((t) => t.type === 'income')
-    .reduce((sum, t) => sum + Number(t.amount), 0);
-
-  const monthlyExpenses = monthlyTransactions
-    .filter((t) => t.type === 'expense')
-    .reduce((sum, t) => sum + Number(t.amount), 0);
+  const monthlyIncome = Number(incomeAgg._sum.amount ?? 0);
+  const monthlyExpenses = Number(expenseAgg._sum.amount ?? 0);
 
   return {
     totalBalance,
@@ -43,46 +48,57 @@ export async function getSummary(userId: string) {
 
 export async function getByCategory(userId: string, type: 'expense' | 'income' = 'expense') {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
-  type TxWithCategory = Prisma.TransactionGetPayload<{
-    include: {
-      category: { select: { id: true; name: true; icon: true; color: true; monthlyLimit: true } };
-    };
-  }>;
-  const transactions = (await transactionRepo.findMany(
-    { userId, type, date: { gte: startOfMonth, lte: endOfMonth } },
+  const rows = await transactionRepo.groupByCategory({
+    userId,
+    type,
+    date: { gte: startOfMonth, lt: endOfMonth },
+  });
+
+  const totalByCategory = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.categoryId) continue;
+    const current = totalByCategory.get(row.categoryId) ?? 0;
+    totalByCategory.set(row.categoryId, current + Number(row._sum.amount ?? 0));
+  }
+
+  const total = Array.from(totalByCategory.values()).reduce((sum, t) => sum + t, 0);
+  const categoryIds = Array.from(totalByCategory.keys());
+
+  if (categoryIds.length === 0) return [];
+
+  type CategoryMeta = {
+    id: string;
+    name: string;
+    icon: string | null;
+    color: string | null;
+    monthlyLimit: Prisma.Decimal | null;
+  };
+  const categories = (await categoryRepo.findMany(
+    { id: { in: categoryIds } },
     {
-      include: {
-        category: { select: { id: true, name: true, icon: true, color: true, monthlyLimit: true } },
-      },
+      id: true,
+      name: true,
+      icon: true,
+      color: true,
+      monthlyLimit: true,
     }
-  )) as unknown as TxWithCategory[];
+  )) as unknown as CategoryMeta[];
 
-  const byCategory = transactions.reduce<
-    Record<string, { category: TxWithCategory['category']; total: number }>
-  >((acc, t) => {
-    const catId = t.category.id;
-    if (!acc[catId]) {
-      acc[catId] = { category: t.category, total: 0 };
-    }
-    acc[catId].total += Number(t.amount);
-    return acc;
-  }, {});
-
-  const total = Object.values(byCategory).reduce((sum, c) => sum + c.total, 0);
-
-  return Object.values(byCategory)
-    .map((c) => ({
-      id: c.category.id,
-      name: c.category.name,
-      icon: c.category.icon,
-      color: c.category.color,
-      monthlyLimit: c.category.monthlyLimit ? Number(c.category.monthlyLimit) : undefined,
-      total: c.total,
-      percentage: total > 0 ? Math.round((c.total / total) * 100) : 0,
-    }))
+  return categories
+    .map((c) => {
+      const catTotal = totalByCategory.get(c.id) ?? 0;
+      return {
+        id: c.id,
+        name: c.name,
+        icon: c.icon,
+        color: c.color,
+        monthlyLimit: c.monthlyLimit ? Number(c.monthlyLimit) : undefined,
+        total: catTotal,
+        percentage: total > 0 ? Math.round((catTotal / total) * 100) : 0,
+      };
+    })
     .sort((a, b) => b.total - a.total);
 }
 
@@ -123,45 +139,52 @@ export async function getMonthlyTrend(userId: string, months = 6) {
 }
 
 export async function getMonthlySummary(userId: string, month: number, year: number) {
-  const startOfMonth = new Date(year, month - 1, 1);
-  const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(year, month - 1);
 
-  type TxWithCat = Prisma.TransactionGetPayload<{
-    include: { category: { select: { id: true; name: true; icon: true; color: true } } };
-  }>;
-  const transactions = (await transactionRepo.findMany(
-    { userId, date: { gte: startOfMonth, lte: endOfMonth } },
-    { include: { category: { select: { id: true, name: true, icon: true, color: true } } } }
-  )) as unknown as TxWithCat[];
+  const rows = await transactionRepo.groupByCategory({
+    userId,
+    date: { gte: startOfMonth, lt: endOfMonth },
+  });
 
-  const totalExpenses = transactions
-    .filter((t) => t.type === 'expense')
-    .reduce((sum, t) => sum + Number(t.amount), 0);
+  let totalExpenses = 0;
+  let totalIncome = 0;
+  const expenseTotalByCategory = new Map<string, number>();
 
-  const totalIncome = transactions
-    .filter((t) => t.type === 'income')
-    .reduce((sum, t) => sum + Number(t.amount), 0);
+  for (const row of rows) {
+    const amount = Number(row._sum.amount ?? 0);
+    if (row.type === 'income') {
+      totalIncome += amount;
+    } else if (row.type === 'expense') {
+      totalExpenses += amount;
+      if (row.categoryId) {
+        const current = expenseTotalByCategory.get(row.categoryId) ?? 0;
+        expenseTotalByCategory.set(row.categoryId, current + amount);
+      }
+    }
+  }
 
-  const expenseTransactions = transactions.filter((t) => t.type === 'expense');
+  const categoryIds = Array.from(expenseTotalByCategory.keys());
+  type CategoryMeta = { id: string; name: string; icon: string | null; color: string | null };
+  const categoryMetas =
+    categoryIds.length > 0
+      ? ((await categoryRepo.findMany(
+          { id: { in: categoryIds } },
+          { id: true, name: true, icon: true, color: true }
+        )) as unknown as CategoryMeta[])
+      : [];
 
-  const byCategory = expenseTransactions.reduce<
-    Record<string, { category: TxWithCat['category']; total: number }>
-  >((acc, t) => {
-    const catId = t.category.id;
-    if (!acc[catId]) acc[catId] = { category: t.category, total: 0 };
-    acc[catId].total += Number(t.amount);
-    return acc;
-  }, {});
-
-  const categories = Object.values(byCategory)
-    .map((c) => ({
-      id: c.category.id,
-      name: c.category.name,
-      icon: c.category.icon,
-      color: c.category.color,
-      total: c.total,
-      percentage: totalExpenses > 0 ? Math.round((c.total / totalExpenses) * 100) : 0,
-    }))
+  const categories = categoryMetas
+    .map((c) => {
+      const total = expenseTotalByCategory.get(c.id) ?? 0;
+      return {
+        id: c.id,
+        name: c.name,
+        icon: c.icon,
+        color: c.color,
+        total,
+        percentage: totalExpenses > 0 ? Math.round((total / totalExpenses) * 100) : 0,
+      };
+    })
     .sort((a, b) => b.total - a.total);
 
   return { month, year, totalExpenses, totalIncome, net: totalIncome - totalExpenses, categories };
@@ -169,8 +192,7 @@ export async function getMonthlySummary(userId: string, month: number, year: num
 
 export async function getFixedVsVariable(userId: string) {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   // Obtener el total de gastos fijos configurados (activos, tipo expense)
   const fixedExpensesConfig = await fixedExpenseRepo.findAllByUser(userId, {
@@ -181,14 +203,14 @@ export async function getFixedVsVariable(userId: string) {
   const fixedExpensesTotal = fixedExpensesConfig.reduce((sum, fe) => sum + Number(fe.amount), 0);
 
   // Obtener transacciones variables (gastos sin fixedExpenseId)
-  const variableTransactions = await transactionRepo.findMany({
+  const variableAgg = await transactionRepo.aggregate({
     userId,
     type: 'expense',
     fixedExpenseId: null,
-    date: { gte: startOfMonth, lte: endOfMonth },
+    date: { gte: startOfMonth, lt: endOfMonth },
   });
 
-  const variableExpensesTotal = variableTransactions.reduce((sum, t) => sum + Number(t.amount), 0);
+  const variableExpensesTotal = Number(variableAgg._sum.amount ?? 0);
 
   const total = fixedExpensesTotal + variableExpensesTotal;
 

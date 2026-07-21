@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '@prisma/client';
 import {
   CreateAccountInput,
   UpdateAccountInput,
@@ -34,7 +35,7 @@ export async function updateAccount(id: string, data: UpdateAccountInput, userId
   await getAccountById(id, userId);
 
   const { paymentAccountId, ...rest } = data;
-  return accountRepo.update(id, {
+  return accountRepo.update(id, userId, {
     ...rest,
     ...(paymentAccountId !== undefined && {
       paymentAccount: paymentAccountId
@@ -47,7 +48,7 @@ export async function updateAccount(id: string, data: UpdateAccountInput, userId
 export async function deleteAccount(id: string, userId: string) {
   await getAccountById(id, userId);
 
-  return accountRepo.remove(id);
+  return accountRepo.remove(id, userId);
 }
 
 export async function transferFunds(data: TransferInput, userId: string) {
@@ -92,16 +93,15 @@ export async function updateAccountBalance(
   accountId: string,
   userId: string,
   amount: number,
-  type: 'expense' | 'income'
-) {
-  const account = await accountRepo.findByIdAndUser(accountId, userId);
+  type: 'expense' | 'income',
+  tx: Prisma.TransactionClient = prisma
+): Promise<void> {
+  const result = await tx.account.updateMany({
+    where: { id: accountId, userId },
+    data: { balance: type === 'income' ? { increment: amount } : { decrement: amount } },
+  });
 
-  if (!account) {
+  if (result.count === 0) {
     throw new NotFoundError('Cuenta no encontrada');
   }
-
-  const currentBalance = Number(account.balance);
-  const newBalance = type === 'income' ? currentBalance + amount : currentBalance - amount;
-
-  return accountRepo.updateBalance(accountId, newBalance);
 }

@@ -1,3 +1,4 @@
+import type { Account, CreditCardPayment, Transaction } from '@prisma/client';
 import { NotFoundError, ValidationError, ConflictError } from '../lib/errors.js';
 import {
   getCutoffDates,
@@ -10,6 +11,9 @@ import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as creditCardPaymentRepo from '../repositories/credit-card-payment.repository.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
+import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
+import { createTransaction } from './transactions.service.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -38,24 +42,27 @@ interface CreditCardStatement {
   }[];
 }
 
+const TRANSACTION_INCLUDE = {
+  category: { select: { id: true, name: true, icon: true, color: true } },
+  fixedExpense: { select: { id: true, name: true } },
+} as const;
+
 /**
- * Get credit card statement with current and closed periods
+ * Calcula el statement (períodos, balances, alertas) de una tarjeta a partir de datos
+ * ya cargados. Pura: no hace I/O. `transactions` debe cubrir al menos desde el
+ * `previousCutoff` de la tarjeta hasta `today`; `payments` puede ser cualquier
+ * superconjunto de los pagos de esta tarjeta (se filtra por período aquí dentro).
  */
-export async function getCreditCardStatement(
-  accountId: string,
-  userId: string
-): Promise<CreditCardStatement> {
-  const account = await accountRepo.findByIdAndUser(accountId, userId);
-
-  if (!account || account.type !== 'credit_card') {
-    throw new NotFoundError('Cuenta no encontrada o no es una tarjeta de crédito');
-  }
-
+export function buildStatement(
+  account: Account,
+  transactions: Transaction[],
+  payments: CreditCardPayment[],
+  today: Date
+): CreditCardStatement {
   if (!account.cutoffDay || !account.paymentDueDay) {
     throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
   }
 
-  const today = new Date();
   const { lastCutoff, nextCutoff } = getCutoffDates(account.cutoffDay);
 
   // Calculate previous cutoff for closed period
@@ -65,29 +72,14 @@ export async function getCreditCardStatement(
   // Normalize dates to UTC midnight for consistent comparisons
   const previousCutoffUTC = normalizeToUTC(previousCutoff);
 
-  // Get transactions for current period (last cutoff to now)
-  const currentPeriodTransactions = await transactionRepo.findMany(
-    { accountId, userId, type: 'expense', date: { gte: lastCutoff, lte: today } },
-    {
-      include: {
-        category: { select: { id: true, name: true, icon: true, color: true } },
-        fixedExpense: { select: { id: true, name: true } },
-      },
-      orderBy: { date: 'desc' },
-    }
-  );
+  // Partition preloaded transactions by period (same bounds as las queries originales)
+  const currentPeriodTransactions = transactions
+    .filter((tx) => tx.date >= lastCutoff && tx.date <= today)
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  // Get transactions for closed period (previous cutoff to last cutoff)
-  const closedPeriodTransactions = await transactionRepo.findMany(
-    { accountId, userId, type: 'expense', date: { gte: previousCutoff, lt: lastCutoff } },
-    {
-      include: {
-        category: { select: { id: true, name: true, icon: true, color: true } },
-        fixedExpense: { select: { id: true, name: true } },
-      },
-      orderBy: { date: 'desc' },
-    }
-  );
+  const closedPeriodTransactions = transactions
+    .filter((tx) => tx.date >= previousCutoff && tx.date < lastCutoff)
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
 
   // Calculate balances
   const currentBalance = currentPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
@@ -101,11 +93,12 @@ export async function getCreditCardStatement(
   const closedPeriodEndUTC = normalizeToUTC(closedPeriodEnd);
 
   // Check if closed period is paid (use UTC normalized dates)
-  const closedPeriodPayment = await creditCardPaymentRepo.findFirst({
-    accountId,
-    periodStart: previousCutoffUTC,
-    periodEnd: closedPeriodEndUTC,
-  });
+  const closedPeriodPayment =
+    payments.find(
+      (p) =>
+        p.periodStart.getTime() === previousCutoffUTC.getTime() &&
+        p.periodEnd.getTime() === closedPeriodEndUTC.getTime()
+    ) ?? null;
 
   const paymentDueDate = getPaymentDueDate(lastCutoff, account.paymentDueDay);
   const daysUntilDue = getDaysBetween(today, paymentDueDate);
@@ -186,15 +179,94 @@ export async function getCreditCardStatement(
 }
 
 /**
+ * Get credit card statement with current and closed periods
+ */
+export async function getCreditCardStatement(
+  accountId: string,
+  userId: string
+): Promise<CreditCardStatement> {
+  const account = await accountRepo.findByIdAndUser(accountId, userId);
+
+  if (!account || account.type !== 'credit_card') {
+    throw new NotFoundError('Cuenta no encontrada o no es una tarjeta de crédito');
+  }
+
+  if (!account.cutoffDay || !account.paymentDueDay) {
+    throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
+  }
+
+  const today = new Date();
+  const { lastCutoff } = getCutoffDates(account.cutoffDay);
+  const previousCutoff = new Date(lastCutoff);
+  previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+
+  const [transactions, payments] = await Promise.all([
+    transactionRepo.findMany(
+      { accountId, userId, type: 'expense', date: { gte: previousCutoff, lte: today } },
+      { include: TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
+    ),
+    creditCardPaymentRepo.findMany({ accountId }),
+  ]);
+
+  return buildStatement(account, transactions, payments, today);
+}
+
+/**
  * Get summary of all credit cards for dashboard
  */
 export async function getCreditCardsSummary(userId: string) {
   const creditCards = await accountRepo.findCreditCardsByUser(userId);
+  const eligibleCards = creditCards.filter((card) => card.cutoffDay && card.paymentDueDay);
 
-  const summaries = await Promise.all(
-    creditCards
-      .filter((card) => card.cutoffDay && card.paymentDueDay)
-      .map((card) => getCreditCardStatement(card.id, userId))
+  if (eligibleCards.length === 0) {
+    return { totalToPay: 0, upcomingPayments: [], alerts: [], cards: [] };
+  }
+
+  const today = new Date();
+  const cardIds = eligibleCards.map((card) => card.id);
+
+  const previousCutoffs = eligibleCards.map((card) => {
+    const { lastCutoff } = getCutoffDates(card.cutoffDay!);
+    const previousCutoff = new Date(lastCutoff);
+    previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+    return previousCutoff;
+  });
+  const minPreviousCutoff = new Date(Math.min(...previousCutoffs.map((d) => d.getTime())));
+
+  const [allTransactions, allPayments] = await Promise.all([
+    transactionRepo.findMany(
+      {
+        accountId: { in: cardIds },
+        userId,
+        type: 'expense',
+        date: { gte: minPreviousCutoff, lte: today },
+      },
+      { include: TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
+    ),
+    creditCardPaymentRepo.findMany({ accountId: { in: cardIds } }),
+  ]);
+
+  const transactionsByAccount = new Map<string, Transaction[]>();
+  for (const tx of allTransactions) {
+    const list = transactionsByAccount.get(tx.accountId) ?? [];
+    list.push(tx);
+    transactionsByAccount.set(tx.accountId, list);
+  }
+
+  const paymentsByAccount = new Map<string, CreditCardPayment[]>();
+  for (const payment of allPayments) {
+    const list = paymentsByAccount.get(payment.accountId) ?? [];
+    list.push(payment);
+    paymentsByAccount.set(payment.accountId, list);
+  }
+
+  const summaries = eligibleCards.map((card) =>
+    buildStatement(
+      card,
+      transactionsByAccount.get(card.id) ?? [],
+      paymentsByAccount.get(card.id) ?? [],
+      today
+    )
   );
 
   // Calculate totals
@@ -257,9 +329,6 @@ export async function payCreditCardStatement(
 
   const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
 
-  // Import transaction service to create transactions properly
-  const { createTransaction } = await import('./transactions.service.js');
-
   // Create payment transaction (income to credit card)
   // This automatically updates the credit card balance
   const transaction = await createTransaction(
@@ -310,13 +379,15 @@ export async function payCreditCardStatement(
   if (fixedExpense) {
     // Create transaction for the fixed expense
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const { start: startOfMonth, end: endOfMonth } = getMonthRange(
+      now.getFullYear(),
+      now.getMonth()
+    );
 
     // Check if there's already a payment this month
     const existingPayment = await transactionRepo.findFirst({
       fixedExpenseId: fixedExpense.id,
-      date: { gte: startOfMonth, lte: endOfMonth },
+      date: { gte: startOfMonth, lt: endOfMonth },
     });
 
     // Only create if there's no payment this month
@@ -343,17 +414,5 @@ export async function payCreditCardStatement(
  * Get or create "Pago de Tarjeta" category
  */
 async function getOrCreatePaymentCategory(userId: string) {
-  let category = await categoryRepo.findFirst({ userId, name: 'Pago de Tarjeta', type: 'expense' });
-
-  if (!category) {
-    category = await categoryRepo.create({
-      name: 'Pago de Tarjeta',
-      type: 'expense',
-      icon: '💳',
-      color: '#8B5CF6',
-      user: { connect: { id: userId } },
-    });
-  }
-
-  return category;
+  return categoryRepo.upsertSystemCategory(userId, CATEGORY_SYSTEM_KEYS.CREDIT_CARD_PAYMENT);
 }

@@ -3,8 +3,8 @@ import jwt from 'jsonwebtoken';
 import { RegisterInput, LoginInput } from '../schemas/auth.schema.js';
 import { seedCategories } from '../lib/seed.js';
 import * as userRepo from '../repositories/user.repository.js';
+import { JWT_SECRET } from '../lib/env.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const SALT_ROUNDS = 10;
 
 export async function register(data: RegisterInput) {

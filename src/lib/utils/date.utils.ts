@@ -1,3 +1,14 @@
+/**
+ * Rango de un mes calendario: [start, end) — usar gte: start y lt: end.
+ * `month` es 0-indexado (como Date). end = medianoche del día 1 del mes siguiente.
+ */
+export function getMonthRange(year: number, month: number): { start: Date; end: Date } {
+  return {
+    start: new Date(year, month, 1),
+    end: new Date(year, month + 1, 1),
+  };
+}
+
 export function calculateNextDueDate(
   frequency: string,
   dayOfMonth: number | null,
