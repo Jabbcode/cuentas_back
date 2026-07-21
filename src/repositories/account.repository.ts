@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, Account, Transfer } from '@prisma/client';
+import { NotFoundError } from '../lib/errors.js';
 
 export async function findAllByUser(userId: string): Promise<Account[]> {
   return prisma.account.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
@@ -33,7 +34,15 @@ export async function create(data: Prisma.AccountCreateInput): Promise<Account> 
   return prisma.account.create({ data });
 }
 
-export async function update(id: string, data: Prisma.AccountUpdateInput): Promise<Account> {
+export async function update(
+  id: string,
+  userId: string,
+  data: Prisma.AccountUpdateInput
+): Promise<Account> {
+  // Ownership check vive aquí (no en updateMany): data puede traer relaciones con
+  // connect/disconnect (paymentAccount), incompatibles con AccountUpdateManyMutationInput.
+  const existing = await prisma.account.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!existing) throw new NotFoundError('Cuenta no encontrada');
   return prisma.account.update({ where: { id }, data });
 }
 
@@ -48,7 +57,9 @@ export async function decrementBalance(id: string, amount: number): Promise<Acco
   });
 }
 
-export async function remove(id: string): Promise<Account> {
+export async function remove(id: string, userId: string): Promise<Account> {
+  const existing = await prisma.account.findFirst({ where: { id, userId }, select: { id: true } });
+  if (!existing) throw new NotFoundError('Cuenta no encontrada');
   return prisma.account.delete({ where: { id } });
 }
 
