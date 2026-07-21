@@ -4,6 +4,7 @@ import { notificationPreferencesSchema } from '../schemas/notification.schema.js
 import { AuthRequest } from '../types/index.js';
 import { prisma } from '../lib/prisma.js';
 import { sendMonthlySummaryEmail } from '../lib/email/index.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
 
 export async function getNotifications(req: AuthRequest, res: Response, next: NextFunction) {
   try {
@@ -87,21 +88,20 @@ export async function sendTestEmail(req: AuthRequest, res: Response, next: NextF
     const now = new Date();
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
-    const startOfMonth = new Date(year, month - 1, 1);
-    const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+    const { start: startOfMonth, end: endOfMonth } = getMonthRange(year, month - 1);
 
     const [expenseAgg, incomeAgg, categoryData] = await Promise.all([
       prisma.transaction.aggregate({
-        where: { userId, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
+        where: { userId, type: 'expense', date: { gte: startOfMonth, lt: endOfMonth } },
         _sum: { amount: true },
       }),
       prisma.transaction.aggregate({
-        where: { userId, type: 'income', date: { gte: startOfMonth, lte: endOfMonth } },
+        where: { userId, type: 'income', date: { gte: startOfMonth, lt: endOfMonth } },
         _sum: { amount: true },
       }),
       prisma.transaction.groupBy({
         by: ['categoryId'],
-        where: { userId, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
+        where: { userId, type: 'expense', date: { gte: startOfMonth, lt: endOfMonth } },
         _sum: { amount: true },
         orderBy: { _sum: { amount: 'desc' } },
         take: 10,

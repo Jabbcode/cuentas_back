@@ -7,7 +7,7 @@ import {
 } from '../schemas/fixed-expense.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
-import { calculateNextDueDate } from '../lib/utils/date.utils.js';
+import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
@@ -185,9 +185,13 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
 
 export async function autoGenerateFixedExpenseTransactions(today: Date) {
   const todayDay = today.getDate();
-  const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
-  const lastDayOfMonth = endOfMonth.getDate();
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(
+    today.getFullYear(),
+    today.getMonth()
+  );
+  // lastDayOfMonth se deriva por separado (no del `end` exclusivo de getMonthRange,
+  // que cae en el mes siguiente): aquí necesitamos el número de día, no un límite de comparación.
+  const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
   const isLastDay = todayDay === lastDayOfMonth;
 
   const fixedExpenses = await prisma.fixedExpense.findMany({
@@ -208,7 +212,7 @@ export async function autoGenerateFixedExpenseTransactions(today: Date) {
   const existingTxs = await prisma.transaction.findMany({
     where: {
       fixedExpenseId: { in: fixedExpenses.map((fe) => fe.id) },
-      date: { gte: startOfMonth, lte: endOfMonth },
+      date: { gte: startOfMonth, lt: endOfMonth },
     },
     select: { fixedExpenseId: true },
   });
@@ -279,8 +283,7 @@ export async function getFixedExpensesSummary(userId: string) {
   await syncRecurringDebtPaymentFixedExpenses(userId);
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   type FeWithTx = Prisma.FixedExpenseGetPayload<{
     include: { account: true; category: true; transactions: true };
@@ -291,7 +294,7 @@ export async function getFixedExpensesSummary(userId: string) {
     {
       account: { select: { id: true, name: true, color: true } },
       category: { select: { id: true, name: true, icon: true, color: true } },
-      transactions: { where: { date: { gte: startOfMonth, lte: endOfMonth } } },
+      transactions: { where: { date: { gte: startOfMonth, lt: endOfMonth } } },
     },
     [{ sortOrder: 'asc' }, { dueDay: 'asc' }]
   )) as unknown as FeWithTx[];
