@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma, Transaction, ReceiptItem } from '@prisma/client';
+import { NotFoundError } from '../lib/errors.js';
 
 export async function findMany(
   where: Prisma.TransactionWhereInput,
@@ -41,10 +42,13 @@ export async function create(
 
 export async function update(
   id: string,
-  data: Prisma.TransactionUpdateInput,
+  userId: string,
+  data: Prisma.TransactionUncheckedUpdateManyInput,
   include?: Prisma.TransactionInclude
 ): Promise<Transaction> {
-  return prisma.transaction.update({ where: { id }, data, include });
+  const result = await prisma.transaction.updateMany({ where: { id, userId }, data });
+  if (result.count === 0) throw new NotFoundError('Transacción no encontrada');
+  return prisma.transaction.findFirstOrThrow({ where: { id, userId }, include });
 }
 
 export async function updateMany(
@@ -54,8 +58,9 @@ export async function updateMany(
   return prisma.transaction.updateMany({ where, data });
 }
 
-export async function remove(id: string): Promise<Transaction> {
-  return prisma.transaction.delete({ where: { id } });
+export async function remove(id: string, userId: string): Promise<void> {
+  const result = await prisma.transaction.deleteMany({ where: { id, userId } });
+  if (result.count === 0) throw new NotFoundError('Transacción no encontrada');
 }
 
 export function groupByCategory(where: Prisma.TransactionWhereInput) {

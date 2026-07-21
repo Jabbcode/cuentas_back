@@ -70,6 +70,16 @@ export async function getTransactionById(id: string, userId: string) {
 
 export async function createTransaction(data: CreateTransactionInput, userId: string) {
   return prisma.$transaction(async (tx) => {
+    await assertOwnership(
+      userId,
+      {
+        accountId: data.accountId,
+        categoryId: data.categoryId,
+        fixedExpenseId: data.fixedExpenseId,
+      },
+      tx
+    );
+
     const transaction = await tx.transaction.create({
       data: {
         amount: data.amount,
@@ -121,6 +131,16 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
   if (data.date !== undefined) updateData.date = new Date(data.date);
 
   return prisma.$transaction(async (tx) => {
+    await assertOwnership(
+      userId,
+      {
+        accountId: data.accountId,
+        categoryId: data.categoryId,
+        fixedExpenseId: data.fixedExpenseId,
+      },
+      tx
+    );
+
     await updateAccountBalance(
       existing.accountId,
       userId,
@@ -226,4 +246,32 @@ export async function getReceiptItems(transactionId: string, userId: string) {
   await getTransactionById(transactionId, userId);
 
   return transactionRepo.findReceiptItems(transactionId);
+}
+
+async function assertOwnership(
+  userId: string,
+  refs: { accountId?: string; categoryId?: string; fixedExpenseId?: string },
+  tx: Prisma.TransactionClient = prisma
+): Promise<void> {
+  if (refs.accountId) {
+    const ok = await tx.account.findFirst({
+      where: { id: refs.accountId, userId },
+      select: { id: true },
+    });
+    if (!ok) throw new NotFoundError('Cuenta no encontrada');
+  }
+  if (refs.categoryId) {
+    const ok = await tx.category.findFirst({
+      where: { id: refs.categoryId, userId },
+      select: { id: true },
+    });
+    if (!ok) throw new NotFoundError('Categoría no encontrada');
+  }
+  if (refs.fixedExpenseId) {
+    const ok = await tx.fixedExpense.findFirst({
+      where: { id: refs.fixedExpenseId, userId },
+      select: { id: true },
+    });
+    if (!ok) throw new NotFoundError('Gasto fijo no encontrado');
+  }
 }

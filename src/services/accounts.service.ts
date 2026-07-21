@@ -35,7 +35,7 @@ export async function updateAccount(id: string, data: UpdateAccountInput, userId
   await getAccountById(id, userId);
 
   const { paymentAccountId, ...rest } = data;
-  return accountRepo.update(id, {
+  return accountRepo.update(id, userId, {
     ...rest,
     ...(paymentAccountId !== undefined && {
       paymentAccount: paymentAccountId
@@ -48,7 +48,7 @@ export async function updateAccount(id: string, data: UpdateAccountInput, userId
 export async function deleteAccount(id: string, userId: string) {
   await getAccountById(id, userId);
 
-  return accountRepo.remove(id);
+  return accountRepo.remove(id, userId);
 }
 
 export async function transferFunds(data: TransferInput, userId: string) {
