@@ -5,7 +5,7 @@ import {
   UpdateFixedExpenseInput,
   PayFixedExpenseInput,
 } from '../schemas/fixed-expense.schema.js';
-import { NotFoundError } from '../lib/errors.js';
+import { NotFoundError, ConflictError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
@@ -152,8 +152,8 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
         paymentDate: date,
       });
     } catch (error) {
-      // If payment already exists, ignore error
-      if (!(error instanceof Error && error.message.includes('ya está pagado'))) {
+      // El pago del estado de cuenta ya existía: se ignora y el flujo continúa.
+      if (!(error instanceof ConflictError)) {
         throw error;
       }
     }
