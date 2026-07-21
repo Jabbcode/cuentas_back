@@ -85,12 +85,14 @@ model Category {
   icon         String?
   color        String?
   monthlyLimit Decimal?
+  systemKey    String?  // clave estable de categoría de sistema; null = categoría de usuario
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   transactions  Transaction[]
   fixedExpenses FixedExpense[]
 
+  @@unique([userId, systemKey])
   @@index([userId])
 }
 
