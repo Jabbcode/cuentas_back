@@ -2,15 +2,15 @@ import type { Prisma } from '@prisma/client';
 import * as accountRepo from '../repositories/account.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
 
 export async function getSummary(userId: string) {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   const [accounts, monthlyTransactions] = await Promise.all([
     accountRepo.findAllByUser(userId),
-    transactionRepo.findMany({ userId, date: { gte: startOfMonth, lte: endOfMonth } }),
+    transactionRepo.findMany({ userId, date: { gte: startOfMonth, lt: endOfMonth } }),
   ]);
 
   const totalBalance = accounts.reduce((sum, acc) => {
@@ -43,8 +43,7 @@ export async function getSummary(userId: string) {
 
 export async function getByCategory(userId: string, type: 'expense' | 'income' = 'expense') {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   type TxWithCategory = Prisma.TransactionGetPayload<{
     include: {
@@ -52,7 +51,7 @@ export async function getByCategory(userId: string, type: 'expense' | 'income' =
     };
   }>;
   const transactions = (await transactionRepo.findMany(
-    { userId, type, date: { gte: startOfMonth, lte: endOfMonth } },
+    { userId, type, date: { gte: startOfMonth, lt: endOfMonth } },
     {
       include: {
         category: { select: { id: true, name: true, icon: true, color: true, monthlyLimit: true } },
@@ -123,14 +122,13 @@ export async function getMonthlyTrend(userId: string, months = 6) {
 }
 
 export async function getMonthlySummary(userId: string, month: number, year: number) {
-  const startOfMonth = new Date(year, month - 1, 1);
-  const endOfMonth = new Date(year, month, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(year, month - 1);
 
   type TxWithCat = Prisma.TransactionGetPayload<{
     include: { category: { select: { id: true; name: true; icon: true; color: true } } };
   }>;
   const transactions = (await transactionRepo.findMany(
-    { userId, date: { gte: startOfMonth, lte: endOfMonth } },
+    { userId, date: { gte: startOfMonth, lt: endOfMonth } },
     { include: { category: { select: { id: true, name: true, icon: true, color: true } } } }
   )) as unknown as TxWithCat[];
 
@@ -169,8 +167,7 @@ export async function getMonthlySummary(userId: string, month: number, year: num
 
 export async function getFixedVsVariable(userId: string) {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   // Obtener el total de gastos fijos configurados (activos, tipo expense)
   const fixedExpensesConfig = await fixedExpenseRepo.findAllByUser(userId, {
@@ -185,7 +182,7 @@ export async function getFixedVsVariable(userId: string) {
     userId,
     type: 'expense',
     fixedExpenseId: null,
-    date: { gte: startOfMonth, lte: endOfMonth },
+    date: { gte: startOfMonth, lt: endOfMonth },
   });
 
   const variableExpensesTotal = variableTransactions.reduce((sum, t) => sum + Number(t.amount), 0);

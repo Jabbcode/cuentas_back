@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '@prisma/client';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
-import { calculateNextDueDate } from '../lib/utils/date.utils.js';
+import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import { createTransaction } from './transactions.service.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { calculateDebtPaymentBreakdown, getDebtStatus } from '../lib/utils/debt.utils.js';
@@ -143,12 +143,11 @@ async function handleRecurringPaymentSideEffects(
   if (!fixedExpense) return;
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   const existingPayment = await transactionRepo.findFirst({
     fixedExpenseId: fixedExpense.id,
-    date: { gte: startOfMonth, lte: endOfMonth },
+    date: { gte: startOfMonth, lt: endOfMonth },
   });
 
   if (!existingPayment) {

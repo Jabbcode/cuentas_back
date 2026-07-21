@@ -11,6 +11,7 @@ import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as creditCardPaymentRepo from '../repositories/credit-card-payment.repository.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -379,13 +380,15 @@ export async function payCreditCardStatement(
   if (fixedExpense) {
     // Create transaction for the fixed expense
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const { start: startOfMonth, end: endOfMonth } = getMonthRange(
+      now.getFullYear(),
+      now.getMonth()
+    );
 
     // Check if there's already a payment this month
     const existingPayment = await transactionRepo.findFirst({
       fixedExpenseId: fixedExpense.id,
-      date: { gte: startOfMonth, lte: endOfMonth },
+      date: { gte: startOfMonth, lt: endOfMonth },
     });
 
     // Only create if there's no payment this month

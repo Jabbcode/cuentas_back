@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { calculateNextDueDate } from '../date.utils.js';
+import { calculateNextDueDate, getMonthRange } from '../date.utils.js';
+
+describe('getMonthRange', () => {
+  it('junio 2026: start 1 jun 00:00, end 1 jul 00:00', () => {
+    const { start, end } = getMonthRange(2026, 5);
+    expect(start).toEqual(new Date(2026, 5, 1));
+    expect(end).toEqual(new Date(2026, 6, 1));
+  });
+
+  it('diciembre: end cruza al 1 de enero del año siguiente', () => {
+    const { start, end } = getMonthRange(2026, 11);
+    expect(start).toEqual(new Date(2026, 11, 1));
+    expect(end).toEqual(new Date(2027, 0, 1));
+  });
+
+  it('febrero bisiesto (2028): end es 1 de marzo, cubre el 29', () => {
+    const { start, end } = getMonthRange(2028, 1);
+    expect(start).toEqual(new Date(2028, 1, 1));
+    expect(end).toEqual(new Date(2028, 2, 1));
+  });
+});
 
 describe('calculateNextDueDate', () => {
   describe('monthly', () => {

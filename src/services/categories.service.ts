@@ -2,6 +2,7 @@ import { CreateCategoryInput, UpdateCategoryInput } from '../schemas/category.sc
 import { NotFoundError, ConflictError } from '../lib/errors.js';
 import * as categoryRepo from '../repositories/category.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
+import { getMonthRange } from '../lib/utils/date.utils.js';
 
 export async function getCategories(userId: string, type?: 'expense' | 'income') {
   return categoryRepo.findAllByUser(userId, type);
@@ -44,14 +45,13 @@ export async function getCategorySpending(categoryId: string, userId: string) {
   const category = await getCategoryById(categoryId, userId);
 
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(now.getFullYear(), now.getMonth());
 
   const transactions = await transactionRepo.findMany({
     categoryId,
     userId,
     type: 'expense',
-    date: { gte: startOfMonth, lte: endOfMonth },
+    date: { gte: startOfMonth, lt: endOfMonth },
   });
 
   const spent = transactions.reduce((sum, tx) => sum + Number(tx.amount), 0);

@@ -3,6 +3,7 @@ import { prisma } from './prisma.js';
 import { createNotification, getPreferences } from '../services/notifications.service.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
+import { getMonthRange } from './utils/date.utils.js';
 
 function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
@@ -93,8 +94,7 @@ async function sendMonthlySummaries(): Promise<void> {
   const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
   const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
 
-  const startOfMonth = new Date(prevYear, prevMonth, 1);
-  const endOfMonth = new Date(prevYear, prevMonth + 1, 0, 23, 59, 59);
+  const { start: startOfMonth, end: endOfMonth } = getMonthRange(prevYear, prevMonth);
 
   const users = await prisma.user.findMany({
     select: { id: true, email: true, name: true, notificationPreferences: true },
@@ -121,16 +121,16 @@ async function sendMonthlySummaries(): Promise<void> {
 
     const [expenseAgg, incomeAgg, categoryData] = await Promise.all([
       prisma.transaction.aggregate({
-        where: { userId: user.id, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
+        where: { userId: user.id, type: 'expense', date: { gte: startOfMonth, lt: endOfMonth } },
         _sum: { amount: true },
       }),
       prisma.transaction.aggregate({
-        where: { userId: user.id, type: 'income', date: { gte: startOfMonth, lte: endOfMonth } },
+        where: { userId: user.id, type: 'income', date: { gte: startOfMonth, lt: endOfMonth } },
         _sum: { amount: true },
       }),
       prisma.transaction.groupBy({
         by: ['categoryId'],
-        where: { userId: user.id, type: 'expense', date: { gte: startOfMonth, lte: endOfMonth } },
+        where: { userId: user.id, type: 'expense', date: { gte: startOfMonth, lt: endOfMonth } },
         _sum: { amount: true },
         orderBy: { _sum: { amount: 'desc' } },
         take: 10,
