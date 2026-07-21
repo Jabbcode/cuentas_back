@@ -6,11 +6,45 @@ import {
   TransactionQuery,
 } from '../schemas/transaction.schema.js';
 import { buildTransactionWhereInput } from '../lib/utils/transaction.utils.js';
-import { assertCreditCardLimit } from '../lib/utils/credit-card-limit.utils.js';
+import {
+  assertCreditCardLimit,
+  CreditCardBalanceInfo,
+} from '../lib/utils/credit-card-limit.utils.js';
 import { NotFoundError } from '../lib/errors.js';
 import { updateAccountBalance } from './accounts.service.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
+
+/**
+ * Lee la cuenta con FOR UPDATE dentro de la tx para que la validación de límite
+ * de tarjeta y el decremento posterior queden serializados por el lock de fila
+ * (un SELECT plano no bloquea: dos requests concurrentes podrían leer el mismo
+ * saldo, pasar ambas la validación y dejarlo por encima del límite).
+ */
+async function lockAccountForBalanceUpdate(
+  tx: Prisma.TransactionClient,
+  accountId: string,
+  userId: string
+): Promise<CreditCardBalanceInfo | null> {
+  const rows = await tx.$queryRaw<
+    Array<{
+      type: string;
+      creditLimit: Prisma.Decimal | null;
+      balance: Prisma.Decimal;
+      initialBalance: Prisma.Decimal;
+    }>
+  >`SELECT type, "creditLimit", balance, "initialBalance" FROM "Account" WHERE id = ${accountId} AND "userId" = ${userId} FOR UPDATE`;
+
+  const account = rows[0];
+  if (!account) return null;
+
+  return {
+    type: account.type,
+    creditLimit: account.creditLimit === null ? null : Number(account.creditLimit),
+    balance: Number(account.balance),
+    initialBalance: Number(account.initialBalance),
+  };
+}
 
 export async function getTransactions(userId: string, query: TransactionQuery) {
   const {
@@ -81,22 +115,10 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
       tx
     );
 
-    const account = await tx.account.findFirst({
-      where: { id: data.accountId, userId },
-      select: { type: true, creditLimit: true, balance: true, initialBalance: true },
-    });
+    const account = await lockAccountForBalanceUpdate(tx, data.accountId, userId);
     if (!account) throw new NotFoundError('Cuenta no encontrada');
 
-    assertCreditCardLimit(
-      {
-        type: account.type,
-        creditLimit: account.creditLimit === null ? null : Number(account.creditLimit),
-        balance: Number(account.balance),
-        initialBalance: Number(account.initialBalance),
-      },
-      data.amount,
-      data.type
-    );
+    assertCreditCardLimit(account, data.amount, data.type);
 
     const transaction = await tx.transaction.create({
       data: {
@@ -171,23 +193,10 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
       tx
     );
 
-    const resultingAccount = await tx.account.findFirst({
-      where: { id: resultingAccountId, userId },
-      select: { type: true, creditLimit: true, balance: true, initialBalance: true },
-    });
+    const resultingAccount = await lockAccountForBalanceUpdate(tx, resultingAccountId, userId);
     if (!resultingAccount) throw new NotFoundError('Cuenta no encontrada');
 
-    assertCreditCardLimit(
-      {
-        type: resultingAccount.type,
-        creditLimit:
-          resultingAccount.creditLimit === null ? null : Number(resultingAccount.creditLimit),
-        balance: Number(resultingAccount.balance),
-        initialBalance: Number(resultingAccount.initialBalance),
-      },
-      resultingAmount,
-      resultingType
-    );
+    assertCreditCardLimit(resultingAccount, resultingAmount, resultingType);
 
     const updated = await tx.transaction.update({
       where: { id },
