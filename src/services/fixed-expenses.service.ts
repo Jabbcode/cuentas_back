@@ -439,15 +439,23 @@ async function syncRecurringDebtPaymentFixedExpenses(userId: string) {
     });
   }
 
+  // Precargar en una sola query los fixed expenses ya asociados a estos pagos recurrentes
+  const existingFixedExpenses = await fixedExpenseRepo.findMany({
+    userId,
+    recurringDebtPaymentId: { in: monthlyActive.map((p) => p.id) },
+  });
+  const fixedExpenseByPaymentId = new Map(
+    existingFixedExpenses
+      .filter((fe) => fe.recurringDebtPaymentId)
+      .map((fe) => [fe.recurringDebtPaymentId as string, fe])
+  );
+
   for (const payment of monthlyActive) {
     try {
       // Skip if debt is already paid
       if ((payment as unknown as { debt: { status: string } }).debt.status === 'paid') {
         // Deactivate fixed expense if exists
-        const existingFixedExpense = await fixedExpenseRepo.findFirst({
-          userId,
-          recurringDebtPaymentId: payment.id,
-        });
+        const existingFixedExpense = fixedExpenseByPaymentId.get(payment.id);
 
         if (existingFixedExpense) {
           await fixedExpenseRepo.update(existingFixedExpense.id, { isActive: false });
@@ -456,10 +464,7 @@ async function syncRecurringDebtPaymentFixedExpenses(userId: string) {
       }
 
       // Find existing fixed expense for this recurring payment
-      const existingFixedExpense = await fixedExpenseRepo.findFirst({
-        userId,
-        recurringDebtPaymentId: payment.id,
-      });
+      const existingFixedExpense = fixedExpenseByPaymentId.get(payment.id);
 
       const paymentWithDebt = payment as unknown as {
         debt: { creditor: string; description: string | null };
