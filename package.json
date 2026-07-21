@@ -16,7 +16,8 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "data:backfill-system-keys": "tsx prisma/data-migrations/backfill-category-system-keys.ts"
   },
   "lint-staged": {
     "*.ts": [
