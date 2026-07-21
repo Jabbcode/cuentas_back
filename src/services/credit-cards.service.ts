@@ -12,6 +12,7 @@ import * as creditCardPaymentRepo from '../repositories/credit-card-payment.repo
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
+import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
 import { createTransaction } from './transactions.service.js';
 
 interface CreditCardPeriod {
@@ -413,17 +414,5 @@ export async function payCreditCardStatement(
  * Get or create "Pago de Tarjeta" category
  */
 async function getOrCreatePaymentCategory(userId: string) {
-  let category = await categoryRepo.findFirst({ userId, name: 'Pago de Tarjeta', type: 'expense' });
-
-  if (!category) {
-    category = await categoryRepo.create({
-      name: 'Pago de Tarjeta',
-      type: 'expense',
-      icon: '💳',
-      color: '#8B5CF6',
-      user: { connect: { id: userId } },
-    });
-  }
-
-  return category;
+  return categoryRepo.upsertSystemCategory(userId, CATEGORY_SYSTEM_KEYS.CREDIT_CARD_PAYMENT);
 }

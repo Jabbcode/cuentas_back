@@ -15,6 +15,7 @@ import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
 import * as accountRepo from '../repositories/account.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
+import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
 
 export async function getFixedExpenses(userId: string, activeOnly = false) {
   return fixedExpenseRepo.findAllByUser(
@@ -338,17 +339,10 @@ async function syncCreditCardFixedExpenses(userId: string) {
   });
 
   // Get or create category for credit card payments
-  let category = await categoryRepo.findFirst({ userId, name: 'Pago de Tarjeta', type: 'expense' });
-
-  if (!category) {
-    category = await categoryRepo.create({
-      name: 'Pago de Tarjeta',
-      type: 'expense',
-      icon: '💳',
-      color: '#8B5CF6',
-      user: { connect: { id: userId } },
-    });
-  }
+  const category = await categoryRepo.upsertSystemCategory(
+    userId,
+    CATEGORY_SYSTEM_KEYS.CREDIT_CARD_PAYMENT
+  );
 
   for (const card of creditCards) {
     try {
@@ -426,17 +420,10 @@ async function syncRecurringDebtPaymentFixedExpenses(userId: string) {
   const monthlyActive = recurringPayments.filter((p) => p.isActive && p.frequency === 'monthly');
 
   // Get or create category for debt payments
-  let category = await categoryRepo.findFirst({ userId, name: 'Pago de Deuda', type: 'expense' });
-
-  if (!category) {
-    category = await categoryRepo.create({
-      name: 'Pago de Deuda',
-      type: 'expense',
-      icon: '💰',
-      color: '#F59E0B',
-      user: { connect: { id: userId } },
-    });
-  }
+  const category = await categoryRepo.upsertSystemCategory(
+    userId,
+    CATEGORY_SYSTEM_KEYS.DEBT_PAYMENT
+  );
 
   // Precargar en una sola query los fixed expenses ya asociados a estos pagos recurrentes
   const existingFixedExpenses = await fixedExpenseRepo.findMany({
