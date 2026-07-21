@@ -12,6 +12,7 @@ import * as creditCardPaymentRepo from '../repositories/credit-card-payment.repo
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as categoryRepo from '../repositories/category.repository.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
+import { createTransaction } from './transactions.service.js';
 
 interface CreditCardPeriod {
   startDate: Date;
@@ -326,9 +327,6 @@ export async function payCreditCardStatement(
   }
 
   const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
-
-  // Import transaction service to create transactions properly
-  const { createTransaction } = await import('./transactions.service.js');
 
   // Create payment transaction (income to credit card)
   // This automatically updates the credit card balance

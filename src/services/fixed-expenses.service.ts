@@ -7,6 +7,8 @@ import {
 } from '../schemas/fixed-expense.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
+import { payCreditCardStatement, getCreditCardStatement } from './credit-cards.service.js';
+import { payDebt } from './debts.service.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
@@ -143,8 +145,6 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
 
   // If this is a credit card fixed expense, also record the payment in the credit card
   if (fixedExpense.creditCardAccountId) {
-    const { payCreditCardStatement } = await import('./credit-cards.service.js');
-
     try {
       await payCreditCardStatement(fixedExpense.creditCardAccountId, userId, {
         amount,
@@ -161,8 +161,6 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
 
   // If this is a recurring debt payment fixed expense, also record the payment in the debt
   if (fixedExpense.recurringDebtPaymentId) {
-    const { payDebt } = await import('./debts.service.js');
-
     try {
       // Get the recurring payment to find the debtId
       const recurringPayment = await recurringRepo.findUnique(fixedExpense.recurringDebtPaymentId);
@@ -332,8 +330,6 @@ export async function getFixedExpensesSummary(userId: string) {
  * Creates or updates fixed expenses for credit cards with pending payments
  */
 async function syncCreditCardFixedExpenses(userId: string) {
-  const { getCreditCardStatement } = await import('./credit-cards.service.js');
-
   // Get all credit cards with payment account configured
   const creditCards = await accountRepo.findCreditCardsByUser(userId, {
     paymentAccountId: { not: null },
