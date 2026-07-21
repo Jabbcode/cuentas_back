@@ -24,7 +24,7 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@prisma/client": "^5.22.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
