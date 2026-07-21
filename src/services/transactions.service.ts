@@ -6,6 +6,7 @@ import {
   TransactionQuery,
 } from '../schemas/transaction.schema.js';
 import { buildTransactionWhereInput } from '../lib/utils/transaction.utils.js';
+import { assertCreditCardLimit } from '../lib/utils/credit-card-limit.utils.js';
 import { NotFoundError } from '../lib/errors.js';
 import { updateAccountBalance } from './accounts.service.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
@@ -80,6 +81,23 @@ export async function createTransaction(data: CreateTransactionInput, userId: st
       tx
     );
 
+    const account = await tx.account.findFirst({
+      where: { id: data.accountId, userId },
+      select: { type: true, creditLimit: true, balance: true, initialBalance: true },
+    });
+    if (!account) throw new NotFoundError('Cuenta no encontrada');
+
+    assertCreditCardLimit(
+      {
+        type: account.type,
+        creditLimit: account.creditLimit === null ? null : Number(account.creditLimit),
+        balance: Number(account.balance),
+        initialBalance: Number(account.initialBalance),
+      },
+      data.amount,
+      data.type
+    );
+
     const transaction = await tx.transaction.create({
       data: {
         amount: data.amount,
@@ -130,6 +148,10 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
   if (data.imageHash !== undefined) updateData.imageHash = data.imageHash;
   if (data.date !== undefined) updateData.date = new Date(data.date);
 
+  const resultingAccountId = data.accountId ?? existing.accountId;
+  const resultingType = data.type ?? existing.type;
+  const resultingAmount = data.amount ?? Number(existing.amount);
+
   return prisma.$transaction(async (tx) => {
     await assertOwnership(
       userId,
@@ -147,6 +169,24 @@ export async function updateTransaction(id: string, data: UpdateTransactionInput
       Number(existing.amount),
       existing.type === 'income' ? 'expense' : 'income',
       tx
+    );
+
+    const resultingAccount = await tx.account.findFirst({
+      where: { id: resultingAccountId, userId },
+      select: { type: true, creditLimit: true, balance: true, initialBalance: true },
+    });
+    if (!resultingAccount) throw new NotFoundError('Cuenta no encontrada');
+
+    assertCreditCardLimit(
+      {
+        type: resultingAccount.type,
+        creditLimit:
+          resultingAccount.creditLimit === null ? null : Number(resultingAccount.creditLimit),
+        balance: Number(resultingAccount.balance),
+        initialBalance: Number(resultingAccount.initialBalance),
+      },
+      resultingAmount,
+      resultingType
     );
 
     const updated = await tx.transaction.update({
