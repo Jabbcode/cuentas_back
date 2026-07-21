@@ -5,18 +5,33 @@ import {
   type CategorySystemKey,
 } from '../lib/constants/category-system-keys.js';
 
+// systemKey es un campo interno: nunca se expone en la API pública de categorías.
+const PUBLIC_CATEGORY_SELECT = {
+  id: true,
+  name: true,
+  type: true,
+  icon: true,
+  color: true,
+  monthlyLimit: true,
+  userId: true,
+} satisfies Prisma.CategorySelect;
+
 export async function findAllByUser(
   userId: string,
   type?: 'expense' | 'income'
-): Promise<Category[]> {
+): Promise<Omit<Category, 'systemKey'>[]> {
   return prisma.category.findMany({
     where: { userId, ...(type && { type }) },
     orderBy: { name: 'asc' },
+    select: PUBLIC_CATEGORY_SELECT,
   });
 }
 
-export async function findByIdAndUser(id: string, userId: string): Promise<Category | null> {
-  return prisma.category.findFirst({ where: { id, userId } });
+export async function findByIdAndUser(
+  id: string,
+  userId: string
+): Promise<Omit<Category, 'systemKey'> | null> {
+  return prisma.category.findFirst({ where: { id, userId }, select: PUBLIC_CATEGORY_SELECT });
 }
 
 export async function findFirst(where: Prisma.CategoryWhereInput): Promise<Category | null> {
@@ -34,16 +49,21 @@ export async function countByUser(userId: string): Promise<number> {
   return prisma.category.count({ where: { userId } });
 }
 
-export async function create(data: Prisma.CategoryCreateInput): Promise<Category> {
-  return prisma.category.create({ data });
+export async function create(
+  data: Prisma.CategoryCreateInput
+): Promise<Omit<Category, 'systemKey'>> {
+  return prisma.category.create({ data, select: PUBLIC_CATEGORY_SELECT });
 }
 
-export async function update(id: string, data: Prisma.CategoryUpdateInput): Promise<Category> {
-  return prisma.category.update({ where: { id }, data });
+export async function update(
+  id: string,
+  data: Prisma.CategoryUpdateInput
+): Promise<Omit<Category, 'systemKey'>> {
+  return prisma.category.update({ where: { id }, data, select: PUBLIC_CATEGORY_SELECT });
 }
 
-export async function remove(id: string): Promise<Category> {
-  return prisma.category.delete({ where: { id } });
+export async function remove(id: string): Promise<Omit<Category, 'systemKey'>> {
+  return prisma.category.delete({ where: { id }, select: PUBLIC_CATEGORY_SELECT });
 }
 
 /**
