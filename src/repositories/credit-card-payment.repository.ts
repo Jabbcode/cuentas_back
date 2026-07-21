@@ -7,6 +7,12 @@ export async function findFirst(
   return prisma.creditCardPayment.findFirst({ where });
 }
 
+export async function findMany(
+  where: Prisma.CreditCardPaymentWhereInput
+): Promise<CreditCardPayment[]> {
+  return prisma.creditCardPayment.findMany({ where });
+}
+
 export async function create(
   data: Prisma.CreditCardPaymentCreateInput
 ): Promise<CreditCardPayment> {

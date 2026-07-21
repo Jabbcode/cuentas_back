@@ -28,6 +28,13 @@ export async function findFirst(
   return prisma.fixedExpense.findFirst({ where });
 }
 
+export async function findMany(
+  where: Prisma.FixedExpenseWhereInput,
+  include?: Prisma.FixedExpenseInclude
+): Promise<FixedExpense[]> {
+  return prisma.fixedExpense.findMany({ where, include });
+}
+
 export async function countByUser(userId: string): Promise<number> {
   return prisma.fixedExpense.count({ where: { userId } });
 }
