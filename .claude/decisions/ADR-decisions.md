@@ -79,11 +79,11 @@ Registro de decisiones arquitectónicas del proyecto backend.
 
 **Fecha:** 2026-04-21 | **Estado:** Obsoleta (2026-06-02) — el modelo `Budget` y la feature completa se eliminaron del backend (`chore: eliminar features Budgets y Tags`). Se conserva como registro histórico.
 
-**Decisión:** El modelo `Budget` (`amount`, `month`, `year`, `alertAt`) es la única fuente de verdad para límites por categoría. `Category.monthlyLimit` queda como campo legado.
+**Decisión original:** El modelo `Budget` (`amount`, `month`, `year`, `alertAt`) es la única fuente de verdad para límites por categoría. `Category.monthlyLimit` queda como campo legado.
 
-**Justificación:** Budget es más expresivo (límite por mes/año), tiene `alertAt` para alertas tempranas, y es consistente con cómo los usuarios configuran límites en la UI.
+**Justificación original:** Budget es más expresivo (límite por mes/año), tiene `alertAt` para alertas tempranas, y es consistente con cómo los usuarios configuran límites en la UI.
 
-**Consecuencias:** `Category.monthlyLimit` pendiente de eliminar (REFACTOR-001). Si no hay Budget para una categoría, no hay notificación de límite.
+**Reemplazo (2026-06-02, tras eliminar Budgets/Tags):** `Category.monthlyLimit` vuelve a ser el único mecanismo de límites por categoría y está en uso activo (dashboard `getByCategory`). REFACTOR-001 (eliminar `monthlyLimit`) queda cancelado — no debe volver a proponerse sin una decisión de producto explícita. La notificación de límite (`checkBudgetAndNotify`) no sobrevivió a la eliminación de Budgets; el tipo `category_limit` existe en el schema pero ningún código lo genera hoy.
 
 ---
 
