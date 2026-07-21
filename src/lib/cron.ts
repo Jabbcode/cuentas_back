@@ -3,7 +3,7 @@ import { prisma } from './prisma.js';
 import {
   createNotification,
   getPreferences,
-  buildMonthlySummary,
+  buildMonthlySummariesBatch,
 } from '../services/notifications.service.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
@@ -121,11 +121,20 @@ async function sendMonthlySummaries(): Promise<void> {
     'Diciembre',
   ];
 
-  for (const user of users) {
+  const eligible = users.filter((user) => {
     const prefs = user.notificationPreferences as { monthlyEmail?: boolean } | null;
-    if (!prefs?.monthlyEmail) continue;
+    return !!prefs?.monthlyEmail;
+  });
 
-    const summary = await buildMonthlySummary(user.id, { start: startOfMonth, end: endOfMonth });
+  if (eligible.length === 0) return;
+
+  const summaries = await buildMonthlySummariesBatch(
+    eligible.map((u) => u.id),
+    { start: startOfMonth, end: endOfMonth }
+  );
+
+  for (const user of eligible) {
+    const summary = summaries.get(user.id)!;
 
     try {
       await sendMonthlySummaryEmail({
