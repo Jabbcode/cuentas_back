@@ -3,7 +3,7 @@
 Documento vivo del estado actual del backend. Actualizar regularmente.
 
 ## 📅 Fecha de Actualización
-**Última actualización:** 2026-07-20
+**Última actualización:** 2026-07-21
 
 ## 🚀 Estado General
 API REST en producción activa. Arquitectura Clean (repositories + services + controllers) completada. Observabilidad con Sentry tunnel operativa. JWT migrado a httpOnly cookies. Features Budgets y Tags eliminadas (2026-06-02).
@@ -97,6 +97,26 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - [x] Cookie: `httpOnly`, `secure` en prod, `sameSite: none` (cross-origin Vercel→Render)
 - [x] `authMiddleware` lee `req.cookies.token`
 
+### ✅ Cleanup de arquitectura backend (PRs #45–#51 — 2026-07-21)
+6 hallazgos de la revisión de arquitectura, implementados vía spec-driven development
+(`~/vault/workspaces/cuentas-app/specs/backend-cleanup-*`), mergeados a `develop` y `main`:
+- [x] #45 — Imports dinámicos → estáticos entre `credit-cards.service.ts` y
+      `fixed-expenses.service.ts` (rompe acoplamiento circular oculto)
+- [x] #46 — `payFixedExpense` detecta pago de tarjeta ya existente por
+      `instanceof ConflictError` en vez de por texto del mensaje
+- [x] #47 — `dashboard.service.ts` agrega en la base de datos (`aggregate`/`groupBy`)
+      en vez de traer todo a memoria y usar `.reduce()`
+- [x] #48 — `sendTestEmail` y `sendMonthlySummaries` (cron) ya no acceden a `prisma.*`
+      directamente; cálculo de resumen mensual unificado en
+      `notificationsService.buildMonthlySummary`
+- [x] #49 — Cron mensual sin N+1: `buildMonthlySummariesBatch` reemplaza 4 queries por
+      usuario por 3 queries en lote, independiente del número de usuarios
+- [x] #50 — `Category.systemKey` (estable, no editable por el usuario) reemplaza el
+      find-or-create por `name` en las 4 categorías de sistema (pago de deuda/tarjeta);
+      incluye script de backfill versionado (`prisma/data-migrations/`) ya ejecutado
+      contra la DB de producción — duplicados reales unificados
+- [x] #51 — Release a `main`
+
 ### 📝 Pendiente
 - [ ] FEAT-014: Metas de ahorro (modelo SavingsGoal + CRUD)
 - [ ] FEAT-012: Exportación CSV/PDF
@@ -107,8 +127,10 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - Ninguno crítico
 
 ## 🔧 Deuda Técnica
-- ❌ Sin tests unitarios (0% cobertura)
-- ⚠️ N+1 queries en algunos endpoints
+- ❌ Sin tests unitarios (0% cobertura) — desactualizado: hay suite vitest activa (65+ tests),
+  ver PR #002 y los cleanups #45–#51; falta actualizar este punto con cobertura real
+- ✅ N+1 queries conocidas resueltas: credit cards summary + sync recurrentes (PR #008),
+  dashboard (PR #47), cron mensual de resúmenes (PR #49)
 - ⚠️ Notificaciones de límite de categoría: `checkBudgetAndNotify` no sobrevivió a la
   eliminación de Budgets (2026-06-02) — el tipo de notificación `category_limit` existe
   en el schema y en las preferencias (`categoryLimit: true`), pero ningún código lo
@@ -130,6 +152,12 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - **CORS_ORIGIN:** https://cuentas-front-amber.vercel.app (sin trailing slash)
 
 ## 📊 Cambios Recientes
+- **Cleanup de arquitectura (PRs #45–#51 — 2026-07-21):** 6 hallazgos cerrados (imports
+  circulares, detección de conflicto por tipo, dashboard con agregación en DB, capas
+  Prisma en notificaciones/cron, N+1 del cron mensual, `systemKey` estable para
+  categorías de sistema + backfill ejecutado en prod). Ver sección "Cleanup de
+  arquitectura backend" arriba y las specs en
+  `~/vault/workspaces/cuentas-app/specs/backend-cleanup-*`.
 - **chore (2026-06-02):** Eliminadas las features Budgets y Tags del backend (modelos, endpoints, servicios y specs relacionadas)
 - **FIX-032 (PR #29 — 2026-06-01):** JWT migrado de localStorage a httpOnly cookie; `sameSite: none` para cross-origin prod; nuevo `POST /auth/logout`
 - **PR #27 (2026-06-01):** Sentry tunnel endpoint `/api/monitoring/sentry-tunnel` para evitar bloqueo por ad blockers
