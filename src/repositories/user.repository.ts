@@ -13,6 +13,13 @@ export async function findFirst(where: Prisma.UserWhereInput): Promise<User | nu
   return prisma.user.findFirst({ where });
 }
 
+export async function findMany(
+  where: Prisma.UserWhereInput,
+  select?: Prisma.UserSelect
+): Promise<User[]> {
+  return prisma.user.findMany({ where, select }) as Promise<User[]>;
+}
+
 export async function create(data: Prisma.UserCreateInput): Promise<User> {
   return prisma.user.create({ data });
 }

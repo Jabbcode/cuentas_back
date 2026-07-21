@@ -1,9 +1,14 @@
 import cron from 'node-cron';
 import { prisma } from './prisma.js';
-import { createNotification, getPreferences } from '../services/notifications.service.js';
+import {
+  createNotification,
+  getPreferences,
+  buildMonthlySummary,
+} from '../services/notifications.service.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
 import { getMonthRange } from './utils/date.utils.js';
+import * as userRepo from '../repositories/user.repository.js';
 
 function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
@@ -96,9 +101,10 @@ async function sendMonthlySummaries(): Promise<void> {
 
   const { start: startOfMonth, end: endOfMonth } = getMonthRange(prevYear, prevMonth);
 
-  const users = await prisma.user.findMany({
-    select: { id: true, email: true, name: true, notificationPreferences: true },
-  });
+  const users = await userRepo.findMany(
+    {},
+    { id: true, email: true, name: true, notificationPreferences: true }
+  );
 
   const monthNames = [
     'Enero',
@@ -119,36 +125,7 @@ async function sendMonthlySummaries(): Promise<void> {
     const prefs = user.notificationPreferences as { monthlyEmail?: boolean } | null;
     if (!prefs?.monthlyEmail) continue;
 
-    const [expenseAgg, incomeAgg, categoryData] = await Promise.all([
-      prisma.transaction.aggregate({
-        where: { userId: user.id, type: 'expense', date: { gte: startOfMonth, lt: endOfMonth } },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.aggregate({
-        where: { userId: user.id, type: 'income', date: { gte: startOfMonth, lt: endOfMonth } },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.groupBy({
-        by: ['categoryId'],
-        where: { userId: user.id, type: 'expense', date: { gte: startOfMonth, lt: endOfMonth } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: 'desc' } },
-        take: 10,
-      }),
-    ]);
-
-    const categoryIds = categoryData.map((c) => c.categoryId);
-    const categories = await prisma.category.findMany({
-      where: { id: { in: categoryIds } },
-      select: { id: true, name: true, icon: true },
-    });
-    const catMap = new Map(categories.map((c) => [c.id, c]));
-
-    const breakdown = categoryData.map((c) => ({
-      name: catMap.get(c.categoryId)?.name ?? 'Sin categoría',
-      icon: catMap.get(c.categoryId)?.icon ?? undefined,
-      spent: Number(c._sum.amount ?? 0),
-    }));
+    const summary = await buildMonthlySummary(user.id, { start: startOfMonth, end: endOfMonth });
 
     try {
       await sendMonthlySummaryEmail({
@@ -156,9 +133,7 @@ async function sendMonthlySummaries(): Promise<void> {
         userName: user.name,
         month: monthNames[prevMonth],
         year: prevYear,
-        totalExpenses: Number(expenseAgg._sum.amount ?? 0),
-        totalIncome: Number(incomeAgg._sum.amount ?? 0),
-        categoryBreakdown: breakdown,
+        ...summary,
       });
     } catch (err) {
       // Email send failure must not crash the cron

@@ -72,6 +72,16 @@ export function groupByCategory(where: Prisma.TransactionWhereInput) {
   });
 }
 
+export function groupExpensesByCategory(where: Prisma.TransactionWhereInput, take = 10) {
+  return prisma.transaction.groupBy({
+    by: ['categoryId'],
+    where,
+    _sum: { amount: true },
+    orderBy: { _sum: { amount: 'desc' } },
+    take,
+  });
+}
+
 export async function aggregate(
   where: Prisma.TransactionWhereInput
 ): Promise<{ _sum: { amount: Prisma.Decimal | null } }> {
