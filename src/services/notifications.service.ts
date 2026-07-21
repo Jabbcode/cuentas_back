@@ -109,3 +109,55 @@ export async function getUserContactInfo(
   if (!user) return null;
   return { email: user.email, name: user.name };
 }
+
+const CATEGORY_LIMIT = 10;
+
+export async function buildMonthlySummariesBatch(
+  userIds: string[],
+  range: { start: Date; end: Date }
+): Promise<Map<string, MonthlySummaryData>> {
+  const result = new Map<string, MonthlySummaryData>(
+    userIds.map((id) => [id, { totalExpenses: 0, totalIncome: 0, categoryBreakdown: [] }])
+  );
+  if (userIds.length === 0) return result;
+
+  const base = { userId: { in: userIds }, date: { gte: range.start, lt: range.end } };
+
+  const [totals, categoryData] = await Promise.all([
+    transactionRepo.groupTotalsByUser(base),
+    transactionRepo.groupExpensesByUserAndCategory({ ...base, type: 'expense' }),
+  ]);
+
+  for (const row of totals) {
+    const entry = result.get(row.userId);
+    if (!entry) continue;
+    const amount = Number(row._sum.amount ?? 0);
+    if (row.type === 'expense') entry.totalExpenses = amount;
+    else if (row.type === 'income') entry.totalIncome = amount;
+  }
+
+  const categoryIds = [...new Set(categoryData.map((c) => c.categoryId))];
+  const categories = await categoryRepo.findMany(
+    { id: { in: categoryIds }, userId: { in: userIds } },
+    { id: true, name: true, icon: true }
+  );
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+
+  const perUser = new Map<string, typeof categoryData>();
+  for (const row of categoryData) {
+    const list = perUser.get(row.userId) ?? [];
+    list.push(row);
+    perUser.set(row.userId, list);
+  }
+  for (const [userId, rows] of perUser) {
+    const entry = result.get(userId);
+    if (!entry) continue;
+    entry.categoryBreakdown = rows.slice(0, CATEGORY_LIMIT).map((c) => ({
+      name: catMap.get(c.categoryId)?.name ?? 'Sin categoría',
+      icon: catMap.get(c.categoryId)?.icon ?? undefined,
+      spent: Number(c._sum.amount ?? 0),
+    }));
+  }
+
+  return result;
+}
