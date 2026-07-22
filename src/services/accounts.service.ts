@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma, PrismaClient, Account, Transfer } from '@prisma/client';
+import type { Prisma, PrismaClient, Account } from '@prisma/client';
 import {
   CreateAccountInput,
   UpdateAccountInput,
@@ -7,26 +7,8 @@ import {
 } from '../schemas/account.schema.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
 import * as accountRepo from '../repositories/account.repository.js';
-import type { AccountRepository } from '../repositories/account.repository.js';
-
-type TransferWithAccounts = Transfer & { fromAccount: Account; toAccount: Account };
-
-export interface AccountsService {
-  getAccounts(userId: string): Promise<Account[]>;
-  getAccountById(id: string, userId: string): Promise<Account>;
-  createAccount(data: CreateAccountInput, userId: string): Promise<Account>;
-  updateAccount(id: string, data: UpdateAccountInput, userId: string): Promise<Account>;
-  deleteAccount(id: string, userId: string): Promise<Account>;
-  transferFunds(data: TransferInput, userId: string): Promise<TransferWithAccounts>;
-  getTransfersByAccount(accountId: string, userId: string): Promise<TransferWithAccounts[]>;
-  updateAccountBalance(
-    accountId: string,
-    userId: string,
-    amount: number,
-    type: 'expense' | 'income',
-    tx?: Prisma.TransactionClient
-  ): Promise<void>;
-}
+import type { AccountRepository } from '../repositories/account.repository.port.js';
+import type { AccountsService, TransferWithAccounts } from './accounts.service.port.js';
 
 export class AccountsServiceImpl implements AccountsService {
   constructor(

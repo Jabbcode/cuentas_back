@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Account, Transfer, PrismaClient } from '@prisma/client';
-import type { AccountRepository } from '../../repositories/account.repository.js';
+import type { AccountRepository } from '../../repositories/account.repository.port.js';
 import { AccountsServiceImpl } from '../accounts.service.js';
 
 function fakeAccount(overrides: Partial<Account> = {}): Account {
