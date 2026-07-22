@@ -9,6 +9,9 @@ import type { AccountsService } from './accounts.service.port.js';
 import type { RecurringDebtPaymentRepository } from '../repositories/recurring-debt-payment.repository.port.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
+import { DEBT_STATUS, DEBT_MESSAGES } from '../lib/constants/debt.constants.js';
+import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
+import { RECURRING_FREQUENCY } from '../lib/constants/recurring-debt-payment.constants.js';
 import {
   CATEGORY_SYSTEM_KEYS,
   SYSTEM_CATEGORY_DEFAULTS,
@@ -40,7 +43,7 @@ export class DebtsServiceImpl implements DebtsService {
       interestType: data.interestType,
       startDate: data.startDate ? new Date(data.startDate) : new Date(),
       dueDate: data.dueDate ? new Date(data.dueDate) : null,
-      status: 'active',
+      status: DEBT_STATUS.ACTIVE,
     });
 
     return debt;
@@ -73,7 +76,7 @@ export class DebtsServiceImpl implements DebtsService {
     } as Prisma.DebtInclude);
 
     if (!debt) {
-      throw new NotFoundError('Deuda no encontrada');
+      throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
     }
 
     return debt as unknown as DebtWithPaymentsNoCount;
@@ -83,7 +86,7 @@ export class DebtsServiceImpl implements DebtsService {
     const existingDebt = await this.debtRepo.findByIdAndUser(debtId, userId);
 
     if (!existingDebt) {
-      throw new NotFoundError('Deuda no encontrada');
+      throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
     }
 
     const debt = await this.debtRepo.update(debtId, {
@@ -102,13 +105,13 @@ export class DebtsServiceImpl implements DebtsService {
     const debt = await this.debtRepo.findByIdAndUser(debtId, userId);
 
     if (!debt) {
-      throw new NotFoundError('Deuda no encontrada');
+      throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
     }
 
     // Cascade delete will handle payments and transactions
     await this.debtRepo.remove(debtId);
 
-    return { message: 'Deuda eliminada correctamente' };
+    return { message: DEBT_MESSAGES.DELETED };
   }
 
   private async handleRecurringPaymentSideEffects(
@@ -120,7 +123,7 @@ export class DebtsServiceImpl implements DebtsService {
     const recurringPayment = await this.recurringRepo.findFirst({
       debtId,
       isActive: true,
-      frequency: 'monthly',
+      frequency: RECURRING_FREQUENCY.MONTHLY,
     });
 
     if (!recurringPayment) return;
@@ -161,7 +164,7 @@ export class DebtsServiceImpl implements DebtsService {
         await createTransaction(
           {
             amount,
-            type: 'expense',
+            type: TRANSACTION_TYPE.EXPENSE,
             description: `Pago: ${fixedExpense.name}`,
             date: new Date().toISOString(),
             accountId,
@@ -182,11 +185,11 @@ export class DebtsServiceImpl implements DebtsService {
 
   async payDebt(debtId: string, userId: string, data: PayDebtInput): Promise<PayDebtResult> {
     const debt = await this.debtRepo.findByIdAndUser(debtId, userId);
-    if (!debt) throw new NotFoundError('Deuda no encontrada');
-    if (debt.status === 'paid') throw new ConflictError('Esta deuda ya está pagada');
+    if (!debt) throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
+    if (debt.status === DEBT_STATUS.PAID) throw new ConflictError(DEBT_MESSAGES.ALREADY_PAID);
     const account = await this.accountsService.getAccountById(data.accountId, userId);
     if (Number(account.balance) < data.amount)
-      throw new ValidationError('Saldo insuficiente en la cuenta');
+      throw new ValidationError(DEBT_MESSAGES.INSUFFICIENT_BALANCE);
     const { principal, interest, newRemainingAmount } = calculateDebtPaymentBreakdown(
       Number(debt.remainingAmount),
       data.amount,
@@ -215,7 +218,7 @@ export class DebtsServiceImpl implements DebtsService {
           accountId: data.accountId,
           categoryId: cat.id,
           amount: data.amount,
-          type: 'expense',
+          type: TRANSACTION_TYPE.EXPENSE,
           description: `Pago de deuda: ${debt.creditor} - ${debt.description}`,
           date: new Date(),
         },
@@ -254,8 +257,8 @@ export class DebtsServiceImpl implements DebtsService {
   async getDebtsSummary(userId: string): Promise<DebtsSummary> {
     const debts = await this.debtRepo.findAllByUser({ userId });
 
-    const activeDebts = debts.filter((d) => d.status === 'active');
-    const overdueDebts = debts.filter((d) => d.status === 'overdue');
+    const activeDebts = debts.filter((d) => d.status === DEBT_STATUS.ACTIVE);
+    const overdueDebts = debts.filter((d) => d.status === DEBT_STATUS.OVERDUE);
 
     // Total debt should include both active and overdue debts
     const totalActiveAmount = activeDebts.reduce((sum, d) => sum + Number(d.remainingAmount), 0);

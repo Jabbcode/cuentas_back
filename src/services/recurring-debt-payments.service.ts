@@ -9,6 +9,12 @@ import type { RecurringDebtPaymentRepository } from '../repositories/recurring-d
 import type { DebtRepository } from '../repositories/debt.repository.port.js';
 import type { AccountsService } from './accounts.service.port.js';
 import type { DebtsService } from './debts.service.port.js';
+import { DEBT_STATUS, DEBT_MESSAGES } from '../lib/constants/debt.constants.js';
+import {
+  RECURRING_DEBT_PAYMENT_MESSAGES,
+  PROCESS_PENDING_STATUS,
+  PROCESS_PENDING_REASONS,
+} from '../lib/constants/recurring-debt-payment.constants.js';
 import type {
   RecurringDebtPaymentsService,
   RdpCreated,
@@ -33,11 +39,11 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     const debt = await this.debtRepo.findByIdAndUser(data.debtId, userId);
 
     if (!debt) {
-      throw new NotFoundError('Deuda no encontrada');
+      throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
     }
 
-    if (debt.status === 'paid') {
-      throw new ConflictError('No se pueden configurar pagos recurrentes para una deuda pagada');
+    if (debt.status === DEBT_STATUS.PAID) {
+      throw new ConflictError(RECURRING_DEBT_PAYMENT_MESSAGES.CANNOT_CONFIGURE_ON_PAID_DEBT);
     }
 
     // Verify account exists and belongs to user
@@ -107,7 +113,7 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     });
 
     if (!recurringPayment) {
-      throw new NotFoundError('Pago recurrente no encontrado');
+      throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
     }
 
     return recurringPayment as unknown as RdpWithFullRelations;
@@ -121,7 +127,7 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     const existing = await this.recurringRepo.findByIdAndUser(id, userId);
 
     if (!existing) {
-      throw new NotFoundError('Pago recurrente no encontrado');
+      throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
     }
 
     // If frequency changes, recalculate nextDueDate
@@ -160,12 +166,12 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     const recurringPayment = await this.recurringRepo.findByIdAndUser(id, userId);
 
     if (!recurringPayment) {
-      throw new NotFoundError('Pago recurrente no encontrado');
+      throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
     }
 
     await this.recurringRepo.remove(id);
 
-    return { message: 'Pago recurrente eliminado correctamente' };
+    return { message: RECURRING_DEBT_PAYMENT_MESSAGES.DELETED };
   }
 
   async processPendingRecurringPayments(): Promise<ProcessPendingResult> {
@@ -191,8 +197,8 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
           await this.recurringRepo.update(recurringPayment.id, { isActive: false });
           results.push({
             id: recurringPayment.id,
-            status: 'deactivated',
-            reason: 'End date reached',
+            status: PROCESS_PENDING_STATUS.DEACTIVATED,
+            reason: PROCESS_PENDING_REASONS.END_DATE_REACHED,
           });
           continue;
         }
@@ -201,8 +207,8 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
         if (Number(recurringPayment.account.balance) < Number(recurringPayment.amount)) {
           results.push({
             id: recurringPayment.id,
-            status: 'skipped',
-            reason: 'Insufficient balance',
+            status: PROCESS_PENDING_STATUS.SKIPPED,
+            reason: PROCESS_PENDING_REASONS.INSUFFICIENT_BALANCE,
           });
           continue;
         }
@@ -225,21 +231,25 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
         // Update recurring payment
         await this.recurringRepo.update(recurringPayment.id, { lastProcessed: today, nextDueDate });
 
-        results.push({ id: recurringPayment.id, status: 'processed', nextDueDate });
+        results.push({
+          id: recurringPayment.id,
+          status: PROCESS_PENDING_STATUS.PROCESSED,
+          nextDueDate,
+        });
       } catch (error: unknown) {
         results.push({
           id: recurringPayment.id,
-          status: 'error',
+          status: PROCESS_PENDING_STATUS.ERROR,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
     return {
-      processed: results.filter((r) => r.status === 'processed').length,
-      skipped: results.filter((r) => r.status === 'skipped').length,
-      errors: results.filter((r) => r.status === 'error').length,
-      deactivated: results.filter((r) => r.status === 'deactivated').length,
+      processed: results.filter((r) => r.status === PROCESS_PENDING_STATUS.PROCESSED).length,
+      skipped: results.filter((r) => r.status === PROCESS_PENDING_STATUS.SKIPPED).length,
+      errors: results.filter((r) => r.status === PROCESS_PENDING_STATUS.ERROR).length,
+      deactivated: results.filter((r) => r.status === PROCESS_PENDING_STATUS.DEACTIVATED).length,
       results,
     };
   }

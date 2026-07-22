@@ -3,6 +3,7 @@ import type {
   CreateRecurringDebtPaymentInput,
   UpdateRecurringDebtPaymentInput,
 } from '../schemas/recurring-debt-payment.schema.js';
+import type { PROCESS_PENDING_STATUS } from '../lib/constants/recurring-debt-payment.constants.js';
 
 export type RdpCreated = Prisma.RecurringDebtPaymentGetPayload<{
   include: {
@@ -28,7 +29,7 @@ export type RdpWithFullRelations = Prisma.RecurringDebtPaymentGetPayload<{
 
 export interface ProcessPendingResultEntry {
   id: string;
-  status: 'processed' | 'skipped' | 'error' | 'deactivated';
+  status: (typeof PROCESS_PENDING_STATUS)[keyof typeof PROCESS_PENDING_STATUS];
   reason?: string;
   nextDueDate?: Date;
   error?: string;
