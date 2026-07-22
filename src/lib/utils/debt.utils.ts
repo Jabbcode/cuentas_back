@@ -1,24 +1,26 @@
+import { INTEREST_TYPE, DEBT_STATUS, type DebtStatus } from '../constants/debt.constants.js';
+
 export function calculateInterest(
   remainingAmount: number,
   interestRate: number,
   interestType: string
 ): number {
-  if (interestType === 'percentage') {
+  if (interestType === INTEREST_TYPE.PERCENTAGE) {
     return (remainingAmount * interestRate) / 100;
-  } else if (interestType === 'fixed') {
+  } else if (interestType === INTEREST_TYPE.FIXED) {
     return interestRate;
   }
   return 0;
 }
 
-export function getDebtStatus(remainingAmount: number, dueDate: Date | null): string {
+export function getDebtStatus(remainingAmount: number, dueDate: Date | null): DebtStatus {
   if (remainingAmount <= 0) {
-    return 'paid';
+    return DEBT_STATUS.PAID;
   }
   if (dueDate && new Date() > dueDate) {
-    return 'overdue';
+    return DEBT_STATUS.OVERDUE;
   }
-  return 'active';
+  return DEBT_STATUS.ACTIVE;
 }
 
 export function calculateDebtPaymentBreakdown(

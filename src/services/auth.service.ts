@@ -2,34 +2,12 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { RegisterInput, LoginInput } from '../schemas/auth.schema.js';
 import { seedCategories } from '../lib/seed.js';
-import type { UserRepository } from '../repositories/user.repository.js';
+import type { UserRepository } from '../repositories/user.repository.port.js';
 import { JWT_SECRET } from '../lib/env.js';
+import type { AuthService, AuthResult, MeResult } from './auth.service.port.js';
+import { JWT_EXPIRES_IN, AUTH_MESSAGES } from '../lib/constants/auth.constants.js';
 
 const SALT_ROUNDS = 10;
-
-interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-}
-
-interface AuthResult {
-  user: AuthUser;
-  token: string;
-}
-
-interface MeResult {
-  id: string;
-  email: string;
-  name: string;
-  createdAt: Date;
-}
-
-export interface AuthService {
-  register(data: RegisterInput): Promise<AuthResult>;
-  login(data: LoginInput): Promise<AuthResult>;
-  getMe(userId: string): Promise<MeResult>;
-}
 
 export class AuthServiceImpl implements AuthService {
   constructor(private userRepo: UserRepository) {}
@@ -38,7 +16,7 @@ export class AuthServiceImpl implements AuthService {
     const existingUser = await this.userRepo.findByEmail(data.email);
 
     if (existingUser) {
-      throw new Error('El email ya está registrado');
+      throw new Error(AUTH_MESSAGES.EMAIL_TAKEN);
     }
 
     const hashedPassword = await bcrypt.hash(data.password, SALT_ROUNDS);
@@ -53,7 +31,7 @@ export class AuthServiceImpl implements AuthService {
     await seedCategories(user.id);
 
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
-      expiresIn: '7d',
+      expiresIn: JWT_EXPIRES_IN,
     });
 
     return {
@@ -70,17 +48,17 @@ export class AuthServiceImpl implements AuthService {
     const user = await this.userRepo.findByEmail(data.email);
 
     if (!user) {
-      throw new Error('Credenciales inválidas');
+      throw new Error(AUTH_MESSAGES.INVALID_CREDENTIALS);
     }
 
     const validPassword = await bcrypt.compare(data.password, user.password);
 
     if (!validPassword) {
-      throw new Error('Credenciales inválidas');
+      throw new Error(AUTH_MESSAGES.INVALID_CREDENTIALS);
     }
 
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
-      expiresIn: '7d',
+      expiresIn: JWT_EXPIRES_IN,
     });
 
     return {
@@ -102,7 +80,7 @@ export class AuthServiceImpl implements AuthService {
     });
 
     if (!user) {
-      throw new Error('Usuario no encontrado');
+      throw new Error(AUTH_MESSAGES.USER_NOT_FOUND);
     }
 
     return user as unknown as MeResult;

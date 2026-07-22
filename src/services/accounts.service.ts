@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma.js';
-import type { Prisma, PrismaClient, Account, Transfer } from '@prisma/client';
+import type { Prisma, PrismaClient, Account } from '@prisma/client';
 import {
   CreateAccountInput,
   UpdateAccountInput,
@@ -7,26 +7,11 @@ import {
 } from '../schemas/account.schema.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
 import * as accountRepo from '../repositories/account.repository.js';
-import type { AccountRepository } from '../repositories/account.repository.js';
-
-type TransferWithAccounts = Transfer & { fromAccount: Account; toAccount: Account };
-
-export interface AccountsService {
-  getAccounts(userId: string): Promise<Account[]>;
-  getAccountById(id: string, userId: string): Promise<Account>;
-  createAccount(data: CreateAccountInput, userId: string): Promise<Account>;
-  updateAccount(id: string, data: UpdateAccountInput, userId: string): Promise<Account>;
-  deleteAccount(id: string, userId: string): Promise<Account>;
-  transferFunds(data: TransferInput, userId: string): Promise<TransferWithAccounts>;
-  getTransfersByAccount(accountId: string, userId: string): Promise<TransferWithAccounts[]>;
-  updateAccountBalance(
-    accountId: string,
-    userId: string,
-    amount: number,
-    type: 'expense' | 'income',
-    tx?: Prisma.TransactionClient
-  ): Promise<void>;
-}
+import type { AccountRepository } from '../repositories/account.repository.port.js';
+import type { AccountsService, TransferWithAccounts } from './accounts.service.port.js';
+import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../lib/constants/shared.constants.js';
+import type { TransactionType } from '../lib/constants/shared.constants.js';
+import { ACCOUNT_MESSAGES } from '../lib/constants/account.constants.js';
 
 export class AccountsServiceImpl implements AccountsService {
   constructor(
@@ -42,7 +27,7 @@ export class AccountsServiceImpl implements AccountsService {
     const account = await this.accountRepo.findByIdAndUser(id, userId);
 
     if (!account) {
-      throw new NotFoundError('Cuenta no encontrada');
+      throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
     }
 
     return account;
@@ -81,7 +66,7 @@ export class AccountsServiceImpl implements AccountsService {
     const { fromAccountId, toAccountId, amount, note } = data;
 
     if (fromAccountId === toAccountId) {
-      throw new ValidationError('Las cuentas de origen y destino deben ser diferentes');
+      throw new ValidationError(ACCOUNT_MESSAGES.SAME_ORIGIN_DESTINATION);
     }
 
     const [fromAccount, toAccount] = await Promise.all([
@@ -89,10 +74,10 @@ export class AccountsServiceImpl implements AccountsService {
       this.accountRepo.findByIdAndUser(toAccountId, userId),
     ]);
 
-    if (!fromAccount) throw new NotFoundError('Cuenta origen no encontrada');
-    if (!toAccount) throw new NotFoundError('Cuenta destino no encontrada');
+    if (!fromAccount) throw new NotFoundError(ACCOUNT_MESSAGES.ORIGIN_NOT_FOUND);
+    if (!toAccount) throw new NotFoundError(ACCOUNT_MESSAGES.DESTINATION_NOT_FOUND);
     if (Number(fromAccount.balance) < amount)
-      throw new ValidationError('Saldo insuficiente en la cuenta origen');
+      throw new ValidationError(ACCOUNT_MESSAGES.INSUFFICIENT_BALANCE_ORIGIN);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.account.update({
@@ -119,16 +104,18 @@ export class AccountsServiceImpl implements AccountsService {
     accountId: string,
     userId: string,
     amount: number,
-    type: 'expense' | 'income',
+    type: TransactionType,
     tx: Prisma.TransactionClient = this.prisma
   ): Promise<void> {
     const result = await tx.account.updateMany({
       where: { id: accountId, userId },
-      data: { balance: type === 'income' ? { increment: amount } : { decrement: amount } },
+      data: {
+        balance: type === TRANSACTION_TYPE.INCOME ? { increment: amount } : { decrement: amount },
+      },
     });
 
     if (result.count === 0) {
-      throw new NotFoundError('Cuenta no encontrada');
+      throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
     }
   }
 }
@@ -141,7 +128,7 @@ export async function getAccountById(id: string, userId: string) {
   const account = await accountRepo.findByIdAndUser(id, userId);
 
   if (!account) {
-    throw new NotFoundError('Cuenta no encontrada');
+    throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
   }
 
   return account;
@@ -180,7 +167,7 @@ export async function transferFunds(data: TransferInput, userId: string) {
   const { fromAccountId, toAccountId, amount, note } = data;
 
   if (fromAccountId === toAccountId) {
-    throw new ValidationError('Las cuentas de origen y destino deben ser diferentes');
+    throw new ValidationError(ACCOUNT_MESSAGES.SAME_ORIGIN_DESTINATION);
   }
 
   const [fromAccount, toAccount] = await Promise.all([
@@ -188,10 +175,10 @@ export async function transferFunds(data: TransferInput, userId: string) {
     accountRepo.findByIdAndUser(toAccountId, userId),
   ]);
 
-  if (!fromAccount) throw new NotFoundError('Cuenta origen no encontrada');
-  if (!toAccount) throw new NotFoundError('Cuenta destino no encontrada');
+  if (!fromAccount) throw new NotFoundError(ACCOUNT_MESSAGES.ORIGIN_NOT_FOUND);
+  if (!toAccount) throw new NotFoundError(ACCOUNT_MESSAGES.DESTINATION_NOT_FOUND);
   if (Number(fromAccount.balance) < amount)
-    throw new ValidationError('Saldo insuficiente en la cuenta origen');
+    throw new ValidationError(ACCOUNT_MESSAGES.INSUFFICIENT_BALANCE_ORIGIN);
 
   return prisma.$transaction(async (tx) => {
     await tx.account.update({
@@ -218,15 +205,17 @@ export async function updateAccountBalance(
   accountId: string,
   userId: string,
   amount: number,
-  type: 'expense' | 'income',
+  type: TransactionType,
   tx: Prisma.TransactionClient = prisma
 ): Promise<void> {
   const result = await tx.account.updateMany({
     where: { id: accountId, userId },
-    data: { balance: type === 'income' ? { increment: amount } : { decrement: amount } },
+    data: {
+      balance: type === TRANSACTION_TYPE.INCOME ? { increment: amount } : { decrement: amount },
+    },
   });
 
   if (result.count === 0) {
-    throw new NotFoundError('Cuenta no encontrada');
+    throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
   }
 }

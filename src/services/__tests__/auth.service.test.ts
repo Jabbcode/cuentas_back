@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import bcrypt from 'bcrypt';
 import type { User } from '@prisma/client';
-import type { UserRepository } from '../../repositories/user.repository.js';
+import type { UserRepository } from '../../repositories/user.repository.port.js';
 import { AuthServiceImpl } from '../auth.service.js';
 
 vi.mock('../../lib/seed.js', () => ({
