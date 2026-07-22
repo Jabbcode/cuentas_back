@@ -118,6 +118,7 @@ Registro de decisiones arquitectónicas del proyecto backend.
 - Rollout gradual por fases documentado en spec (`~/vault/workspaces/cuentas-app/specs/`) — mientras dura la migración, conviven el estilo funcional (features no migradas) y el estilo interfaz+clase (features migradas). Excepción puntual y documentada a la regla general de "sin shims", justificada por el volumen (~41 archivos).
 - Nomenclatura: `<Entity>Repository` (interfaz) / `<Entity>RepositoryImpl` (clase); `<Feature>Service` (interfaz) / `<Feature>ServiceImpl` (clase).
 - Nuevo archivo `src/bootstrap.ts` — único lugar donde se instancian repositories/services con `new`.
+- **Actualización 2026-07-23 (Fase 2):** el port (interfaz) vive en su propio fichero `<nombre>.port.ts`, separado del adapter (`class ...Impl`, en `<nombre>.ts`), que importa el tipo desde su `.port.ts`. Rige para las Fases 3-5. Las Fases 1 y 2 ya siguen esta convención (Fase 1 recibió un retrofit en el mismo ciclo de implementación de la Fase 2, sin cambio de comportamiento).
 
 ---
 
