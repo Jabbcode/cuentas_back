@@ -354,28 +354,75 @@ router.post('/', accountsController.createAccount);
 
 Reglas generales (capas, SOLID, errores tipados, reutilización) → ver CLAUDE.md global, sección "Backend Architecture (Node.js + Express + Prisma)".
 
-## 📦 Capa Repository (`src/repositories/`)
+## 📦 Capa Repository (`src/repositories/`) — Ports & Adapters (ADR-009)
 
-Única capa que toca Prisma. Exporta funciones puras de acceso a datos, sin lógica de negocio.
+**Vigente para features migradas.** Única capa que toca Prisma. Cada repo es una `interface` (el *port*) + una `class XImpl implements Interface` (el *adapter*). Las features aún no migradas siguen con el estilo funcional anterior (named exports) hasta que les toque su fase — ver spec de rollout en el vault.
 
 ```typescript
 // src/repositories/account.repository.ts
-import { prisma } from '../lib/prisma.js';
+import type { PrismaClient, Prisma, Account } from '@prisma/client';
+import { NotFoundError } from '../lib/errors.js';
 
-export async function findByIdAndUser(id: string, userId: string) {
-  return prisma.account.findFirst({ where: { id, userId } });
+export interface AccountRepository {
+  findAllByUser(userId: string): Promise<Account[]>;
+  findByIdAndUser(id: string, userId: string): Promise<Account | null>;
+  create(data: Prisma.AccountCreateInput): Promise<Account>;
+  decrementBalance(id: string, userId: string, amount: number): Promise<Account>;
 }
 
-export async function findAllByUser(userId: string) {
-  return prisma.account.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+export class AccountRepositoryImpl implements AccountRepository {
+  constructor(private prisma: PrismaClient) {}
+
+  findAllByUser(userId: string) {
+    return this.prisma.account.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+  }
+
+  findByIdAndUser(id: string, userId: string) {
+    return this.prisma.account.findFirst({ where: { id, userId } });
+  }
+
+  create(data: Prisma.AccountCreateInput) {
+    return this.prisma.account.create({ data });
+  }
+
+  async decrementBalance(id: string, userId: string, amount: number) {
+    const account = await this.findByIdAndUser(id, userId);
+    if (!account) throw new NotFoundError('Cuenta no encontrada');
+    return this.prisma.account.update({ where: { id }, data: { balance: { decrement: amount } } });
+  }
+}
+```
+
+## 🧩 Capa Service (`src/services/`) — Ports & Adapters (ADR-009)
+
+Mismo patrón: `interface` + `class XServiceImpl implements Interface`, recibe sus repositorios (y, si necesita otro dominio, la **interfaz** de ese service — nunca su repo ni su `Impl`) por constructor.
+
+```typescript
+// src/services/accounts.service.ts
+export interface AccountsService {
+  getAccountById(id: string, userId: string): Promise<Account>;
 }
 
-export async function decrementBalance(id: string, userId: string, amount: number) {
-  // Siempre verificar ownership antes de mutar
-  const account = await findByIdAndUser(id, userId);
-  if (!account) throw new NotFoundError('Cuenta no encontrada');
-  return prisma.account.update({ where: { id }, data: { balance: { decrement: amount } } });
+export class AccountsServiceImpl implements AccountsService {
+  constructor(private accountRepo: AccountRepository) {}
+
+  async getAccountById(id: string, userId: string) {
+    const account = await this.accountRepo.findByIdAndUser(id, userId);
+    if (!account) throw new NotFoundError('Cuenta no encontrada');
+    return account;
+  }
 }
+```
+
+**Composition root — `src/bootstrap.ts`:** único archivo que instancia repos y services con `new`, en orden de dependencia. Los controllers importan las instancias desde ahí, nunca desde `services/*.ts` directamente:
+
+```typescript
+// bootstrap.ts
+const accountRepository = new AccountRepositoryImpl(prisma);
+export const accountsService = new AccountsServiceImpl(accountRepository);
+
+// accounts.controller.ts
+import { accountsService } from '../bootstrap.js';
 ```
 
 ### Reutilización pendiente — helpers duplicados detectados
