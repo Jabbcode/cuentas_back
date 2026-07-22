@@ -2,34 +2,11 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { RegisterInput, LoginInput } from '../schemas/auth.schema.js';
 import { seedCategories } from '../lib/seed.js';
-import type { UserRepository } from '../repositories/user.repository.js';
+import type { UserRepository } from '../repositories/user.repository.port.js';
 import { JWT_SECRET } from '../lib/env.js';
+import type { AuthService, AuthResult, MeResult } from './auth.service.port.js';
 
 const SALT_ROUNDS = 10;
-
-interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-}
-
-interface AuthResult {
-  user: AuthUser;
-  token: string;
-}
-
-interface MeResult {
-  id: string;
-  email: string;
-  name: string;
-  createdAt: Date;
-}
-
-export interface AuthService {
-  register(data: RegisterInput): Promise<AuthResult>;
-  login(data: LoginInput): Promise<AuthResult>;
-  getMe(userId: string): Promise<MeResult>;
-}
 
 export class AuthServiceImpl implements AuthService {
   constructor(private userRepo: UserRepository) {}
