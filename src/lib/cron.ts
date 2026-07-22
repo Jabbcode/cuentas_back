@@ -14,7 +14,9 @@ function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
   cron.schedule('0 7 * * *', async () => {
     try {
-      const createdByUser = await autoGenerateFixedExpenseTransactions(new Date());
+      const { createdByUser, failedByUser } = await autoGenerateFixedExpenseTransactions(
+        new Date()
+      );
 
       for (const [userId, count] of Object.entries(createdByUser)) {
         await createNotification(
@@ -23,6 +25,17 @@ function startCronJobs() {
           'Transacciones generadas automáticamente',
           `Se generaron ${count} transacción${count > 1 ? 'es' : ''} automática${count > 1 ? 's' : ''} hoy.`,
           { created: count }
+        );
+      }
+
+      for (const [userId, failures] of Object.entries(failedByUser)) {
+        const names = failures.map((f) => f.fixedExpenseName).join(', ');
+        await createNotification(
+          userId,
+          'auto_generate_failed',
+          'No se pudieron generar algunos gastos fijos',
+          `No se generaron automáticamente: ${names}. Revisa el detalle de cada gasto fijo.`,
+          { failures }
         );
       }
     } catch (err) {
