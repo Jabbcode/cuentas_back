@@ -5,7 +5,7 @@ import {
   UpdateFixedExpenseInput,
   PayFixedExpenseInput,
 } from '../schemas/fixed-expense.schema.js';
-import { NotFoundError, ConflictError } from '../lib/errors.js';
+import { NotFoundError, ConflictError, AppError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
 import { payCreditCardStatement, getCreditCardStatement } from './credit-cards.service.js';
 import { payDebt } from './debts.service.js';
@@ -182,7 +182,19 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
   return transaction;
 }
 
-export async function autoGenerateFixedExpenseTransactions(today: Date) {
+export interface AutoGenerateFailure {
+  fixedExpenseName: string;
+  message: string;
+}
+
+export interface AutoGenerateSummary {
+  createdByUser: Record<string, number>;
+  failedByUser: Record<string, AutoGenerateFailure[]>;
+}
+
+export async function autoGenerateFixedExpenseTransactions(
+  today: Date
+): Promise<AutoGenerateSummary> {
   const todayDay = today.getDate();
   const { start: startOfMonth, end: endOfMonth } = getMonthRange(
     today.getFullYear(),
@@ -205,8 +217,9 @@ export async function autoGenerateFixedExpenseTransactions(today: Date) {
   });
 
   const createdByUser: Record<string, number> = {};
+  const failedByUser: Record<string, AutoGenerateFailure[]> = {};
 
-  if (fixedExpenses.length === 0) return createdByUser;
+  if (fixedExpenses.length === 0) return { createdByUser, failedByUser };
 
   const existingTxs = await prisma.transaction.findMany({
     where: {
@@ -242,10 +255,17 @@ export async function autoGenerateFixedExpenseTransactions(today: Date) {
         `fe=${fe.id}`,
         err instanceof Error ? err.message : err
       );
+      // Errores de negocio tipados (ej. límite de tarjeta) se reportan al usuario via
+      // notificación en vez de fallar en silencio; errores inesperados solo se loguean.
+      if (err instanceof AppError) {
+        const failures = failedByUser[fe.userId] ?? [];
+        failures.push({ fixedExpenseName: fe.name, message: err.message });
+        failedByUser[fe.userId] = failures;
+      }
     }
   }
 
-  return createdByUser;
+  return { createdByUser, failedByUser };
 }
 
 export async function reorderFixedExpenses(

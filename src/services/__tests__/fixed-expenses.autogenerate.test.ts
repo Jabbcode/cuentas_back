@@ -14,6 +14,7 @@ vi.mock('../transactions.service.js', () => ({
 import { prisma } from '../../lib/prisma.js';
 import { createTransaction } from '../transactions.service.js';
 import { autoGenerateFixedExpenseTransactions } from '../fixed-expenses.service.js';
+import { ConflictError } from '../../lib/errors.js';
 
 const findManyFixedExpense = prisma.fixedExpense.findMany as unknown as ReturnType<typeof vi.fn>;
 const findManyTransaction = prisma.transaction.findMany as unknown as ReturnType<typeof vi.fn>;
@@ -65,16 +66,34 @@ describe('autoGenerateFixedExpenseTransactions', () => {
     const result = await autoGenerateFixedExpenseTransactions(new Date(2026, 5, 10));
 
     expect(mockedCreateTransaction).not.toHaveBeenCalled();
-    expect(result).toEqual({});
+    expect(result).toEqual({ createdByUser: {}, failedByUser: {} });
   });
 
-  it('createTransaction lanza para el primer gasto: el segundo se procesa igual', async () => {
+  it('createTransaction lanza un error genérico para el primer gasto: el segundo se procesa igual y no se reporta como fallo', async () => {
     findManyFixedExpense.mockResolvedValue([fakeFixedExpense('fe-1'), fakeFixedExpense('fe-2')]);
     mockedCreateTransaction.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({});
 
     const result = await autoGenerateFixedExpenseTransactions(new Date(2026, 5, 10));
 
     expect(mockedCreateTransaction).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ 'user-1': 1 });
+    expect(result.createdByUser).toEqual({ 'user-1': 1 });
+    // Un Error genérico (no tipado) solo se loguea, no se reporta al usuario.
+    expect(result.failedByUser).toEqual({});
+  });
+
+  it('createTransaction lanza ConflictError (límite de tarjeta): se reporta en failedByUser', async () => {
+    findManyFixedExpense.mockResolvedValue([fakeFixedExpense('fe-1')]);
+    mockedCreateTransaction.mockRejectedValueOnce(
+      new ConflictError('Se superó el límite disponible de la tarjeta')
+    );
+
+    const result = await autoGenerateFixedExpenseTransactions(new Date(2026, 5, 10));
+
+    expect(result.createdByUser).toEqual({});
+    expect(result.failedByUser).toEqual({
+      'user-1': [
+        { fixedExpenseName: 'FE fe-1', message: 'Se superó el límite disponible de la tarjeta' },
+      ],
+    });
   });
 });
