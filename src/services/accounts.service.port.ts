@@ -4,6 +4,7 @@ import {
   UpdateAccountInput,
   TransferInput,
 } from '../schemas/account.schema.js';
+import type { TransactionType } from '../lib/constants/shared.constants.js';
 
 export type TransferWithAccounts = Transfer & { fromAccount: Account; toAccount: Account };
 
@@ -19,7 +20,7 @@ export interface AccountsService {
     accountId: string,
     userId: string,
     amount: number,
-    type: 'expense' | 'income',
+    type: TransactionType,
     tx?: Prisma.TransactionClient
   ): Promise<void>;
 }
