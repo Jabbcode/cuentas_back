@@ -7,8 +7,7 @@ import {
 } from '../schemas/fixed-expense.schema.js';
 import { NotFoundError, ConflictError, AppError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
-import { payCreditCardStatement, getCreditCardStatement } from './credit-cards.service.js';
-import { debtsService } from '../bootstrap.js';
+import { debtsService, creditCardsService } from '../bootstrap.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
@@ -147,7 +146,7 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
   // If this is a credit card fixed expense, also record the payment in the credit card
   if (fixedExpense.creditCardAccountId) {
     try {
-      await payCreditCardStatement(fixedExpense.creditCardAccountId, userId, {
+      await creditCardsService.payCreditCardStatement(fixedExpense.creditCardAccountId, userId, {
         amount,
         paymentAccountId: fixedExpense.accountId,
         paymentDate: date,
@@ -366,7 +365,7 @@ async function syncCreditCardFixedExpenses(userId: string) {
 
   for (const card of creditCards) {
     try {
-      const statement = await getCreditCardStatement(card.id, userId);
+      const statement = await creditCardsService.getCreditCardStatement(card.id, userId);
       const { closedPeriod, currentPeriod } = statement;
 
       // Find existing fixed expense for this credit card
