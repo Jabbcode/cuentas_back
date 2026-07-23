@@ -5,13 +5,8 @@ import type { AccountRepository } from '../../repositories/account.repository.po
 import type { CategoryRepository } from '../../repositories/category.repository.port.js';
 import type { DebtsService } from '../debts.service.port.js';
 import type { CreditCardsService } from '../credit-cards.service.port.js';
+import type { TransactionsService } from '../transactions.service.port.js';
 import { NotFoundError, ConflictError } from '../../lib/errors.js';
-
-vi.mock('../../repositories/transaction.repository.js', () => ({
-  findMany: vi.fn(),
-  updateMany: vi.fn(),
-  findFirst: vi.fn(),
-}));
 
 vi.mock('../../repositories/recurring-debt-payment.repository.js', () => ({
   findUnique: vi.fn(),
@@ -19,16 +14,11 @@ vi.mock('../../repositories/recurring-debt-payment.repository.js', () => ({
   update: vi.fn(),
 }));
 
-vi.mock('../transactions.service.js', () => ({
-  createTransaction: vi.fn(),
-}));
-
-import { createTransaction } from '../transactions.service.js';
 import * as recurringRepo from '../../repositories/recurring-debt-payment.repository.js';
 import { FixedExpensesServiceImpl } from '../fixed-expenses.service.js';
 
-const mockedCreateTransaction = createTransaction as unknown as ReturnType<typeof vi.fn>;
 const mockedFindUnique = recurringRepo.findUnique as unknown as ReturnType<typeof vi.fn>;
+const mockedCreateTransaction = vi.fn();
 
 function fakeFixedExpense(overrides: Partial<FixedExpense> = {}): FixedExpense {
   const id = (overrides.id as string | undefined) ?? 'fe-1';
@@ -156,6 +146,45 @@ function fakeCreditCardsService(overrides: Partial<CreditCardsService> = {}): Cr
   };
 }
 
+function fakeTransactionsService(
+  overrides: Partial<TransactionsService> = {}
+): TransactionsService {
+  return {
+    getTransactions: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createTransaction: mockedCreateTransaction,
+    updateTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionSummary: async () => [],
+    getReceiptItems: async () => [],
+    countByCategory: async () => 0,
+    findMonthlyCategoryExpenses: async () => [],
+    findCardStatementTransactions: async () => [],
+    findFixedExpensePaymentInMonth: async () => null,
+    resyncTransactionsForFixedExpense: async () => ({ count: 0 }),
+    getMonthlyTotalByType: async () => ({ _sum: { amount: null } }),
+    getVariableExpenseTotal: async () => ({ _sum: { amount: null } }),
+    getCategoryBreakdown: async () => [],
+    findTransactionsSince: async () => [],
+    getTopExpenseCategories: async () => [],
+    getUserTotalsByType: async () => [],
+    getExpensesByUserAndCategory: async () => [],
+    countByUser: async () => 0,
+    getFirstTransactionDate: async () => null,
+    findByImageHash: async () => null,
+    findSimilarByAmountAndDate: async () => [],
+    ...overrides,
+  };
+}
+
 function fakePrisma(
   overrides: {
     findManyFixedExpense?: ReturnType<typeof vi.fn>;
@@ -186,6 +215,7 @@ function buildService(
     categoryRepo?: CategoryRepository;
     debtsService?: DebtsService;
     creditCardsService?: CreditCardsService;
+    transactionsService?: TransactionsService;
     prisma?: PrismaClient;
   } = {}
 ): FixedExpensesServiceImpl {
@@ -195,6 +225,7 @@ function buildService(
     deps.categoryRepo ?? fakeCategoryRepo(),
     deps.debtsService ?? fakeDebtsService(),
     deps.creditCardsService ?? fakeCreditCardsService(),
+    deps.transactionsService ?? fakeTransactionsService(),
     deps.prisma ?? fakePrisma()
   );
 }
@@ -219,7 +250,7 @@ describe('FixedExpensesServiceImpl', () => {
     });
   });
 
-  describe('payFixedExpense', () => {
+  describe('payFixedExpense (usa TransactionsService.createTransaction)', () => {
     beforeEach(() => {
       mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
     });
@@ -331,6 +362,42 @@ describe('FixedExpensesServiceImpl', () => {
       });
 
       await expect(service.payFixedExpense('fe-1', {}, 'user-1')).rejects.toThrow('ya está pagado');
+    });
+  });
+
+  describe('updateFixedExpense (usa TransactionsService.resyncTransactionsForFixedExpense)', () => {
+    it('cambia categoría/cuenta: resincroniza las transacciones asociadas', async () => {
+      const resyncTransactionsForFixedExpense = vi.fn().mockResolvedValue({ count: 2 });
+      const existing = fakeFixedExpense({ categoryId: 'category-old', accountId: 'account-old' });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        transactionsService: fakeTransactionsService({ resyncTransactionsForFixedExpense }),
+      });
+
+      await service.updateFixedExpense(
+        'fe-1',
+        { categoryId: 'category-new', accountId: 'account-new' },
+        'user-1'
+      );
+
+      expect(resyncTransactionsForFixedExpense).toHaveBeenCalledWith(
+        'user-1',
+        'fe-1',
+        expect.objectContaining({ categoryId: 'category-new', accountId: 'account-new' })
+      );
+    });
+
+    it('sin cambio de categoría/cuenta: no resincroniza', async () => {
+      const resyncTransactionsForFixedExpense = vi.fn();
+      const existing = fakeFixedExpense({ categoryId: 'category-1', accountId: 'account-1' });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        transactionsService: fakeTransactionsService({ resyncTransactionsForFixedExpense }),
+      });
+
+      await service.updateFixedExpense('fe-1', { name: 'Nuevo nombre' }, 'user-1');
+
+      expect(resyncTransactionsForFixedExpense).not.toHaveBeenCalled();
     });
   });
 

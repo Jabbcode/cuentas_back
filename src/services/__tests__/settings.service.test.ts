@@ -5,12 +5,8 @@ import type { UserRepository } from '../../repositories/user.repository.port.js'
 import type { AccountRepository } from '../../repositories/account.repository.port.js';
 import type { CategoryRepository } from '../../repositories/category.repository.port.js';
 import type { FixedExpenseRepository } from '../../repositories/fixed-expense.repository.port.js';
+import type { TransactionsService } from '../transactions.service.port.js';
 import { ConflictError, ValidationError } from '../../lib/errors.js';
-
-vi.mock('../../repositories/transaction.repository.js', () => ({
-  countByUser: vi.fn().mockResolvedValue(0),
-  findFirstByUser: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock('../../repositories/debt.repository.js', () => ({
   countByUser: vi.fn(),
@@ -119,19 +115,62 @@ function fakeFixedExpenseRepo(
   };
 }
 
+function fakeTransactionsService(
+  overrides: Partial<TransactionsService> = {}
+): TransactionsService {
+  return {
+    getTransactions: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionSummary: async () => [],
+    getReceiptItems: async () => [],
+    countByCategory: async () => 0,
+    findMonthlyCategoryExpenses: async () => [],
+    findCardStatementTransactions: async () => [],
+    findFixedExpensePaymentInMonth: async () => null,
+    resyncTransactionsForFixedExpense: async () => ({ count: 0 }),
+    getMonthlyTotalByType: async () => ({ _sum: { amount: null } }),
+    getVariableExpenseTotal: async () => ({ _sum: { amount: null } }),
+    getCategoryBreakdown: async () => [],
+    findTransactionsSince: async () => [],
+    getTopExpenseCategories: async () => [],
+    getUserTotalsByType: async () => [],
+    getExpensesByUserAndCategory: async () => [],
+    countByUser: async () => 0,
+    getFirstTransactionDate: async () => null,
+    findByImageHash: async () => null,
+    findSimilarByAmountAndDate: async () => [],
+    ...overrides,
+  };
+}
+
 function buildService(
   deps: {
     userRepo?: UserRepository;
     accountRepo?: AccountRepository;
     categoryRepo?: CategoryRepository;
     fixedExpenseRepo?: FixedExpenseRepository;
+    transactionsService?: TransactionsService;
   } = {}
 ): SettingsServiceImpl {
   return new SettingsServiceImpl(
     deps.userRepo ?? fakeUserRepo(),
     deps.accountRepo ?? fakeAccountRepo(),
     deps.categoryRepo ?? fakeCategoryRepo(),
-    deps.fixedExpenseRepo ?? fakeFixedExpenseRepo()
+    deps.fixedExpenseRepo ?? fakeFixedExpenseRepo(),
+    deps.transactionsService ?? fakeTransactionsService()
   );
 }
 
@@ -202,13 +241,18 @@ describe('SettingsServiceImpl', () => {
     });
   });
 
-  describe('getAccountStatistics', () => {
-    it('agrega los conteos de todos los dominios, incluida la deuda (vi.mock de debt.repository.js)', async () => {
+  describe('getAccountStatistics (usa TransactionsService.countByUser / getFirstTransactionDate)', () => {
+    it('agrega los conteos de todos los dominios, incluida la deuda (vi.mock de debt.repository.js, fuera de alcance)', async () => {
       mockedDebtCountByUser.mockResolvedValue(3);
+      const memberSince = new Date('2025-01-15T00:00:00.000Z');
       const service = buildService({
         accountRepo: fakeAccountRepo({ countByUser: async () => 2 }),
         categoryRepo: fakeCategoryRepo({ countByUser: async () => 5 }),
         fixedExpenseRepo: fakeFixedExpenseRepo({ countByUser: async () => 4 }),
+        transactionsService: fakeTransactionsService({
+          countByUser: async () => 7,
+          getFirstTransactionDate: async () => ({ date: memberSince }),
+        }),
       });
 
       const stats = await service.getAccountStatistics('user-1');
@@ -219,6 +263,8 @@ describe('SettingsServiceImpl', () => {
           categories: 5,
           fixedExpenses: 4,
           debts: 3,
+          transactions: 7,
+          memberSince,
         })
       );
       expect(mockedDebtCountByUser).toHaveBeenCalledWith('user-1');
