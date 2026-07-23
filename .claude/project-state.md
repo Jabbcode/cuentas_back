@@ -156,6 +156,21 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
   apuntando a este repo, y completar los env vars marcados `sync: false`
   (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CORS_ORIGIN`).
 
+## 🧪 Entorno de pre-producción (2026-07-23)
+Proyecto Neon único con 2 ramas: `produccion` (`DATABASE_URL` en `.env`) y `develop`
+(usada como pre-producción/test, datos desechables). `develop` tenía drift de un
+experimento abandonado (`feature/banking-sync-truelayer`, bloqueado — ver "Pendiente")
+que dejó migraciones huérfanas; se reseteó desde `produccion` ("Reset from parent" en
+Neon) y quedó sincronizada con las 14 migraciones actuales.
+
+- `.env.pre` (gitignored, no versionado): mismas variables que `.env` pero
+  `DATABASE_URL` apunta a la rama `develop` de Neon, `PORT=4001`.
+- Scripts npm: `dev:pre`, `db:migrate:pre`, `db:studio:pre` (usan `dotenv-cli` para
+  cargar `.env.pre`).
+- Pendiente: crear el servicio de Render "staging" (rama de git `develop`,
+  `DATABASE_URL` = connection string de la rama Neon `develop`) — no automatizado,
+  requiere acceso manual a Render.
+
 ## 📊 Cambios Recientes
 - **Cleanup de arquitectura (PRs #45–#51 — 2026-07-21):** 6 hallazgos cerrados (imports
   circulares, detección de conflicto por tipo, dashboard con agregación en DB, capas
