@@ -353,8 +353,11 @@ export class CreditCardsServiceImpl implements CreditCardsService {
       account: { connect: { id: accountId } },
       amount: data.amount,
       paymentDate,
-      periodStart: statement.closedPeriod.startDate,
-      periodEnd: statement.closedPeriod.endDate,
+      // Normalizado a UTC: el chequeo de "ya pagado" en buildStatement compara contra
+      // fechas UTC-normalizadas, pero closedPeriod.startDate/endDate quedan en hora
+      // local — sin esto, un pago nunca calza con ese chequeo en timezones != UTC.
+      periodStart: normalizeToUTC(statement.closedPeriod.startDate),
+      periodEnd: normalizeToUTC(statement.closedPeriod.endDate),
       transaction: { connect: { id: transaction.id } },
     });
 

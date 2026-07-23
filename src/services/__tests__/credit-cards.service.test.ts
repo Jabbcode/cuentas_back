@@ -209,6 +209,38 @@ describe('CreditCardsServiceImpl', () => {
       expect(mockedCreateTransaction).toHaveBeenCalledTimes(1);
     });
 
+    it('persiste periodStart/periodEnd normalizados a UTC — reproduce el bug pre-existente en timezones != UTC y confirma el fix', async () => {
+      const originalTZ = process.env.TZ;
+      process.env.TZ = 'America/Los_Angeles'; // UTC-7/8: si no se normaliza, esto se detecta
+      try {
+        mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+        mockedFindFirstFixedExpense.mockResolvedValue(null);
+        const createCalls: unknown[] = [];
+        const service = buildService({
+          accountRepo: { findByIdAndUser: async () => fakeAccount() },
+          creditCardPaymentRepo: {
+            create: async (data) => {
+              createCalls.push(data);
+              return { id: 'payment-1' } as unknown as CreditCardPayment;
+            },
+          },
+        });
+
+        await service.payCreditCardStatement('card-1', 'user-1', {
+          amount: 50,
+          paymentAccountId: 'card-1',
+        });
+
+        const call = createCalls[0] as { periodStart: Date; periodEnd: Date };
+        // Sin el fix, periodStart/periodEnd quedan en medianoche LOCAL (America/Los_Angeles),
+        // que en UTC cae a media mañana del mismo día, no a medianoche UTC.
+        expect(call.periodStart.toISOString().endsWith('T00:00:00.000Z')).toBe(true);
+        expect(call.periodEnd.toISOString().endsWith('T00:00:00.000Z')).toBe(true);
+      } finally {
+        process.env.TZ = originalTZ;
+      }
+    });
+
     it('éxito con cuenta de pago distinta a la tarjeta: crea 2 transacciones', async () => {
       mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
       mockedFindFirstFixedExpense.mockResolvedValue(null);
