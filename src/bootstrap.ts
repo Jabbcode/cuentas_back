@@ -13,6 +13,10 @@ import { CreditCardPaymentRepositoryImpl } from './repositories/credit-card-paym
 import { CategoriesServiceImpl } from './services/categories.service.js';
 import { NotificationsServiceImpl } from './services/notifications.service.js';
 import { CreditCardsServiceImpl } from './services/credit-cards.service.js';
+import { FixedExpenseRepositoryImpl } from './repositories/fixed-expense.repository.js';
+import { DashboardServiceImpl } from './services/dashboard.service.js';
+import { FixedExpensesServiceImpl } from './services/fixed-expenses.service.js';
+import { SettingsServiceImpl } from './services/settings.service.js';
 
 const accountRepository = new AccountRepositoryImpl(prisma);
 export const accountsService = new AccountsServiceImpl(accountRepository, prisma);
@@ -50,4 +54,26 @@ export const creditCardsService = new CreditCardsServiceImpl(
   accountRepository,
   creditCardPaymentRepository,
   categoryRepository
+);
+
+const fixedExpenseRepository = new FixedExpenseRepositoryImpl(prisma);
+
+export const dashboardService = new DashboardServiceImpl(
+  accountRepository,
+  fixedExpenseRepository,
+  categoryRepository
+);
+export const fixedExpensesService = new FixedExpensesServiceImpl(
+  fixedExpenseRepository,
+  accountRepository,
+  categoryRepository,
+  debtsService,
+  creditCardsService,
+  prisma
+);
+export const settingsService = new SettingsServiceImpl(
+  userRepository,
+  accountRepository,
+  categoryRepository,
+  fixedExpenseRepository
 );
