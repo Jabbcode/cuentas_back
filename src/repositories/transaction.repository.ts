@@ -1,128 +1,108 @@
-import { prisma } from '../lib/prisma.js';
-import type { Prisma, Transaction, ReceiptItem } from '@prisma/client';
-import { NotFoundError } from '../lib/errors.js';
+import type { Prisma, Transaction, ReceiptItem, PrismaClient } from '@prisma/client';
+import type { TransactionRepository } from './transaction.repository.port.js';
 
-export async function findMany(
-  where: Prisma.TransactionWhereInput,
-  options?: {
-    include?: Prisma.TransactionInclude;
-    orderBy?: Prisma.TransactionOrderByWithRelationInput;
-    take?: number;
-    skip?: number;
+export class TransactionRepositoryImpl implements TransactionRepository {
+  constructor(private prisma: PrismaClient) {}
+
+  async findMany(
+    where: Prisma.TransactionWhereInput,
+    options?: {
+      include?: Prisma.TransactionInclude;
+      orderBy?: Prisma.TransactionOrderByWithRelationInput;
+      take?: number;
+      skip?: number;
+    }
+  ): Promise<Transaction[]> {
+    return this.prisma.transaction.findMany({ where, ...options });
   }
-): Promise<Transaction[]> {
-  return prisma.transaction.findMany({ where, ...options });
-}
 
-export async function count(where: Prisma.TransactionWhereInput): Promise<number> {
-  return prisma.transaction.count({ where });
-}
+  async count(where: Prisma.TransactionWhereInput): Promise<number> {
+    return this.prisma.transaction.count({ where });
+  }
 
-export async function findByIdAndUser(
-  id: string,
-  userId: string,
-  include?: Prisma.TransactionInclude
-): Promise<Transaction | null> {
-  return prisma.transaction.findFirst({ where: { id, userId }, include });
-}
+  async findByIdAndUser(
+    id: string,
+    userId: string,
+    include?: Prisma.TransactionInclude
+  ): Promise<Transaction | null> {
+    return this.prisma.transaction.findFirst({ where: { id, userId }, include });
+  }
 
-export async function findFirst(
-  where: Prisma.TransactionWhereInput,
-  include?: Prisma.TransactionInclude
-): Promise<Transaction | null> {
-  return prisma.transaction.findFirst({ where, include });
-}
+  async findFirst(
+    where: Prisma.TransactionWhereInput,
+    include?: Prisma.TransactionInclude
+  ): Promise<Transaction | null> {
+    return this.prisma.transaction.findFirst({ where, include });
+  }
 
-export async function create(
-  data: Prisma.TransactionCreateInput,
-  include?: Prisma.TransactionInclude
-): Promise<Transaction> {
-  return prisma.transaction.create({ data, include });
-}
+  async updateMany(
+    where: Prisma.TransactionWhereInput,
+    data: Prisma.TransactionUpdateManyMutationInput
+  ): Promise<Prisma.BatchPayload> {
+    return this.prisma.transaction.updateMany({ where, data });
+  }
 
-export async function update(
-  id: string,
-  userId: string,
-  data: Prisma.TransactionUncheckedUpdateManyInput,
-  include?: Prisma.TransactionInclude
-): Promise<Transaction> {
-  const result = await prisma.transaction.updateMany({ where: { id, userId }, data });
-  if (result.count === 0) throw new NotFoundError('Transacción no encontrada');
-  return prisma.transaction.findFirstOrThrow({ where: { id, userId }, include });
-}
+  groupByCategory(where: Prisma.TransactionWhereInput) {
+    return this.prisma.transaction.groupBy({
+      by: ['categoryId', 'type'],
+      where,
+      _sum: { amount: true },
+      _count: { _all: true },
+    });
+  }
 
-export async function updateMany(
-  where: Prisma.TransactionWhereInput,
-  data: Prisma.TransactionUpdateManyMutationInput
-): Promise<Prisma.BatchPayload> {
-  return prisma.transaction.updateMany({ where, data });
-}
+  groupExpensesByCategory(where: Prisma.TransactionWhereInput, take = 10) {
+    return this.prisma.transaction.groupBy({
+      by: ['categoryId'],
+      where,
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take,
+    });
+  }
 
-export async function remove(id: string, userId: string): Promise<void> {
-  const result = await prisma.transaction.deleteMany({ where: { id, userId } });
-  if (result.count === 0) throw new NotFoundError('Transacción no encontrada');
-}
+  groupTotalsByUser(where: Prisma.TransactionWhereInput) {
+    return this.prisma.transaction.groupBy({
+      by: ['userId', 'type'],
+      where,
+      _sum: { amount: true },
+    });
+  }
 
-export function groupByCategory(where: Prisma.TransactionWhereInput) {
-  return prisma.transaction.groupBy({
-    by: ['categoryId', 'type'],
-    where,
-    _sum: { amount: true },
-    _count: { _all: true },
-  });
-}
+  groupExpensesByUserAndCategory(where: Prisma.TransactionWhereInput) {
+    return this.prisma.transaction.groupBy({
+      by: ['userId', 'categoryId'],
+      where,
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+    });
+  }
 
-export function groupExpensesByCategory(where: Prisma.TransactionWhereInput, take = 10) {
-  return prisma.transaction.groupBy({
-    by: ['categoryId'],
-    where,
-    _sum: { amount: true },
-    orderBy: { _sum: { amount: 'desc' } },
-    take,
-  });
-}
+  async aggregate(
+    where: Prisma.TransactionWhereInput
+  ): Promise<{ _sum: { amount: Prisma.Decimal | null } }> {
+    return this.prisma.transaction.aggregate({ where, _sum: { amount: true } });
+  }
 
-export function groupTotalsByUser(where: Prisma.TransactionWhereInput) {
-  return prisma.transaction.groupBy({
-    by: ['userId', 'type'],
-    where,
-    _sum: { amount: true },
-  });
-}
+  async findReceiptItems(transactionId: string): Promise<ReceiptItem[]> {
+    return this.prisma.receiptItem.findMany({
+      where: { transactionId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
 
-export function groupExpensesByUserAndCategory(where: Prisma.TransactionWhereInput) {
-  return prisma.transaction.groupBy({
-    by: ['userId', 'categoryId'],
-    where,
-    _sum: { amount: true },
-    orderBy: { _sum: { amount: 'desc' } },
-  });
-}
+  async countByUser(userId: string): Promise<number> {
+    return this.prisma.transaction.count({ where: { userId } });
+  }
 
-export async function aggregate(
-  where: Prisma.TransactionWhereInput
-): Promise<{ _sum: { amount: Prisma.Decimal | null } }> {
-  return prisma.transaction.aggregate({ where, _sum: { amount: true } });
-}
-
-export async function findReceiptItems(transactionId: string): Promise<ReceiptItem[]> {
-  return prisma.receiptItem.findMany({
-    where: { transactionId },
-    orderBy: { createdAt: 'asc' },
-  });
-}
-
-export async function countByUser(userId: string): Promise<number> {
-  return prisma.transaction.count({ where: { userId } });
-}
-
-export async function findFirstByUser(
-  userId: string,
-  orderBy: Prisma.TransactionOrderByWithRelationInput
-): Promise<{ date: Date } | null> {
-  return prisma.transaction.findFirst({
-    where: { userId },
-    orderBy,
-    select: { date: true },
-  });
+  async findFirstByUser(
+    userId: string,
+    orderBy: Prisma.TransactionOrderByWithRelationInput
+  ): Promise<{ date: Date } | null> {
+    return this.prisma.transaction.findFirst({
+      where: { userId },
+      orderBy,
+      select: { date: true },
+    });
+  }
 }

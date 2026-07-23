@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import * as transactionsService from '../services/transactions.service.js';
+import { transactionsService } from '../bootstrap.js';
 import {
   createTransactionSchema,
   updateTransactionSchema,

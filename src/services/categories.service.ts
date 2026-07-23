@@ -1,14 +1,16 @@
 import type { CreateCategoryInput, UpdateCategoryInput } from '../schemas/category.schema.js';
 import { NotFoundError, ConflictError } from '../lib/errors.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
 import { CATEGORY_MESSAGES } from '../lib/constants/category.constants.js';
-import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import type { CategoriesService, CategorySpending } from './categories.service.port.js';
+import type { TransactionsService } from './transactions.service.port.js';
 
 export class CategoriesServiceImpl implements CategoriesService {
-  constructor(private categoryRepo: CategoryRepository) {}
+  constructor(
+    private categoryRepo: CategoryRepository,
+    private transactionsService: TransactionsService
+  ) {}
 
   async getCategories(userId: string, type?: 'expense' | 'income') {
     return this.categoryRepo.findAllByUser(userId, type);
@@ -38,7 +40,7 @@ export class CategoriesServiceImpl implements CategoriesService {
     await this.getCategoryById(id, userId);
 
     // Check if category has transactions
-    const transactionCount = await transactionRepo.count({ categoryId: id });
+    const transactionCount = await this.transactionsService.countByCategory(id);
 
     if (transactionCount > 0) {
       throw new ConflictError(CATEGORY_MESSAGES.HAS_TRANSACTIONS);
@@ -56,12 +58,11 @@ export class CategoriesServiceImpl implements CategoriesService {
       now.getMonth()
     );
 
-    const transactions = await transactionRepo.findMany({
-      categoryId,
+    const transactions = await this.transactionsService.findMonthlyCategoryExpenses(
       userId,
-      type: TRANSACTION_TYPE.EXPENSE,
-      date: { gte: startOfMonth, lt: endOfMonth },
-    });
+      categoryId,
+      { gte: startOfMonth, lt: endOfMonth }
+    );
 
     const spent = transactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
     const limit = category.monthlyLimit ? Number(category.monthlyLimit) : null;

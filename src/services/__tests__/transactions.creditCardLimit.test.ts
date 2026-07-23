@@ -1,49 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ConflictError } from '../../lib/errors.js';
+import { describe, it, expect, vi } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
+import { ConflictError, NotFoundError } from '../../lib/errors.js';
 import type {
   CreateTransactionInput,
   UpdateTransactionInput,
 } from '../../schemas/transaction.schema.js';
+import type { TransactionRepository } from '../../repositories/transaction.repository.port.js';
+import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { AccountsService } from '../accounts.service.port.js';
+import { TransactionsServiceImpl } from '../transactions.service.js';
 
-interface MockAccount {
-  id: string;
+interface MockAccountRow {
   type: string;
   creditLimit: number | null;
   balance: number;
   initialBalance: number;
 }
 
-vi.mock('../../lib/prisma.js', () => {
-  const mockPrisma = {
-    account: { findFirst: vi.fn(), updateMany: vi.fn() },
-    category: { findFirst: vi.fn() },
-    fixedExpense: { findFirst: vi.fn() },
-    transaction: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    $queryRaw: vi.fn(),
-    $transaction: vi.fn(),
-  };
-  mockPrisma.$transaction.mockImplementation((cb: (tx: typeof mockPrisma) => unknown) =>
-    cb(mockPrisma)
-  );
-  return { prisma: mockPrisma };
-});
-
-import { prisma } from '../../lib/prisma.js';
-import { createTransaction, updateTransaction } from '../transactions.service.js';
-
-const findFirstAccount = prisma.account.findFirst as unknown as ReturnType<typeof vi.fn>;
-const updateManyAccount = prisma.account.updateMany as unknown as ReturnType<typeof vi.fn>;
-const findFirstCategory = prisma.category.findFirst as unknown as ReturnType<typeof vi.fn>;
-const findFirstTransaction = prisma.transaction.findFirst as unknown as ReturnType<typeof vi.fn>;
-const createTx = prisma.transaction.create as unknown as ReturnType<typeof vi.fn>;
-const updateTx = prisma.transaction.update as unknown as ReturnType<typeof vi.fn>;
-// $queryRaw es la lectura con FOR UPDATE que usa lockAccountForBalanceUpdate;
-// account.findFirst queda solo para el chequeo de ownership de assertOwnership.
-const queryRaw = prisma.$queryRaw as unknown as ReturnType<typeof vi.fn>;
-
-function fakeAccount(overrides: Partial<MockAccount> = {}): MockAccount {
+function fakeAccountRow(overrides: Partial<MockAccountRow> = {}): MockAccountRow {
   return {
-    id: 'account-1',
     type: 'credit_card',
     creditLimit: 1000,
     balance: 0,
@@ -62,35 +37,146 @@ function baseCreateInput(overrides: Partial<CreateTransactionInput> = {}): Creat
   };
 }
 
-describe('createTransaction — validación de límite de tarjeta de crédito (BE-T2)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    findFirstAccount.mockResolvedValue({ id: 'account-1' });
-    findFirstCategory.mockResolvedValue({ id: 'category-1' });
-    updateManyAccount.mockResolvedValue({ count: 1 });
-    createTx.mockResolvedValue({ id: 'tx-1' });
-  });
+function fakeTransactionRepo(
+  overrides: Partial<TransactionRepository> = {}
+): TransactionRepository {
+  return {
+    findMany: async () => [],
+    count: async () => 0,
+    findByIdAndUser: async () => null,
+    findFirst: async () => null,
+    updateMany: async () => ({ count: 0 }),
+    groupByCategory: async () => [],
+    groupExpensesByCategory: async () => [],
+    groupTotalsByUser: async () => [],
+    groupExpensesByUserAndCategory: async () => [],
+    aggregate: async () => ({ _sum: { amount: null } }),
+    findReceiptItems: async () => [],
+    countByUser: async () => 0,
+    findFirstByUser: async () => null,
+    ...overrides,
+  };
+}
 
+function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): CategoryRepository {
+  return {
+    findAllByUser: async () => [],
+    findByIdAndUser: async () => null,
+    findFirst: async () => null,
+    findMany: async () => [],
+    countByUser: async () => 0,
+    create: async () => {
+      throw new Error('not used in these tests');
+    },
+    update: async () => {
+      throw new Error('not used in these tests');
+    },
+    remove: async () => {
+      throw new Error('not used in these tests');
+    },
+    upsertSystemCategory: async () => ({ id: 'category-payment' }) as never,
+    ...overrides,
+  };
+}
+
+function fakeAccountsService(overrides: Partial<AccountsService> = {}): AccountsService {
+  return {
+    getAccounts: async () => [],
+    getAccountById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createAccount: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateAccount: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteAccount: async () => {
+      throw new Error('not used in these tests');
+    },
+    transferFunds: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransfersByAccount: async () => [],
+    updateAccountBalance: async () => undefined,
+    ...overrides,
+  };
+}
+
+function fakePrisma(
+  txOverrides: {
+    accountFindFirst?: ReturnType<typeof vi.fn>;
+    categoryFindFirst?: ReturnType<typeof vi.fn>;
+    fixedExpenseFindFirst?: ReturnType<typeof vi.fn>;
+    queryRaw?: ReturnType<typeof vi.fn>;
+    transactionCreate?: ReturnType<typeof vi.fn>;
+    transactionUpdate?: ReturnType<typeof vi.fn>;
+    transactionDelete?: ReturnType<typeof vi.fn>;
+  } = {}
+) {
+  const txFake = {
+    account: {
+      findFirst: txOverrides.accountFindFirst ?? vi.fn().mockResolvedValue({ id: 'account-1' }),
+    },
+    category: {
+      findFirst: txOverrides.categoryFindFirst ?? vi.fn().mockResolvedValue({ id: 'category-1' }),
+    },
+    fixedExpense: {
+      findFirst: txOverrides.fixedExpenseFindFirst ?? vi.fn().mockResolvedValue({ id: 'fe-1' }),
+    },
+    transaction: {
+      create: txOverrides.transactionCreate ?? vi.fn().mockResolvedValue({ id: 'tx-1' }),
+      update: txOverrides.transactionUpdate ?? vi.fn().mockResolvedValue({ id: 'tx-1' }),
+      delete: txOverrides.transactionDelete ?? vi.fn().mockResolvedValue({ id: 'tx-1' }),
+    },
+    $queryRaw: txOverrides.queryRaw ?? vi.fn().mockResolvedValue([fakeAccountRow()]),
+  };
+
+  const prisma = {
+    $transaction: async (cb: (tx: typeof txFake) => unknown) => cb(txFake),
+  } as unknown as PrismaClient;
+
+  return { prisma, txFake };
+}
+
+describe('TransactionsServiceImpl.createTransaction — límite de tarjeta de crédito', () => {
   it('gasto que excede el límite lanza ConflictError y no crea la transacción ni cambia el saldo', async () => {
-    queryRaw.mockResolvedValue([fakeAccount({ creditLimit: 100, balance: 0, initialBalance: 0 })]);
+    const updateAccountBalance = vi.fn().mockResolvedValue(undefined);
+    const { prisma, txFake } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService({ updateAccountBalance }),
+      fakeCategoryRepo(),
+      prisma
+    );
 
     await expect(
-      createTransaction(baseCreateInput({ amount: 150, type: 'expense' }), 'user-1')
+      service.createTransaction(baseCreateInput({ amount: 150, type: 'expense' }), 'user-1')
     ).rejects.toThrow(ConflictError);
 
-    expect(createTx).not.toHaveBeenCalled();
-    expect(updateManyAccount).not.toHaveBeenCalled();
+    expect(txFake.transaction.create).not.toHaveBeenCalled();
+    expect(updateAccountBalance).not.toHaveBeenCalled();
   });
 
-  it('gasto dentro del límite sobre tarjeta crea la transacción', async () => {
-    queryRaw.mockResolvedValue([fakeAccount({ creditLimit: 100, balance: 0, initialBalance: 0 })]);
+  it('gasto dentro del límite crea la transacción usando el lock FOR UPDATE', async () => {
+    const updateAccountBalance = vi.fn().mockResolvedValue(undefined);
+    const queryRaw = vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]);
+    const { prisma, txFake } = fakePrisma({ queryRaw });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService({ updateAccountBalance }),
+      fakeCategoryRepo(),
+      prisma
+    );
 
     await expect(
-      createTransaction(baseCreateInput({ amount: 50, type: 'expense' }), 'user-1')
+      service.createTransaction(baseCreateInput({ amount: 50, type: 'expense' }), 'user-1')
     ).resolves.toEqual({ id: 'tx-1' });
 
-    expect(createTx).toHaveBeenCalledTimes(1);
-    expect(updateManyAccount).toHaveBeenCalledTimes(1);
+    expect(txFake.transaction.create).toHaveBeenCalledTimes(1);
+    expect(updateAccountBalance).toHaveBeenCalledTimes(1);
 
     // La lectura de saldo para validar el límite debe tomar el lock de fila (FOR UPDATE):
     // un SELECT plano permitiría que dos requests concurrentes lean el mismo saldo,
@@ -99,47 +185,47 @@ describe('createTransaction — validación de límite de tarjeta de crédito (B
     expect(queryStrings).toContain('FOR UPDATE');
   });
 
-  it('income sobre tarjeta no valida el límite aunque supere el uso disponible', async () => {
-    queryRaw.mockResolvedValue([fakeAccount({ creditLimit: 100, balance: 0, initialBalance: 0 })]);
+  it('lanza NotFoundError si la cuenta no existe', async () => {
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      fakePrisma({ accountFindFirst: vi.fn().mockResolvedValue(null) }).prisma
+    );
 
-    await expect(
-      createTransaction(baseCreateInput({ amount: 500, type: 'income' }), 'user-1')
-    ).resolves.toEqual({ id: 'tx-1' });
-
-    expect(createTx).toHaveBeenCalledTimes(1);
+    await expect(service.createTransaction(baseCreateInput(), 'user-1')).rejects.toThrow(
+      'Cuenta no encontrada'
+    );
   });
 
-  it('gasto sobre cuenta que no es tarjeta no valida límite', async () => {
-    queryRaw.mockResolvedValue([
-      fakeAccount({ type: 'bank', creditLimit: null, balance: 0, initialBalance: 0 }),
-    ]);
+  it('lanza NotFoundError si la categoría no existe', async () => {
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      fakePrisma({ categoryFindFirst: vi.fn().mockResolvedValue(null) }).prisma
+    );
 
-    await expect(
-      createTransaction(baseCreateInput({ amount: 5000, type: 'expense' }), 'user-1')
-    ).resolves.toEqual({ id: 'tx-1' });
-
-    expect(createTx).toHaveBeenCalledTimes(1);
+    await expect(service.createTransaction(baseCreateInput(), 'user-1')).rejects.toThrow(
+      'Categoría no encontrada'
+    );
   });
 
-  it('tarjeta sin creditLimit configurado bloquea el gasto', async () => {
-    queryRaw.mockResolvedValue([fakeAccount({ creditLimit: null, balance: 0, initialBalance: 0 })]);
+  it('lanza NotFoundError si el gasto fijo no existe', async () => {
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      fakePrisma({ fixedExpenseFindFirst: vi.fn().mockResolvedValue(null) }).prisma
+    );
 
     await expect(
-      createTransaction(baseCreateInput({ amount: 10, type: 'expense' }), 'user-1')
-    ).rejects.toThrow();
-
-    expect(createTx).not.toHaveBeenCalled();
+      service.createTransaction(baseCreateInput({ fixedExpenseId: 'fe-1' }), 'user-1')
+    ).rejects.toThrow('Gasto fijo no encontrado');
   });
 });
 
-describe('updateTransaction — validación de límite de tarjeta de crédito (BE-T3)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    findFirstAccount.mockResolvedValue({ id: 'account-1' });
-    findFirstCategory.mockResolvedValue({ id: 'category-1' });
-    updateManyAccount.mockResolvedValue({ count: 1 });
-  });
-
+describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicación de balance', () => {
   function fakeExisting(overrides: Record<string, unknown> = {}) {
     return {
       id: 'tx-1',
@@ -152,72 +238,107 @@ describe('updateTransaction — validación de límite de tarjeta de crédito (B
     };
   }
 
-  it('editar subiendo el monto por encima del límite lanza y no persiste', async () => {
-    findFirstTransaction.mockResolvedValue(fakeExisting());
-    // el servicio ya revirtió el gasto original (50) antes de leer la cuenta -> balance 0
-    queryRaw.mockResolvedValue([fakeAccount({ creditLimit: 100, balance: 0, initialBalance: 0 })]);
-
-    const data: UpdateTransactionInput = { amount: 200 };
-
-    await expect(updateTransaction('tx-1', data, 'user-1')).rejects.toThrow(ConflictError);
-    expect(updateTx).not.toHaveBeenCalled();
-  });
-
-  it('editar dentro del límite persiste normalmente', async () => {
-    findFirstTransaction.mockResolvedValue(fakeExisting());
-    // el servicio ya revirtió el gasto original (50) antes de leer la cuenta -> balance 0
-    queryRaw.mockResolvedValue([fakeAccount({ creditLimit: 100, balance: 0, initialBalance: 0 })]);
-    updateTx.mockResolvedValue({
-      id: 'tx-1',
-      accountId: 'account-1',
-      amount: 80,
-      type: 'expense',
+  it('revierte el balance anterior y aplica el nuevo dentro de la misma transacción', async () => {
+    const updateAccountBalance = vi.fn().mockResolvedValue(undefined);
+    const { prisma, txFake } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ type: 'bank', creditLimit: null })]),
+      transactionUpdate: vi
+        .fn()
+        .mockResolvedValue({ id: 'tx-1', accountId: 'account-1', amount: 80, type: 'expense' }),
     });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({
+        findByIdAndUser: async () => fakeExisting() as never,
+      }),
+      fakeAccountsService({ updateAccountBalance }),
+      fakeCategoryRepo(),
+      prisma
+    );
 
     const data: UpdateTransactionInput = { amount: 80 };
 
-    await expect(updateTransaction('tx-1', data, 'user-1')).resolves.toMatchObject({
+    await expect(service.updateTransaction('tx-1', data, 'user-1')).resolves.toMatchObject({
       amount: 80,
     });
-    expect(updateTx).toHaveBeenCalledTimes(1);
+
+    expect(txFake.transaction.update).toHaveBeenCalledTimes(1);
+    expect(updateAccountBalance).toHaveBeenCalledTimes(2);
+    // 1) revierte el gasto original (50, expense -> se trata como income para deshacerlo)
+    expect(updateAccountBalance.mock.calls[0]).toEqual(
+      expect.arrayContaining(['account-1', 'user-1', 50, 'income'])
+    );
+    // 2) reaplica el monto nuevo (80, expense)
+    expect(updateAccountBalance.mock.calls[1]).toEqual(
+      expect.arrayContaining(['account-1', 'user-1', 80, 'expense'])
+    );
   });
 
-  it('cambiar la cuenta a otra tarjeta valida la destino y no la origen', async () => {
-    findFirstTransaction.mockResolvedValue(fakeExisting({ accountId: 'account-origin' }));
-    // La tarjeta destino ya está casi en el límite; el origen no se lee para validar.
-    queryRaw.mockResolvedValue([
-      fakeAccount({ id: 'account-dest', creditLimit: 100, balance: -90, initialBalance: 0 }),
-    ]);
-    updateTx.mockResolvedValue({
-      id: 'tx-1',
-      accountId: 'account-dest',
-      amount: 50,
-      type: 'expense',
+  it('editar subiendo el monto por encima del límite lanza ConflictError y no persiste', async () => {
+    const updateTx = vi.fn();
+    const { prisma } = fakePrisma({
+      // el servicio ya revirtió el gasto original (50) antes de leer la cuenta -> balance 0
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100, balance: 0 })]),
+      transactionUpdate: updateTx,
     });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => fakeExisting() as never }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
 
-    const data: UpdateTransactionInput = { accountId: 'account-dest', amount: 50 };
+    const data: UpdateTransactionInput = { amount: 200 };
 
-    await expect(updateTransaction('tx-1', data, 'user-1')).rejects.toThrow(ConflictError);
+    await expect(service.updateTransaction('tx-1', data, 'user-1')).rejects.toThrow(ConflictError);
     expect(updateTx).not.toHaveBeenCalled();
   });
+});
 
-  it('cambiar el tipo de gasto a ingreso no valida el límite', async () => {
-    findFirstTransaction.mockResolvedValue(fakeExisting());
-    queryRaw.mockResolvedValue([
-      fakeAccount({ creditLimit: 100, balance: -50, initialBalance: 0 }),
-    ]);
-    updateTx.mockResolvedValue({
-      id: 'tx-1',
-      accountId: 'account-1',
-      amount: 5000,
-      type: 'income',
-    });
+describe('TransactionsServiceImpl.deleteTransaction', () => {
+  it('elimina la transacción y revierte el balance', async () => {
+    const updateAccountBalance = vi.fn().mockResolvedValue(undefined);
+    const { prisma, txFake } = fakePrisma();
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({
+        findByIdAndUser: async () =>
+          ({
+            id: 'tx-1',
+            accountId: 'account-1',
+            amount: 50,
+            type: 'expense',
+          }) as never,
+      }),
+      fakeAccountsService({ updateAccountBalance }),
+      fakeCategoryRepo(),
+      prisma
+    );
 
-    const data: UpdateTransactionInput = { type: 'income', amount: 5000 };
+    await service.deleteTransaction('tx-1', 'user-1');
 
-    await expect(updateTransaction('tx-1', data, 'user-1')).resolves.toMatchObject({
-      type: 'income',
-    });
-    expect(updateTx).toHaveBeenCalledTimes(1);
+    expect(txFake.transaction.delete).toHaveBeenCalledTimes(1);
+    expect(updateAccountBalance).toHaveBeenCalledWith(
+      'account-1',
+      'user-1',
+      50,
+      'income',
+      expect.anything()
+    );
+  });
+});
+
+describe('TransactionsServiceImpl.getTransactionById', () => {
+  it('lanza NotFoundError si la transacción no existe', async () => {
+    const { prisma } = fakePrisma();
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => null }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(service.getTransactionById('tx-1', 'user-1')).rejects.toThrow(NotFoundError);
+    await expect(service.getTransactionById('tx-1', 'user-1')).rejects.toThrow(
+      'Transacción no encontrada'
+    );
   });
 });

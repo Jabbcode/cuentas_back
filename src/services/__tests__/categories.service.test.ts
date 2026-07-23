@@ -1,17 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Category } from '@prisma/client';
+import type { Category, Transaction } from '@prisma/client';
 import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { TransactionsService } from '../transactions.service.port.js';
 import { CategoriesServiceImpl } from '../categories.service.js';
-
-vi.mock('../../repositories/transaction.repository.js', () => ({
-  count: vi.fn(),
-  findMany: vi.fn(),
-}));
-
-import * as transactionRepo from '../../repositories/transaction.repository.js';
-
-const mockedCount = transactionRepo.count as unknown as ReturnType<typeof vi.fn>;
-const mockedFindMany = transactionRepo.findMany as unknown as ReturnType<typeof vi.fn>;
 
 function fakeCategory(
   overrides: Partial<Omit<Category, 'systemKey'>> = {}
@@ -43,6 +34,47 @@ function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): Category
   };
 }
 
+function fakeTransactionsService(
+  overrides: Partial<TransactionsService> = {}
+): TransactionsService {
+  return {
+    getTransactions: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionSummary: async () => [],
+    getReceiptItems: async () => [],
+    countByCategory: async () => 0,
+    findMonthlyCategoryExpenses: async () => [],
+    findCardStatementTransactions: async () => [],
+    findFixedExpensePaymentInMonth: async () => null,
+    resyncTransactionsForFixedExpense: async () => ({ count: 0 }),
+    getMonthlyTotalByType: async () => ({ _sum: { amount: null } }),
+    getVariableExpenseTotal: async () => ({ _sum: { amount: null } }),
+    getCategoryBreakdown: async () => [],
+    findTransactionsSince: async () => [],
+    getTopExpenseCategories: async () => [],
+    getUserTotalsByType: async () => [],
+    getExpensesByUserAndCategory: async () => [],
+    countByUser: async () => 0,
+    getFirstTransactionDate: async () => null,
+    findByImageHash: async () => null,
+    findSimilarByAmountAndDate: async () => [],
+    ...overrides,
+  };
+}
+
 describe('CategoriesServiceImpl', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,7 +83,8 @@ describe('CategoriesServiceImpl', () => {
   describe('getCategoryById', () => {
     it('lanza NotFoundError si el repo devuelve null', async () => {
       const service = new CategoriesServiceImpl(
-        fakeCategoryRepo({ findByIdAndUser: async () => null })
+        fakeCategoryRepo({ findByIdAndUser: async () => null }),
+        fakeTransactionsService()
       );
 
       await expect(service.getCategoryById('cat-1', 'user-1')).rejects.toThrow(
@@ -62,7 +95,8 @@ describe('CategoriesServiceImpl', () => {
     it('devuelve la categoría si existe', async () => {
       const category = fakeCategory();
       const service = new CategoriesServiceImpl(
-        fakeCategoryRepo({ findByIdAndUser: async () => category })
+        fakeCategoryRepo({ findByIdAndUser: async () => category }),
+        fakeTransactionsService()
       );
 
       await expect(service.getCategoryById('cat-1', 'user-1')).resolves.toEqual(category);
@@ -72,7 +106,10 @@ describe('CategoriesServiceImpl', () => {
   describe('createCategory / updateCategory', () => {
     it('createCategory devuelve la categoría creada', async () => {
       const created = fakeCategory({ name: 'Transporte' });
-      const service = new CategoriesServiceImpl(fakeCategoryRepo({ create: async () => created }));
+      const service = new CategoriesServiceImpl(
+        fakeCategoryRepo({ create: async () => created }),
+        fakeTransactionsService()
+      );
 
       await expect(
         service.createCategory({ name: 'Transporte', type: 'expense' }, 'user-1')
@@ -83,7 +120,8 @@ describe('CategoriesServiceImpl', () => {
       const existing = fakeCategory();
       const updated = fakeCategory({ name: 'Actualizada' });
       const service = new CategoriesServiceImpl(
-        fakeCategoryRepo({ findByIdAndUser: async () => existing, update: async () => updated })
+        fakeCategoryRepo({ findByIdAndUser: async () => existing, update: async () => updated }),
+        fakeTransactionsService()
       );
 
       await expect(
@@ -92,12 +130,12 @@ describe('CategoriesServiceImpl', () => {
     });
   });
 
-  describe('deleteCategory', () => {
+  describe('deleteCategory (usa TransactionsService.countByCategory)', () => {
     it('lanza ConflictError si tiene transacciones asociadas', async () => {
       const service = new CategoriesServiceImpl(
-        fakeCategoryRepo({ findByIdAndUser: async () => fakeCategory() })
+        fakeCategoryRepo({ findByIdAndUser: async () => fakeCategory() }),
+        fakeTransactionsService({ countByCategory: async () => 3 })
       );
-      mockedCount.mockResolvedValueOnce(3);
 
       await expect(service.deleteCategory('cat-1', 'user-1')).rejects.toThrow(
         'No se puede eliminar una categoría con transacciones asociadas'
@@ -110,21 +148,24 @@ describe('CategoriesServiceImpl', () => {
         fakeCategoryRepo({
           findByIdAndUser: async () => fakeCategory(),
           remove: async () => removed,
-        })
+        }),
+        fakeTransactionsService({ countByCategory: async () => 0 })
       );
-      mockedCount.mockResolvedValueOnce(0);
 
       await expect(service.deleteCategory('cat-1', 'user-1')).resolves.toEqual(removed);
     });
   });
 
-  describe('getCategorySpending', () => {
+  describe('getCategorySpending (usa TransactionsService.findMonthlyCategoryExpenses)', () => {
     it('con monthlyLimit: calcula remaining, percentage e isOverLimit', async () => {
       const category = fakeCategory({ monthlyLimit: 100 as unknown as Category['monthlyLimit'] });
       const service = new CategoriesServiceImpl(
-        fakeCategoryRepo({ findByIdAndUser: async () => category })
+        fakeCategoryRepo({ findByIdAndUser: async () => category }),
+        fakeTransactionsService({
+          findMonthlyCategoryExpenses: async () =>
+            [{ amount: 70 }, { amount: 50 }] as unknown as Transaction[],
+        })
       );
-      mockedFindMany.mockResolvedValueOnce([{ amount: 70 }, { amount: 50 }]);
 
       const result = await service.getCategorySpending('cat-1', 'user-1');
 
@@ -138,9 +179,11 @@ describe('CategoriesServiceImpl', () => {
     it('sin monthlyLimit: remaining, percentage e isOverLimit quedan null/false', async () => {
       const category = fakeCategory({ monthlyLimit: null });
       const service = new CategoriesServiceImpl(
-        fakeCategoryRepo({ findByIdAndUser: async () => category })
+        fakeCategoryRepo({ findByIdAndUser: async () => category }),
+        fakeTransactionsService({
+          findMonthlyCategoryExpenses: async () => [{ amount: 20 }] as unknown as Transaction[],
+        })
       );
-      mockedFindMany.mockResolvedValueOnce([{ amount: 20 }]);
 
       const result = await service.getCategorySpending('cat-1', 'user-1');
 

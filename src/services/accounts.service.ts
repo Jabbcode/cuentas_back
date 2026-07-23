@@ -1,4 +1,3 @@
-import { prisma } from '../lib/prisma.js';
 import type { Prisma, PrismaClient, Account } from '@prisma/client';
 import {
   CreateAccountInput,
@@ -6,7 +5,6 @@ import {
   TransferInput,
 } from '../schemas/account.schema.js';
 import { NotFoundError, ValidationError } from '../lib/errors.js';
-import * as accountRepo from '../repositories/account.repository.js';
 import type { AccountRepository } from '../repositories/account.repository.port.js';
 import type { AccountsService, TransferWithAccounts } from './accounts.service.port.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../lib/constants/shared.constants.js';
@@ -117,105 +115,5 @@ export class AccountsServiceImpl implements AccountsService {
     if (result.count === 0) {
       throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
     }
-  }
-}
-
-export async function getAccounts(userId: string) {
-  return accountRepo.findAllByUser(userId);
-}
-
-export async function getAccountById(id: string, userId: string) {
-  const account = await accountRepo.findByIdAndUser(id, userId);
-
-  if (!account) {
-    throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
-  }
-
-  return account;
-}
-
-export async function createAccount(data: CreateAccountInput, userId: string) {
-  const { paymentAccountId, ...rest } = data;
-  return accountRepo.create({
-    ...rest,
-    user: { connect: { id: userId } },
-    ...(paymentAccountId && { paymentAccount: { connect: { id: paymentAccountId } } }),
-  });
-}
-
-export async function updateAccount(id: string, data: UpdateAccountInput, userId: string) {
-  await getAccountById(id, userId);
-
-  const { paymentAccountId, ...rest } = data;
-  return accountRepo.update(id, userId, {
-    ...rest,
-    ...(paymentAccountId !== undefined && {
-      paymentAccount: paymentAccountId
-        ? { connect: { id: paymentAccountId } }
-        : { disconnect: true },
-    }),
-  });
-}
-
-export async function deleteAccount(id: string, userId: string) {
-  await getAccountById(id, userId);
-
-  return accountRepo.remove(id, userId);
-}
-
-export async function transferFunds(data: TransferInput, userId: string) {
-  const { fromAccountId, toAccountId, amount, note } = data;
-
-  if (fromAccountId === toAccountId) {
-    throw new ValidationError(ACCOUNT_MESSAGES.SAME_ORIGIN_DESTINATION);
-  }
-
-  const [fromAccount, toAccount] = await Promise.all([
-    accountRepo.findByIdAndUser(fromAccountId, userId),
-    accountRepo.findByIdAndUser(toAccountId, userId),
-  ]);
-
-  if (!fromAccount) throw new NotFoundError(ACCOUNT_MESSAGES.ORIGIN_NOT_FOUND);
-  if (!toAccount) throw new NotFoundError(ACCOUNT_MESSAGES.DESTINATION_NOT_FOUND);
-  if (Number(fromAccount.balance) < amount)
-    throw new ValidationError(ACCOUNT_MESSAGES.INSUFFICIENT_BALANCE_ORIGIN);
-
-  return prisma.$transaction(async (tx) => {
-    await tx.account.update({
-      where: { id: fromAccountId },
-      data: { balance: { decrement: amount } },
-    });
-    await tx.account.update({
-      where: { id: toAccountId },
-      data: { balance: { increment: amount } },
-    });
-    return tx.transfer.create({
-      data: { fromAccountId, toAccountId, amount, note, userId },
-      include: { fromAccount: true, toAccount: true },
-    });
-  });
-}
-
-export async function getTransfersByAccount(accountId: string, userId: string) {
-  await getAccountById(accountId, userId);
-  return accountRepo.findTransfersByAccount(accountId, userId);
-}
-
-export async function updateAccountBalance(
-  accountId: string,
-  userId: string,
-  amount: number,
-  type: TransactionType,
-  tx: Prisma.TransactionClient = prisma
-): Promise<void> {
-  const result = await tx.account.updateMany({
-    where: { id: accountId, userId },
-    data: {
-      balance: type === TRANSACTION_TYPE.INCOME ? { increment: amount } : { decrement: amount },
-    },
-  });
-
-  if (result.count === 0) {
-    throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
   }
 }

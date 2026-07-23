@@ -2,7 +2,6 @@ import type { Prisma } from '@prisma/client';
 import type { AccountRepository } from '../repositories/account.repository.port.js';
 import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import type {
@@ -13,12 +12,14 @@ import type {
   MonthlySummary,
   FixedVsVariable,
 } from './dashboard.service.port.js';
+import type { TransactionsService } from './transactions.service.port.js';
 
 export class DashboardServiceImpl implements DashboardService {
   constructor(
     private accountRepo: AccountRepository,
     private fixedExpenseRepo: FixedExpenseRepository,
-    private categoryRepo: CategoryRepository
+    private categoryRepo: CategoryRepository,
+    private transactionsService: TransactionsService
   ) {}
 
   async getSummary(userId: string): Promise<DashboardSummary> {
@@ -30,15 +31,13 @@ export class DashboardServiceImpl implements DashboardService {
 
     const [accounts, incomeAgg, expenseAgg] = await Promise.all([
       this.accountRepo.findAllByUser(userId),
-      transactionRepo.aggregate({
-        userId,
-        type: TRANSACTION_TYPE.INCOME,
-        date: { gte: startOfMonth, lt: endOfMonth },
+      this.transactionsService.getMonthlyTotalByType(userId, TRANSACTION_TYPE.INCOME, {
+        gte: startOfMonth,
+        lt: endOfMonth,
       }),
-      transactionRepo.aggregate({
-        userId,
-        type: TRANSACTION_TYPE.EXPENSE,
-        date: { gte: startOfMonth, lt: endOfMonth },
+      this.transactionsService.getMonthlyTotalByType(userId, TRANSACTION_TYPE.EXPENSE, {
+        gte: startOfMonth,
+        lt: endOfMonth,
       }),
     ]);
 
@@ -75,11 +74,11 @@ export class DashboardServiceImpl implements DashboardService {
       now.getMonth()
     );
 
-    const rows = await transactionRepo.groupByCategory({
+    const rows = await this.transactionsService.getCategoryBreakdown(
       userId,
-      type,
-      date: { gte: startOfMonth, lt: endOfMonth },
-    });
+      { gte: startOfMonth, lt: endOfMonth },
+      type
+    );
 
     const totalByCategory = new Map<string, number>();
     for (const row of rows) {
@@ -131,7 +130,7 @@ export class DashboardServiceImpl implements DashboardService {
     const now = new Date();
     const startDate = new Date(now.getFullYear(), now.getMonth() - months + 1, 1);
 
-    const transactions = await transactionRepo.findMany({ userId, date: { gte: startDate } });
+    const transactions = await this.transactionsService.findTransactionsSince(userId, startDate);
 
     const monthlyData: Record<string, { income: number; expenses: number }> = {};
 
@@ -166,9 +165,9 @@ export class DashboardServiceImpl implements DashboardService {
   async getMonthlySummary(userId: string, month: number, year: number): Promise<MonthlySummary> {
     const { start: startOfMonth, end: endOfMonth } = getMonthRange(year, month - 1);
 
-    const rows = await transactionRepo.groupByCategory({
-      userId,
-      date: { gte: startOfMonth, lt: endOfMonth },
+    const rows = await this.transactionsService.getCategoryBreakdown(userId, {
+      gte: startOfMonth,
+      lt: endOfMonth,
     });
 
     let totalExpenses = 0;
@@ -238,11 +237,9 @@ export class DashboardServiceImpl implements DashboardService {
     const fixedExpensesTotal = fixedExpensesConfig.reduce((sum, fe) => sum + Number(fe.amount), 0);
 
     // Obtener transacciones variables (gastos sin fixedExpenseId)
-    const variableAgg = await transactionRepo.aggregate({
-      userId,
-      type: TRANSACTION_TYPE.EXPENSE,
-      fixedExpenseId: null,
-      date: { gte: startOfMonth, lt: endOfMonth },
+    const variableAgg = await this.transactionsService.getVariableExpenseTotal(userId, {
+      gte: startOfMonth,
+      lt: endOfMonth,
     });
 
     const variableExpensesTotal = Number(variableAgg._sum.amount ?? 0);
