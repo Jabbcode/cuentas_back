@@ -5,8 +5,9 @@ vi.mock('../transactions.service.js', () => ({
   createTransaction: vi.fn(),
 }));
 
-vi.mock('../credit-cards.service.js', () => ({
-  payCreditCardStatement: vi.fn(),
+vi.mock('../../bootstrap.js', () => ({
+  creditCardsService: { payCreditCardStatement: vi.fn() },
+  debtsService: { payDebt: vi.fn() },
 }));
 
 vi.mock('../../repositories/fixed-expense.repository.js', () => ({
@@ -14,12 +15,13 @@ vi.mock('../../repositories/fixed-expense.repository.js', () => ({
 }));
 
 import { createTransaction } from '../transactions.service.js';
-import { payCreditCardStatement } from '../credit-cards.service.js';
+import { creditCardsService } from '../../bootstrap.js';
 import * as fixedExpenseRepo from '../../repositories/fixed-expense.repository.js';
 import { payFixedExpense } from '../fixed-expenses.service.js';
 
 const mockedCreateTransaction = createTransaction as unknown as ReturnType<typeof vi.fn>;
-const mockedPayCreditCardStatement = payCreditCardStatement as unknown as ReturnType<typeof vi.fn>;
+const mockedPayCreditCardStatement =
+  creditCardsService.payCreditCardStatement as unknown as ReturnType<typeof vi.fn>;
 const mockedFindByIdAndUser = fixedExpenseRepo.findByIdAndUser as unknown as ReturnType<
   typeof vi.fn
 >;
