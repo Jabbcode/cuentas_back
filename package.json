@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write \"src/**/*.ts\" \"prisma/schema.prisma\"",
-    "prepare": "husky",
+    "prepare": "husky || true",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
