@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: cuentas-back-staging
+    runtime: node
+    plan: free
+    branch: develop
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: "MisCuentas <onboarding@resend.dev>"
+      - key: CORS_ORIGIN
+        sync: false
