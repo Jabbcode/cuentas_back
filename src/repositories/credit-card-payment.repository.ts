@@ -1,20 +1,18 @@
-import { prisma } from '../lib/prisma.js';
-import type { Prisma, CreditCardPayment } from '@prisma/client';
+import type { Prisma, CreditCardPayment, PrismaClient } from '@prisma/client';
+import type { CreditCardPaymentRepository } from './credit-card-payment.repository.port.js';
 
-export async function findFirst(
-  where: Prisma.CreditCardPaymentWhereInput
-): Promise<CreditCardPayment | null> {
-  return prisma.creditCardPayment.findFirst({ where });
-}
+export class CreditCardPaymentRepositoryImpl implements CreditCardPaymentRepository {
+  constructor(private prisma: PrismaClient) {}
 
-export async function findMany(
-  where: Prisma.CreditCardPaymentWhereInput
-): Promise<CreditCardPayment[]> {
-  return prisma.creditCardPayment.findMany({ where });
-}
+  async findFirst(where: Prisma.CreditCardPaymentWhereInput): Promise<CreditCardPayment | null> {
+    return this.prisma.creditCardPayment.findFirst({ where });
+  }
 
-export async function create(
-  data: Prisma.CreditCardPaymentCreateInput
-): Promise<CreditCardPayment> {
-  return prisma.creditCardPayment.create({ data });
+  async findMany(where: Prisma.CreditCardPaymentWhereInput): Promise<CreditCardPayment[]> {
+    return this.prisma.creditCardPayment.findMany({ where });
+  }
+
+  async create(data: Prisma.CreditCardPaymentCreateInput): Promise<CreditCardPayment> {
+    return this.prisma.creditCardPayment.create({ data });
+  }
 }
