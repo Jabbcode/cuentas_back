@@ -1,14 +1,13 @@
 import type { Prisma, PrismaClient, Debt } from '@prisma/client';
 import type { CreateDebtInput, UpdateDebtInput, PayDebtInput } from '../schemas/debt.schema.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
-import { createTransaction } from './transactions.service.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
 import { calculateDebtPaymentBreakdown, getDebtStatus } from '../lib/utils/debt.utils.js';
 import type { DebtRepository } from '../repositories/debt.repository.port.js';
 import type { AccountsService } from './accounts.service.port.js';
 import type { RecurringDebtPaymentRepository } from '../repositories/recurring-debt-payment.repository.port.js';
+import type { TransactionsService } from './transactions.service.port.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
 import { DEBT_STATUS, DEBT_MESSAGES } from '../lib/constants/debt.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import { RECURRING_FREQUENCY } from '../lib/constants/recurring-debt-payment.constants.js';
@@ -29,6 +28,7 @@ export class DebtsServiceImpl implements DebtsService {
     private debtRepo: DebtRepository,
     private accountsService: AccountsService,
     private recurringRepo: RecurringDebtPaymentRepository,
+    private transactionsService: TransactionsService,
     private prisma: PrismaClient
   ) {}
 
@@ -154,14 +154,14 @@ export class DebtsServiceImpl implements DebtsService {
       now.getMonth()
     );
 
-    const existingPayment = await transactionRepo.findFirst({
-      fixedExpenseId: fixedExpense.id,
-      date: { gte: startOfMonth, lt: endOfMonth },
-    });
+    const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
+      fixedExpense.id,
+      { gte: startOfMonth, lt: endOfMonth }
+    );
 
     if (!existingPayment) {
       try {
-        await createTransaction(
+        await this.transactionsService.createTransaction(
           {
             amount,
             type: TRANSACTION_TYPE.EXPENSE,
