@@ -150,6 +150,11 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - **Backend:** Render — https://cuentas-back-fgep.onrender.com
 - **Frontend:** Vercel — https://cuentas-front-amber.vercel.app
 - **CORS_ORIGIN:** https://cuentas-front-amber.vercel.app (sin trailing slash)
+- **Staging (2026-07-23):** `render.yaml` (Blueprint) define `cuentas-back-staging`,
+  rama `develop`, plan free, `DATABASE_URL` = rama `develop` de Neon (ver entorno de
+  pre-producción). Pendiente manual: en el dashboard de Render, **New → Blueprint**
+  apuntando a este repo, y completar los env vars marcados `sync: false`
+  (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CORS_ORIGIN`).
 
 ## 📊 Cambios Recientes
 - **Cleanup de arquitectura (PRs #45–#51 — 2026-07-21):** 6 hallazgos cerrados (imports
