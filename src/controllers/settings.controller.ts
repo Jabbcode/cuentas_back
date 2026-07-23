@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../types/index.js';
-import * as settingsService from '../services/settings.service.js';
+import { settingsService } from '../bootstrap.js';
 import {
   updateProfileSchema,
   changePasswordSchema,
