@@ -3,7 +3,7 @@
 Documento vivo del estado actual del backend. Actualizar regularmente.
 
 ## 📅 Fecha de Actualización
-**Última actualización:** 2026-07-21
+**Última actualización:** 2026-07-23
 
 ## 🚀 Estado General
 API REST en producción activa. Arquitectura Clean (repositories + services + controllers) completada. Observabilidad con Sentry tunnel operativa. JWT migrado a httpOnly cookies. Features Budgets y Tags eliminadas (2026-06-02).
@@ -147,31 +147,63 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - [ ] Helmet para headers (pendiente)
 
 ## 🌐 Despliegue
+
+### Producción
 - **Backend:** Render — https://cuentas-back-fgep.onrender.com
-- **Frontend:** Vercel — https://cuentas-front-amber.vercel.app
+- **Frontend:** Vercel — https://cuentas-front-amber.vercel.app (rama `main`)
 - **CORS_ORIGIN:** https://cuentas-front-amber.vercel.app (sin trailing slash)
-- **Staging (2026-07-23):** `render.yaml` (Blueprint) define `cuentas-back-staging`,
-  rama `develop`, plan free, `DATABASE_URL` = rama `develop` de Neon (ver entorno de
-  pre-producción). Pendiente manual: en el dashboard de Render, **New → Blueprint**
-  apuntando a este repo, y completar los env vars marcados `sync: false`
-  (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CORS_ORIGIN`).
 
-## 🧪 Entorno de pre-producción (2026-07-23)
-Proyecto Neon único con 2 ramas: `produccion` (`DATABASE_URL` en `.env`) y `develop`
-(usada como pre-producción/test, datos desechables). `develop` tenía drift de un
-experimento abandonado (`feature/banking-sync-truelayer`, bloqueado — ver "Pendiente")
-que dejó migraciones huérfanas; se reseteó desde `produccion` ("Reset from parent" en
-Neon) y quedó sincronizada con las 14 migraciones actuales.
+### Staging / pre-producción (2026-07-23) — validado end-to-end
+Entorno completo backend+frontend para probar cambios con datos desechables antes de
+promoverlos a producción. Los 3 componentes viven en la rama `develop` de cada repo.
 
+**Neon (BD):** proyecto único con 2 ramas — `produccion` (`DATABASE_URL` en `.env`) y
+`develop` (staging, datos desechables). `develop` tenía drift de un experimento
+abandonado (`feature/banking-sync-truelayer`, bloqueado — ver "Pendiente") que dejó
+migraciones huérfanas; se reseteó desde `produccion` ("Reset from parent" en Neon) y
+quedó sincronizada con las 14 migraciones actuales.
 - `.env.pre` (gitignored, no versionado): mismas variables que `.env` pero
   `DATABASE_URL` apunta a la rama `develop` de Neon, `PORT=4001`.
 - Scripts npm: `dev:pre`, `db:migrate:pre`, `db:studio:pre` (usan `dotenv-cli` para
   cargar `.env.pre`).
-- Pendiente: crear el servicio de Render "staging" (rama de git `develop`,
-  `DATABASE_URL` = connection string de la rama Neon `develop`) — no automatizado,
-  requiere acceso manual a Render.
+
+**Render (backend):** servicio `cuentas-back-staging` —
+https://cuentas-back-staging.onrender.com — definido vía Blueprint (`render.yaml` en
+la raíz del repo, rama `develop`, plan free). Dos fixes necesarios tras la creación:
+- `buildCommand` debía forzar `npm install --include=dev` — con `NODE_ENV=production`,
+  Render omite `devDependencies` (`typescript` y todos los `@types/*`), rompiendo
+  `tsc` con cientos de falsos positivos.
+- `"prepare": "husky"` → `"husky || true"` en `package.json` — el script fallaba con
+  exit 127 al no encontrar el binario de `husky` (devDependency) en el install de
+  producción, tumbando el build completo.
+- `CORS_ORIGIN` = `https://cuentas-front-git-develop-jabbcodes-projects.vercel.app`
+  (alias estable de la rama `develop` en Vercel).
+- Secrets (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CORS_ORIGIN`)
+  completados manualmente en el dashboard de Render (`sync: false` en el Blueprint).
+
+**Vercel (frontend, repo `cuentas_front`):** el proyecto tenía `vercel.json` con
+`ignoreCommand`/`git.deploymentEnabled` configurados para deployar solo `main` —
+cancelaba automáticamente todo build de `develop`. Se amplió a `main` + `develop`.
+`VITE_API_URL` configurado en Vercel, scoped a `Preview` + rama `develop`, apuntando
+al backend de staging (`.../api`) — coexiste con el `VITE_API_URL` genérico de
+Production/Preview/Development sin conflicto (el scoped a rama tiene prioridad).
+Preview: `cuentas-front-git-develop-jabbcodes-projects.vercel.app`.
+
+**Validación end-to-end (2026-07-23):** `/api/health` en staging → 200; preflight CORS
+desde el origen real de Vercel → `Access-Control-Allow-Origin` correcto (no `*`);
+`POST /auth/register` → cookie `HttpOnly; Secure; SameSite=None`; `GET /auth/me` con
+esa cookie → 200. Usuarios de prueba (`staging-test-*@example.com`) creados y
+eliminados tras la verificación.
+
+PRs: `cuentas_back` #56 (entorno `.env.pre`), #57 (`render.yaml`), #58 (fix husky),
+#59 (fix build `--include=dev`) — todas mergeadas a `develop`. `cuentas_front` #64
+(fix `vercel.json`) — mergeada a `develop`.
 
 ## 📊 Cambios Recientes
+- **Entorno de staging/pre-producción (PRs #56–#59, #64 — 2026-07-23):** Neon `develop`
+  (reset de drift), `cuentas-back-staging` en Render (Blueprint + fixes de build),
+  preview de Vercel para `develop` habilitado, `VITE_API_URL` scoped. Validado
+  end-to-end (health, CORS, cookie de auth cross-origin). Ver sección "Despliegue".
 - **Cleanup de arquitectura (PRs #45–#51 — 2026-07-21):** 6 hallazgos cerrados (imports
   circulares, detección de conflicto por tipo, dashboard con agregación en DB, capas
   Prisma en notificaciones/cron, N+1 del cron mensual, `systemKey` estable para
