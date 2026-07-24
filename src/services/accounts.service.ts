@@ -31,6 +31,26 @@ export class AccountsServiceImpl implements AccountsService {
     return account;
   }
 
+  async findAccountById(id: string, userId: string): Promise<Account | null> {
+    return this.accountRepo.findByIdAndUser(id, userId);
+  }
+
+  async getCreditCards(userId: string): Promise<Account[]> {
+    return this.accountRepo.findCreditCardsByUser(userId);
+  }
+
+  async getConfiguredCreditCards(userId: string): Promise<Account[]> {
+    return this.accountRepo.findCreditCardsByUser(userId, {
+      paymentAccountId: { not: null },
+      cutoffDay: { not: null },
+      paymentDueDay: { not: null },
+    });
+  }
+
+  async countByUser(userId: string): Promise<number> {
+    return this.accountRepo.countByUser(userId);
+  }
+
   async createAccount(data: CreateAccountInput, userId: string): Promise<Account> {
     const { paymentAccountId, ...rest } = data;
     return this.accountRepo.create({
