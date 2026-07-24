@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma, RecurringDebtPayment } from '@prisma/client';
 import type {
   CreateRecurringDebtPaymentInput,
   UpdateRecurringDebtPaymentInput,
@@ -57,4 +57,9 @@ export interface RecurringDebtPaymentsService {
   ): Promise<RdpCreated>;
   deleteRecurringDebtPayment(id: string, userId: string): Promise<{ message: string }>;
   processPendingRecurringPayments(): Promise<ProcessPendingResult>;
+  findRecurringPaymentById(id: string): Promise<RecurringDebtPayment | null>;
+  updateRecurringPaymentFields(
+    id: string,
+    data: Prisma.RecurringDebtPaymentUpdateInput
+  ): Promise<RecurringDebtPayment>;
 }
