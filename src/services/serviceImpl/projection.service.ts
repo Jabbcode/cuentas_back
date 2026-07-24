@@ -1,0 +1,84 @@
+import { groupByCategory } from '../../lib/utils/projection.utils.js';
+import type { FixedExpensesService } from '../interfaces/fixed-expenses.service.port.js';
+import type { ProjectionService, ProjectionData } from '../interfaces/projection.service.port.js';
+
+export class ProjectionServiceImpl implements ProjectionService {
+  constructor(private fixedExpensesService: FixedExpensesService) {}
+
+  async getNextMonthProjection(userId: string): Promise<ProjectionData> {
+    const now = new Date();
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const year = nextMonth.getFullYear();
+    const monthNumber = nextMonth.getMonth() + 1;
+
+    // Obtener todos los gastos/ingresos fijos activos
+    const fixedExpenses =
+      await this.fixedExpensesService.getActiveFixedExpensesWithCategory(userId);
+
+    // Separar por tipo
+    const expenses = fixedExpenses.filter((fe) => fe.type === 'expense');
+    const incomes = fixedExpenses.filter((fe) => fe.type === 'income');
+
+    // Calcular totales
+    const totalExpenses = expenses.reduce((sum, fe) => sum + Number(fe.amount), 0);
+    const totalIncome = incomes.reduce((sum, fe) => sum + Number(fe.amount), 0);
+    const netBalance = totalIncome - totalExpenses;
+
+    // Agrupar por categoría
+    const expensesByCategory = groupByCategory(expenses);
+    const incomesByCategory = groupByCategory(incomes);
+
+    // Comparación con mes actual
+    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const currentMonthSummary = await this.getCurrentMonthSummary(userId, currentMonth);
+
+    const expensesDiff = totalExpenses - currentMonthSummary.totalExpenses;
+    const incomeDiff = totalIncome - currentMonthSummary.totalIncome;
+    const netDiff = netBalance - currentMonthSummary.netBalance;
+
+    const expensesPercentage =
+      currentMonthSummary.totalExpenses > 0
+        ? (expensesDiff / currentMonthSummary.totalExpenses) * 100
+        : 0;
+
+    const incomePercentage =
+      currentMonthSummary.totalIncome > 0
+        ? (incomeDiff / currentMonthSummary.totalIncome) * 100
+        : 0;
+
+    return {
+      month: nextMonth.toISOString(),
+      year,
+      monthNumber,
+      totalExpenses,
+      totalIncome,
+      netBalance,
+      expensesByCategory,
+      incomesByCategory,
+      comparison: {
+        previousMonth: currentMonth.toISOString(),
+        expensesDiff,
+        incomeDiff,
+        netDiff,
+        expensesPercentage: Math.round(expensesPercentage * 10) / 10,
+        incomePercentage: Math.round(incomePercentage * 10) / 10,
+      },
+    };
+  }
+
+  private async getCurrentMonthSummary(userId: string, currentMonth: Date) {
+    const fixedExpenses = await this.fixedExpensesService.getActiveFixedExpenses(userId);
+
+    const expenses = fixedExpenses.filter((fe) => fe.type === 'expense');
+    const incomes = fixedExpenses.filter((fe) => fe.type === 'income');
+
+    const totalExpenses = expenses.reduce((sum, fe) => sum + Number(fe.amount), 0);
+    const totalIncome = incomes.reduce((sum, fe) => sum + Number(fe.amount), 0);
+
+    return {
+      totalExpenses,
+      totalIncome,
+      netBalance: totalIncome - totalExpenses,
+    };
+  }
+}
