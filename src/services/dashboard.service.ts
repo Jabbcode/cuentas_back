@@ -1,7 +1,4 @@
 import type { Prisma } from '@prisma/client';
-import type { AccountRepository } from '../repositories/account.repository.port.js';
-import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
-import type { CategoryRepository } from '../repositories/category.repository.port.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import type {
@@ -13,12 +10,15 @@ import type {
   FixedVsVariable,
 } from './dashboard.service.port.js';
 import type { TransactionsService } from './transactions.service.port.js';
+import type { AccountsService } from './accounts.service.port.js';
+import type { FixedExpensesService } from './fixed-expenses.service.port.js';
+import type { CategoriesService } from './categories.service.port.js';
 
 export class DashboardServiceImpl implements DashboardService {
   constructor(
-    private accountRepo: AccountRepository,
-    private fixedExpenseRepo: FixedExpenseRepository,
-    private categoryRepo: CategoryRepository,
+    private accountsService: AccountsService,
+    private fixedExpensesService: FixedExpensesService,
+    private categoriesService: CategoriesService,
     private transactionsService: TransactionsService
   ) {}
 
@@ -30,7 +30,7 @@ export class DashboardServiceImpl implements DashboardService {
     );
 
     const [accounts, incomeAgg, expenseAgg] = await Promise.all([
-      this.accountRepo.findAllByUser(userId),
+      this.accountsService.getAccounts(userId),
       this.transactionsService.getMonthlyTotalByType(userId, TRANSACTION_TYPE.INCOME, {
         gte: startOfMonth,
         lt: endOfMonth,
@@ -99,15 +99,8 @@ export class DashboardServiceImpl implements DashboardService {
       color: string | null;
       monthlyLimit: Prisma.Decimal | null;
     };
-    const categories = (await this.categoryRepo.findMany(
-      { id: { in: categoryIds } },
-      {
-        id: true,
-        name: true,
-        icon: true,
-        color: true,
-        monthlyLimit: true,
-      }
+    const categories = (await this.categoriesService.hydrateCategoriesByIds(
+      categoryIds
     )) as unknown as CategoryMeta[];
 
     return categories
@@ -191,9 +184,8 @@ export class DashboardServiceImpl implements DashboardService {
     type CategoryMeta = { id: string; name: string; icon: string | null; color: string | null };
     const categoryMetas =
       categoryIds.length > 0
-        ? ((await this.categoryRepo.findMany(
-            { id: { in: categoryIds } },
-            { id: true, name: true, icon: true, color: true }
+        ? ((await this.categoriesService.hydrateCategoriesByIds(
+            categoryIds
           )) as unknown as CategoryMeta[])
         : [];
 
@@ -229,10 +221,8 @@ export class DashboardServiceImpl implements DashboardService {
     );
 
     // Obtener el total de gastos fijos configurados (activos, tipo expense)
-    const fixedExpensesConfig = await this.fixedExpenseRepo.findAllByUser(userId, {
-      isActive: true,
-      type: TRANSACTION_TYPE.EXPENSE,
-    });
+    const fixedExpensesConfig =
+      await this.fixedExpensesService.getActiveExpenseFixedExpenses(userId);
 
     const fixedExpensesTotal = fixedExpensesConfig.reduce((sum, fe) => sum + Number(fe.amount), 0);
 
