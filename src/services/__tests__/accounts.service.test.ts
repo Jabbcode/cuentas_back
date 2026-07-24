@@ -190,4 +190,65 @@ describe('AccountsServiceImpl', () => {
       expect(result.id).toBe('transfer-1');
     });
   });
+
+  describe('findAccountById (Fase 6 — null-returning, sin lanzar)', () => {
+    it('devuelve null si el repo no encuentra la cuenta (a diferencia de getAccountById)', async () => {
+      const repo = fakeAccountRepo({ findByIdAndUser: async () => null });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.findAccountById('account-1', 'user-1')).resolves.toBeNull();
+    });
+
+    it('devuelve la cuenta si existe', async () => {
+      const account = fakeAccount();
+      const repo = fakeAccountRepo({ findByIdAndUser: async () => account });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.findAccountById('account-1', 'user-1')).resolves.toEqual(account);
+    });
+  });
+
+  describe('getCreditCards / getConfiguredCreditCards (Fase 6)', () => {
+    it('getCreditCards delega en findCreditCardsByUser sin filtros extra', async () => {
+      const cards = [fakeAccount({ id: 'card-1', type: 'credit_card' })];
+      const findCreditCardsByUser = async () => cards;
+      const repo = fakeAccountRepo({ findCreditCardsByUser });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.getCreditCards('user-1')).resolves.toEqual(cards);
+    });
+
+    it('getConfiguredCreditCards filtra por paymentAccountId/cutoffDay/paymentDueDay configurados', async () => {
+      const calls: unknown[] = [];
+      const repo = fakeAccountRepo({
+        findCreditCardsByUser: async (userId, filters) => {
+          calls.push({ userId, filters });
+          return [];
+        },
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await service.getConfiguredCreditCards('user-1');
+
+      expect(calls).toEqual([
+        {
+          userId: 'user-1',
+          filters: {
+            paymentAccountId: { not: null },
+            cutoffDay: { not: null },
+            paymentDueDay: { not: null },
+          },
+        },
+      ]);
+    });
+  });
+
+  describe('countByUser (Fase 6)', () => {
+    it('delega en accountRepo.countByUser', async () => {
+      const repo = fakeAccountRepo({ countByUser: async () => 3 });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.countByUser('user-1')).resolves.toBe(3);
+    });
+  });
 });
