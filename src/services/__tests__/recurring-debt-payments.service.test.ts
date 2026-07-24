@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type { Account, Debt, RecurringDebtPayment } from '@prisma/client';
 import type { RecurringDebtPaymentRepository } from '../../repositories/recurring-debt-payment.repository.port.js';
-import type { DebtRepository } from '../../repositories/debt.repository.port.js';
 import type { AccountsService } from '../accounts.service.port.js';
 import type { DebtsService } from '../debts.service.port.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { DEBT_MESSAGES } from '../../lib/constants/debt.constants.js';
 import { RecurringDebtPaymentsServiceImpl } from '../recurring-debt-payments.service.js';
 
 function fakeDebt(overrides: Partial<Debt> = {}): Debt {
@@ -68,22 +68,14 @@ function fakeRecurringRepo(
   };
 }
 
-function fakeDebtRepo(overrides: Partial<DebtRepository> = {}): DebtRepository {
-  return {
-    create: async () => fakeDebt(),
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    countByUser: async () => 0,
-    update: async () => fakeDebt(),
-    remove: async () => undefined,
-    ...overrides,
-  };
-}
-
 function fakeAccountsService(overrides: Partial<AccountsService> = {}): AccountsService {
   return {
     getAccounts: async () => [],
     getAccountById: async () => fakeAccount(),
+    findAccountById: async () => null,
+    getCreditCards: async () => [],
+    getConfiguredCreditCards: async () => [],
+    countByUser: async () => 0,
     createAccount: async () => fakeAccount(),
     updateAccount: async () => fakeAccount(),
     deleteAccount: async () => fakeAccount(),
@@ -114,12 +106,13 @@ function fakeDebtsService(overrides: Partial<DebtsService> = {}): DebtsService {
       debtsDueSoon: 0,
       upcomingDebts: [],
     }),
+    countByUser: async () => 0,
     ...overrides,
   };
 }
 
 describe('RecurringDebtPaymentsServiceImpl', () => {
-  describe('createRecurringDebtPayment', () => {
+  describe('createRecurringDebtPayment (usa DebtsService.getDebtById)', () => {
     const validInput = {
       debtId: 'debt-1',
       amount: 50,
@@ -131,9 +124,12 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
     it('lanza NotFoundError si la deuda no existe', async () => {
       const service = new RecurringDebtPaymentsServiceImpl(
         fakeRecurringRepo(),
-        fakeDebtRepo({ findByIdAndUser: async () => null }),
         fakeAccountsService(),
-        fakeDebtsService()
+        fakeDebtsService({
+          getDebtById: async () => {
+            throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
+          },
+        })
       );
 
       await expect(service.createRecurringDebtPayment('user-1', validInput)).rejects.toThrow(
@@ -144,9 +140,8 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
     it('lanza ConflictError si la deuda ya está pagada', async () => {
       const service = new RecurringDebtPaymentsServiceImpl(
         fakeRecurringRepo(),
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt({ status: 'paid' }) }),
         fakeAccountsService(),
-        fakeDebtsService()
+        fakeDebtsService({ getDebtById: async () => fakeDebt({ status: 'paid' }) as never })
       );
 
       await expect(service.createRecurringDebtPayment('user-1', validInput)).rejects.toThrow(
@@ -157,7 +152,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
     it('propaga NotFoundError si la cuenta no existe (vía AccountsService)', async () => {
       const service = new RecurringDebtPaymentsServiceImpl(
         fakeRecurringRepo(),
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt() }),
         fakeAccountsService({
           getAccountById: async () => {
             throw new NotFoundError('Cuenta no encontrada');
@@ -175,7 +169,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
       const created = { ...fakeRdp(), account: fakeAccount(), debt: fakeDebt() };
       const service = new RecurringDebtPaymentsServiceImpl(
         fakeRecurringRepo({ create: async () => created as never }),
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt() }),
         fakeAccountsService(),
         fakeDebtsService()
       );
@@ -189,7 +182,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
     it('lanza NotFoundError si no existe', async () => {
       const service = new RecurringDebtPaymentsServiceImpl(
         fakeRecurringRepo({ findByIdAndUser: async () => null }),
-        fakeDebtRepo(),
         fakeAccountsService(),
         fakeDebtsService()
       );
@@ -204,7 +196,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
     it('con findDuePayments vacío, retorna los contadores en cero', async () => {
       const service = new RecurringDebtPaymentsServiceImpl(
         fakeRecurringRepo({ findDuePayments: async () => [] }),
-        fakeDebtRepo(),
         fakeAccountsService(),
         fakeDebtsService()
       );
@@ -235,7 +226,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
             return fakeRdp();
           },
         }),
-        fakeDebtRepo(),
         fakeAccountsService(),
         fakeDebtsService({
           payDebt: async (...args) => {
@@ -263,7 +253,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
             [{ ...due, account: fakeAccount({ balance: 1000 }), debt: fakeDebt() }] as never,
           update: async () => fakeRdp(),
         }),
-        fakeDebtRepo(),
         fakeAccountsService(),
         fakeDebtsService({
           payDebt: async (...args) => {
@@ -292,7 +281,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
           findDuePayments: async () =>
             [{ ...due, account: fakeAccount({ balance: 10 }), debt: fakeDebt() }] as never,
         }),
-        fakeDebtRepo(),
         fakeAccountsService(),
         fakeDebtsService({
           payDebt: async (...args) => {
@@ -321,7 +309,6 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
             ] as never,
           update: async () => fakeRdp(),
         }),
-        fakeDebtRepo(),
         fakeAccountsService(),
         fakeDebtsService({
           payDebt: async (debtId) => {
@@ -335,6 +322,50 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
 
       expect(result.errors).toBe(1);
       expect(result.processed).toBe(1);
+    });
+  });
+
+  describe('findRecurringPaymentById (Fase 6 — null-returning, sin ownership)', () => {
+    it('devuelve null si el repo no lo encuentra', async () => {
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findUnique: async () => null }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(service.findRecurringPaymentById('rdp-1')).resolves.toBeNull();
+    });
+
+    it('devuelve el pago recurrente si existe (sin exigir userId)', async () => {
+      const rdp = fakeRdp();
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findUnique: async () => rdp }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(service.findRecurringPaymentById('rdp-1')).resolves.toEqual(rdp);
+    });
+  });
+
+  describe('updateRecurringPaymentFields (Fase 6 — persistencia plana, sin ownership check)', () => {
+    it('delega en recurringRepo.update con los campos recibidos', async () => {
+      const calls: unknown[] = [];
+      const updated = fakeRdp({ nextDueDate: new Date('2026-08-05') });
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({
+          update: async (id, data) => {
+            calls.push({ id, data });
+            return updated;
+          },
+        }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      const data = { nextDueDate: new Date('2026-08-05') };
+      await expect(service.updateRecurringPaymentFields('rdp-1', data)).resolves.toEqual(updated);
+      expect(calls).toEqual([{ id: 'rdp-1', data }]);
     });
   });
 });

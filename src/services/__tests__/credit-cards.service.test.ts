@@ -1,20 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Account, CreditCardPayment, Transaction } from '@prisma/client';
-import type { AccountRepository } from '../../repositories/account.repository.port.js';
+import type { Account, CreditCardPayment, Category } from '@prisma/client';
+import type { AccountsService } from '../accounts.service.port.js';
 import type { CreditCardPaymentRepository } from '../../repositories/credit-card-payment.repository.port.js';
-import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { CategoriesService, CategorySpending } from '../categories.service.port.js';
+import type { FixedExpenseRepository } from '../../repositories/fixed-expense.repository.port.js';
 import type { TransactionsService } from '../transactions.service.port.js';
 import { CreditCardsServiceImpl } from '../credit-cards.service.js';
 
-vi.mock('../../repositories/fixed-expense.repository.js', () => ({
-  findFirst: vi.fn(),
-}));
-
-import * as fixedExpenseRepo from '../../repositories/fixed-expense.repository.js';
-
-const mockedFindFirstFixedExpense = fixedExpenseRepo.findFirst as unknown as ReturnType<
-  typeof vi.fn
->;
+const mockedFindFirstFixedExpense = vi.fn();
 const mockedCreateTransaction = vi.fn();
 const mockedFindCardStatementTransactions = vi.fn();
 const mockedFindFixedExpensePaymentInMonth = vi.fn();
@@ -35,21 +28,24 @@ function fakeAccount(overrides: Partial<Account> = {}): Account {
   } as unknown as Account;
 }
 
-function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRepository {
+function fakeAccountsService(overrides: Partial<AccountsService> = {}): AccountsService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findCreditCardsByUser: async () => [],
-    countByUser: async () => 0,
-    create: async () => fakeAccount(),
-    update: async () => fakeAccount(),
-    updateBalance: async () => fakeAccount(),
-    decrementBalance: async () => fakeAccount(),
-    remove: async () => fakeAccount(),
-    createTransfer: async () => {
+    getAccounts: async () => [],
+    getAccountById: async () => {
       throw new Error('not used in these tests');
     },
-    findTransfersByAccount: async () => [],
+    findAccountById: async () => null,
+    getCreditCards: async () => [],
+    getConfiguredCreditCards: async () => [],
+    countByUser: async () => 0,
+    createAccount: async () => fakeAccount(),
+    updateAccount: async () => fakeAccount(),
+    deleteAccount: async () => fakeAccount(),
+    transferFunds: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransfersByAccount: async () => [],
+    updateAccountBalance: async () => undefined,
     ...overrides,
   };
 }
@@ -66,11 +62,37 @@ function fakeCreditCardPaymentRepo(
   };
 }
 
-function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): CategoryRepository {
+function fakeCategoriesService(overrides: Partial<CategoriesService> = {}): CategoriesService {
+  return {
+    getCategories: async () => [],
+    getCategoryById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    getCategorySpending: async () => ({}) as CategorySpending,
+    hydrateCategoriesByIds: async () => [],
+    hydrateUserCategoriesByIds: async () => [],
+    getOrCreateSystemCategory: async () => ({ id: 'category-payment' }) as unknown as Category,
+    countByUser: async () => 0,
+    ...overrides,
+  };
+}
+
+function fakeFixedExpenseRepo(
+  overrides: Partial<FixedExpenseRepository> = {}
+): FixedExpenseRepository {
   return {
     findAllByUser: async () => [],
     findByIdAndUser: async () => null,
-    findFirst: async () => null,
+    findFirst: mockedFindFirstFixedExpense,
     findMany: async () => [],
     countByUser: async () => 0,
     create: async () => {
@@ -82,7 +104,6 @@ function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): Category
     remove: async () => {
       throw new Error('not used in these tests');
     },
-    upsertSystemCategory: async () => ({ id: 'category-payment' }) as never,
     ...overrides,
   };
 }
@@ -128,17 +149,19 @@ function fakeTransactionsService(
 
 function buildService(
   overrides: {
-    accountRepo?: Partial<AccountRepository>;
+    accountsService?: Partial<AccountsService>;
     creditCardPaymentRepo?: Partial<CreditCardPaymentRepository>;
-    categoryRepo?: Partial<CategoryRepository>;
+    categoriesService?: Partial<CategoriesService>;
     transactionsService?: Partial<TransactionsService>;
+    fixedExpenseRepo?: Partial<FixedExpenseRepository>;
   } = {}
 ) {
   return new CreditCardsServiceImpl(
-    fakeAccountRepo(overrides.accountRepo),
+    fakeAccountsService(overrides.accountsService),
     fakeCreditCardPaymentRepo(overrides.creditCardPaymentRepo),
-    fakeCategoryRepo(overrides.categoryRepo),
-    fakeTransactionsService(overrides.transactionsService)
+    fakeCategoriesService(overrides.categoriesService),
+    fakeTransactionsService(overrides.transactionsService),
+    fakeFixedExpenseRepo(overrides.fixedExpenseRepo)
   );
 }
 
@@ -151,15 +174,16 @@ describe('CreditCardsServiceImpl', () => {
     vi.setSystemTime(today);
     mockedFindCardStatementTransactions.mockResolvedValue([]);
     mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
+    mockedFindFirstFixedExpense.mockResolvedValue(null);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  describe('getCreditCardStatement (usa TransactionsService.findCardStatementTransactions)', () => {
+  describe('getCreditCardStatement (usa AccountsService.findAccountById + TransactionsService.findCardStatementTransactions)', () => {
     it('lanza NotFoundError si la cuenta no existe', async () => {
-      const service = buildService({ accountRepo: { findByIdAndUser: async () => null } });
+      const service = buildService({ accountsService: { findAccountById: async () => null } });
 
       await expect(service.getCreditCardStatement('card-1', 'user-1')).rejects.toThrow(
         'Cuenta no encontrada o no es una tarjeta de crédito'
@@ -168,7 +192,7 @@ describe('CreditCardsServiceImpl', () => {
 
     it('lanza NotFoundError si la cuenta no es una tarjeta de crédito', async () => {
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => fakeAccount({ type: 'bank' }) },
+        accountsService: { findAccountById: async () => fakeAccount({ type: 'bank' }) },
       });
 
       await expect(service.getCreditCardStatement('card-1', 'user-1')).rejects.toThrow(
@@ -178,8 +202,8 @@ describe('CreditCardsServiceImpl', () => {
 
     it('lanza ValidationError si no tiene fechas de corte/pago configuradas', async () => {
       const service = buildService({
-        accountRepo: {
-          findByIdAndUser: async () => fakeAccount({ cutoffDay: null, paymentDueDay: null }),
+        accountsService: {
+          findAccountById: async () => fakeAccount({ cutoffDay: null, paymentDueDay: null }),
         },
       });
 
@@ -190,7 +214,7 @@ describe('CreditCardsServiceImpl', () => {
 
     it('éxito: devuelve el statement calculado, consultando 1 sola tarjeta', async () => {
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => fakeAccount() },
+        accountsService: { findAccountById: async () => fakeAccount() },
       });
 
       const statement = await service.getCreditCardStatement('card-1', 'user-1');
@@ -211,7 +235,7 @@ describe('CreditCardsServiceImpl', () => {
       const previousCutoffUTC = new Date(Date.UTC(2026, 4, 5));
       const closedPeriodEndUTC = new Date(Date.UTC(2026, 5, 4));
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => account },
+        accountsService: { findAccountById: async () => account },
         creditCardPaymentRepo: {
           findMany: async () => [
             {
@@ -234,7 +258,7 @@ describe('CreditCardsServiceImpl', () => {
       mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
       mockedFindFirstFixedExpense.mockResolvedValue(null);
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => fakeAccount() },
+        accountsService: { findAccountById: async () => fakeAccount() },
       });
 
       const payment = await service.payCreditCardStatement('card-1', 'user-1', {
@@ -254,7 +278,7 @@ describe('CreditCardsServiceImpl', () => {
         mockedFindFirstFixedExpense.mockResolvedValue(null);
         const createCalls: unknown[] = [];
         const service = buildService({
-          accountRepo: { findByIdAndUser: async () => fakeAccount() },
+          accountsService: { findAccountById: async () => fakeAccount() },
           creditCardPaymentRepo: {
             create: async (data) => {
               createCalls.push(data);
@@ -282,7 +306,7 @@ describe('CreditCardsServiceImpl', () => {
       mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
       mockedFindFirstFixedExpense.mockResolvedValue(null);
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => fakeAccount() },
+        accountsService: { findAccountById: async () => fakeAccount() },
       });
 
       await service.payCreditCardStatement('card-1', 'user-1', {
@@ -302,7 +326,7 @@ describe('CreditCardsServiceImpl', () => {
       });
       mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => fakeAccount() },
+        accountsService: { findAccountById: async () => fakeAccount() },
       });
 
       await service.payCreditCardStatement('card-1', 'user-1', {
@@ -326,7 +350,7 @@ describe('CreditCardsServiceImpl', () => {
       });
       mockedFindFixedExpensePaymentInMonth.mockResolvedValue({ id: 'existing-tx' });
       const service = buildService({
-        accountRepo: { findByIdAndUser: async () => fakeAccount() },
+        accountsService: { findAccountById: async () => fakeAccount() },
       });
 
       await service.payCreditCardStatement('card-1', 'user-1', {

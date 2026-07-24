@@ -1,23 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { PrismaClient, FixedExpense, Account, Category } from '@prisma/client';
+import type {
+  PrismaClient,
+  FixedExpense,
+  Account,
+  Category,
+  RecurringDebtPayment,
+} from '@prisma/client';
 import type { FixedExpenseRepository } from '../../repositories/fixed-expense.repository.port.js';
-import type { AccountRepository } from '../../repositories/account.repository.port.js';
-import type { CategoryRepository } from '../../repositories/category.repository.port.js';
-import type { DebtsService } from '../debts.service.port.js';
+import type { AccountsService } from '../accounts.service.port.js';
+import type { CategoriesService, CategorySpending } from '../categories.service.port.js';
+import type { DebtsService, DebtsSummary } from '../debts.service.port.js';
 import type { CreditCardsService } from '../credit-cards.service.port.js';
 import type { TransactionsService } from '../transactions.service.port.js';
+import type {
+  RecurringDebtPaymentsService,
+  RdpWithFullRelations,
+  ProcessPendingResult,
+} from '../recurring-debt-payments.service.port.js';
 import { NotFoundError, ConflictError } from '../../lib/errors.js';
-
-vi.mock('../../repositories/recurring-debt-payment.repository.js', () => ({
-  findUnique: vi.fn(),
-  findAllByUser: vi.fn(),
-  update: vi.fn(),
-}));
-
-import * as recurringRepo from '../../repositories/recurring-debt-payment.repository.js';
 import { FixedExpensesServiceImpl } from '../fixed-expenses.service.js';
 
-const mockedFindUnique = recurringRepo.findUnique as unknown as ReturnType<typeof vi.fn>;
+const mockedFindUnique = vi.fn();
 const mockedCreateTransaction = vi.fn();
 
 function fakeFixedExpense(overrides: Partial<FixedExpense> = {}): FixedExpense {
@@ -66,42 +69,48 @@ function fakeAccount(overrides: Partial<Account> = {}): Account {
   } as unknown as Account;
 }
 
-function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRepository {
+function fakeAccountsService(overrides: Partial<AccountsService> = {}): AccountsService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findCreditCardsByUser: async () => [],
-    countByUser: async () => 0,
-    create: async () => fakeAccount(),
-    update: async () => fakeAccount(),
-    updateBalance: async () => fakeAccount(),
-    decrementBalance: async () => fakeAccount(),
-    remove: async () => fakeAccount(),
-    createTransfer: async () => {
+    getAccounts: async () => [],
+    getAccountById: async () => {
       throw new Error('not used in these tests');
     },
-    findTransfersByAccount: async () => [],
+    findAccountById: async () => null,
+    getCreditCards: async () => [],
+    getConfiguredCreditCards: async () => [],
+    countByUser: async () => 0,
+    createAccount: async () => fakeAccount(),
+    updateAccount: async () => fakeAccount(),
+    deleteAccount: async () => fakeAccount(),
+    transferFunds: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransfersByAccount: async () => [],
+    updateAccountBalance: async () => undefined,
     ...overrides,
   };
 }
 
-function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): CategoryRepository {
+function fakeCategoriesService(overrides: Partial<CategoriesService> = {}): CategoriesService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findFirst: async () => null,
-    findMany: async () => [],
+    getCategories: async () => [],
+    getCategoryById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    getCategorySpending: async () => ({}) as CategorySpending,
+    hydrateCategoriesByIds: async () => [],
+    hydrateUserCategoriesByIds: async () => [],
+    getOrCreateSystemCategory: async () => ({}) as Category,
     countByUser: async () => 0,
-    create: async () => {
-      throw new Error('not used in these tests');
-    },
-    update: async () => {
-      throw new Error('not used in these tests');
-    },
-    remove: async () => {
-      throw new Error('not used in these tests');
-    },
-    upsertSystemCategory: async () => ({}) as Category,
     ...overrides,
   };
 }
@@ -124,9 +133,8 @@ function fakeDebtsService(overrides: Partial<DebtsService> = {}): DebtsService {
     payDebt: async () => {
       throw new Error('not used in these tests');
     },
-    getDebtsSummary: async () => {
-      throw new Error('not used in these tests');
-    },
+    getDebtsSummary: async () => ({}) as DebtsSummary,
+    countByUser: async () => 0,
     ...overrides,
   };
 }
@@ -185,6 +193,30 @@ function fakeTransactionsService(
   };
 }
 
+function fakeRecurringDebtPaymentsService(
+  overrides: Partial<RecurringDebtPaymentsService> = {}
+): RecurringDebtPaymentsService {
+  return {
+    createRecurringDebtPayment: async () => {
+      throw new Error('not used in these tests');
+    },
+    getRecurringDebtPayments: async () => [] as RdpWithFullRelations[],
+    getRecurringDebtPaymentById: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateRecurringDebtPayment: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteRecurringDebtPayment: async () => {
+      throw new Error('not used in these tests');
+    },
+    processPendingRecurringPayments: async () => ({}) as ProcessPendingResult,
+    findRecurringPaymentById: mockedFindUnique,
+    updateRecurringPaymentFields: async () => ({}) as RecurringDebtPayment,
+    ...overrides,
+  };
+}
+
 function fakePrisma(
   overrides: {
     findManyFixedExpense?: ReturnType<typeof vi.fn>;
@@ -211,21 +243,23 @@ function fakePrisma(
 function buildService(
   deps: {
     fixedExpenseRepo?: FixedExpenseRepository;
-    accountRepo?: AccountRepository;
-    categoryRepo?: CategoryRepository;
+    accountsService?: AccountsService;
+    categoriesService?: CategoriesService;
     debtsService?: DebtsService;
     creditCardsService?: CreditCardsService;
     transactionsService?: TransactionsService;
+    recurringDebtPaymentsService?: RecurringDebtPaymentsService;
     prisma?: PrismaClient;
   } = {}
 ): FixedExpensesServiceImpl {
   return new FixedExpensesServiceImpl(
     deps.fixedExpenseRepo ?? fakeFixedExpenseRepo(),
-    deps.accountRepo ?? fakeAccountRepo(),
-    deps.categoryRepo ?? fakeCategoryRepo(),
+    deps.accountsService ?? fakeAccountsService(),
+    deps.categoriesService ?? fakeCategoriesService(),
     deps.debtsService ?? fakeDebtsService(),
     deps.creditCardsService ?? fakeCreditCardsService(),
     deps.transactionsService ?? fakeTransactionsService(),
+    deps.recurringDebtPaymentsService ?? fakeRecurringDebtPaymentsService(),
     deps.prisma ?? fakePrisma()
   );
 }
@@ -505,6 +539,75 @@ describe('FixedExpensesServiceImpl', () => {
           { fixedExpenseName: 'FE fe-1', message: 'Se superó el límite disponible de la tarjeta' },
         ],
       });
+    });
+  });
+
+  describe('getActiveFixedExpenses / getActiveFixedExpensesWithCategory / getActiveExpenseFixedExpenses (Fase 6)', () => {
+    it('getActiveFixedExpenses filtra solo isActive:true, sin include', async () => {
+      const calls: unknown[] = [];
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findAllByUser: async (userId, filters, include, orderBy) => {
+            calls.push({ userId, filters, include, orderBy });
+            return [fakeFixedExpense()];
+          },
+        }),
+      });
+
+      await service.getActiveFixedExpenses('user-1');
+
+      expect(calls).toEqual([
+        { userId: 'user-1', filters: { isActive: true }, include: undefined, orderBy: undefined },
+      ]);
+    });
+
+    it('getActiveFixedExpensesWithCategory preserva include de categoría y orderBy (sortOrder, dueDay)', async () => {
+      const calls: unknown[] = [];
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findAllByUser: async (userId, filters, include, orderBy) => {
+            calls.push({ userId, filters, include, orderBy });
+            return [];
+          },
+        }),
+      });
+
+      await service.getActiveFixedExpensesWithCategory('user-1');
+
+      expect(calls).toEqual([
+        {
+          userId: 'user-1',
+          filters: { isActive: true },
+          include: { category: { select: { id: true, name: true, icon: true, color: true } } },
+          orderBy: [{ sortOrder: 'asc' }, { dueDay: 'asc' }],
+        },
+      ]);
+    });
+
+    it('getActiveExpenseFixedExpenses filtra isActive:true y type:expense', async () => {
+      const calls: unknown[] = [];
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findAllByUser: async (userId, filters) => {
+            calls.push({ userId, filters });
+            return [];
+          },
+        }),
+      });
+
+      await service.getActiveExpenseFixedExpenses('user-1');
+
+      expect(calls).toEqual([{ userId: 'user-1', filters: { isActive: true, type: 'expense' } }]);
+    });
+  });
+
+  describe('countByUser (Fase 6 — cuenta TODOS, activos e inactivos)', () => {
+    it('delega en fixedExpenseRepo.countByUser (no en getFixedExpensesSummary)', async () => {
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ countByUser: async () => 9 }),
+      });
+
+      await expect(service.countByUser('user-1')).resolves.toBe(9);
     });
   });
 });

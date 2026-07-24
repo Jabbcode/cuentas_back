@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Notification, User } from '@prisma/client';
+import type { Notification, User, Category } from '@prisma/client';
 import type { NotificationRepository } from '../../repositories/notification.repository.port.js';
-import type { UserRepository } from '../../repositories/user.repository.port.js';
-import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { UsersService } from '../users.service.port.js';
+import type { CategoriesService, CategorySpending } from '../categories.service.port.js';
 import type { TransactionsService } from '../transactions.service.port.js';
 import { NotificationsServiceImpl } from '../notifications.service.js';
 
@@ -46,38 +46,41 @@ function fakeNotificationRepo(
   };
 }
 
-function fakeUserRepo(overrides: Partial<UserRepository> = {}): UserRepository {
+function fakeUsersService(overrides: Partial<UsersService> = {}): UsersService {
   return {
-    findByEmail: async () => null,
-    findById: async () => fakeUser(),
-    findFirst: async () => null,
-    findMany: async () => [],
-    create: async () => fakeUser(),
-    update: async () => fakeUser(),
-    remove: async () => fakeUser(),
+    findUserById: async () => fakeUser(),
+    findDuplicateEmail: async () => null,
+    getAllUsersForSummaries: async () => [],
+    updateNotificationPreferences: async () => fakeUser(),
+    updateProfile: async () => fakeUser(),
+    updatePassword: async () => fakeUser(),
+    deleteUser: async () => fakeUser(),
     ...overrides,
   };
 }
 
-function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): CategoryRepository {
+function fakeCategoriesService(overrides: Partial<CategoriesService> = {}): CategoriesService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findFirst: async () => null,
-    findMany: async () => [],
+    getCategories: async () => [],
+    getCategoryById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    getCategorySpending: async () => ({}) as CategorySpending,
+    hydrateCategoriesByIds: async () => [],
+    hydrateUserCategoriesByIds: async () => [],
+    getOrCreateSystemCategory: async () => {
+      throw new Error('not used in these tests');
+    },
     countByUser: async () => 0,
-    create: async () => {
-      throw new Error('not used in these tests');
-    },
-    update: async () => {
-      throw new Error('not used in these tests');
-    },
-    remove: async () => {
-      throw new Error('not used in these tests');
-    },
-    upsertSystemCategory: async () => {
-      throw new Error('not used in these tests');
-    },
     ...overrides,
   };
 }
@@ -126,15 +129,15 @@ function fakeTransactionsService(
 function buildService(
   overrides: {
     notificationRepo?: Partial<NotificationRepository>;
-    userRepo?: Partial<UserRepository>;
-    categoryRepo?: Partial<CategoryRepository>;
+    usersService?: Partial<UsersService>;
+    categoriesService?: Partial<CategoriesService>;
     transactionsService?: Partial<TransactionsService>;
   } = {}
 ) {
   return new NotificationsServiceImpl(
     fakeNotificationRepo(overrides.notificationRepo),
-    fakeUserRepo(overrides.userRepo),
-    fakeCategoryRepo(overrides.categoryRepo),
+    fakeUsersService(overrides.usersService),
+    fakeCategoriesService(overrides.categoriesService),
     fakeTransactionsService(overrides.transactionsService)
   );
 }
@@ -188,9 +191,9 @@ describe('NotificationsServiceImpl', () => {
     });
   });
 
-  describe('getPreferences', () => {
+  describe('getPreferences (usa UsersService.findUserById)', () => {
     it('lanza NotFoundError si el usuario no existe', async () => {
-      const service = buildService({ userRepo: { findById: async () => null } });
+      const service = buildService({ usersService: { findUserById: async () => null } });
 
       await expect(service.getPreferences('user-1')).rejects.toThrow('Usuario no encontrado');
     });
@@ -198,38 +201,32 @@ describe('NotificationsServiceImpl', () => {
     it('devuelve las preferencias del usuario', async () => {
       const prefs = { categoryLimit: false, debtDue: true, monthlyEmail: false };
       const service = buildService({
-        userRepo: { findById: async () => fakeUser({ notificationPreferences: prefs }) },
+        usersService: { findUserById: async () => fakeUser({ notificationPreferences: prefs }) },
       });
 
       await expect(service.getPreferences('user-1')).resolves.toEqual(prefs);
     });
   });
 
-  describe('updatePreferences', () => {
+  describe('updatePreferences (usa UsersService.updateNotificationPreferences)', () => {
     it('mezcla las preferencias actuales con las nuevas y persiste', async () => {
       const current = { categoryLimit: true, debtDue: true, monthlyEmail: true };
-      const updateCalls: unknown[] = [];
+      const updateNotificationPreferences = vi.fn().mockResolvedValue(fakeUser());
       const service = buildService({
-        userRepo: {
-          findById: async () => fakeUser({ notificationPreferences: current }),
-          update: async (id, data) => {
-            updateCalls.push({ id, data });
-            return fakeUser();
-          },
+        usersService: {
+          findUserById: async () => fakeUser({ notificationPreferences: current }),
+          updateNotificationPreferences,
         },
       });
 
       const result = await service.updatePreferences('user-1', { monthlyEmail: false });
 
       expect(result).toEqual({ categoryLimit: true, debtDue: true, monthlyEmail: false });
-      expect(updateCalls).toEqual([
-        {
-          id: 'user-1',
-          data: {
-            notificationPreferences: { categoryLimit: true, debtDue: true, monthlyEmail: false },
-          },
-        },
-      ]);
+      expect(updateNotificationPreferences).toHaveBeenCalledWith('user-1', {
+        categoryLimit: true,
+        debtDue: true,
+        monthlyEmail: false,
+      });
     });
   });
 
@@ -250,12 +247,12 @@ describe('NotificationsServiceImpl', () => {
               { categoryId: 'cat-2', _sum: { amount: 50 } },
             ] as never,
         },
-        categoryRepo: {
-          findMany: async () =>
+        categoriesService: {
+          hydrateUserCategoriesByIds: async () =>
             [
               { id: 'cat-1', name: 'Comida', icon: '🍔' },
               { id: 'cat-2', name: 'Transporte', icon: '🚗' },
-            ] as never,
+            ] as unknown as Category[],
         },
       });
 
@@ -280,7 +277,7 @@ describe('NotificationsServiceImpl', () => {
           getTopExpenseCategories: async () =>
             [{ categoryId: 'cat-borrada', _sum: { amount: 100 } }] as never,
         },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       const result = await service.buildMonthlySummary('user-1', range);
@@ -297,7 +294,7 @@ describe('NotificationsServiceImpl', () => {
         .mockResolvedValueOnce({ _sum: { amount: null } });
       const service = buildService({
         transactionsService: { getMonthlyTotalByType, getTopExpenseCategories: async () => [] },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       const result = await service.buildMonthlySummary('user-1', range);
@@ -312,7 +309,7 @@ describe('NotificationsServiceImpl', () => {
       const getTopExpenseCategories = vi.fn().mockResolvedValue([]);
       const service = buildService({
         transactionsService: { getMonthlyTotalByType, getTopExpenseCategories },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       await service.buildMonthlySummary('user-1', range);
@@ -344,12 +341,12 @@ describe('NotificationsServiceImpl', () => {
               { userId: 'user-2', categoryId: 'cat-1', _sum: { amount: 80 } },
             ] as never,
         },
-        categoryRepo: {
-          findMany: async () =>
+        categoriesService: {
+          hydrateUserCategoriesByIds: async () =>
             [
               { id: 'cat-1', name: 'Comida', icon: '🍔' },
               { id: 'cat-2', name: 'Transporte', icon: '🚗' },
-            ] as never,
+            ] as unknown as Category[],
         },
       });
 
@@ -377,7 +374,7 @@ describe('NotificationsServiceImpl', () => {
             [{ userId: 'user-1', type: 'expense', _sum: { amount: 50 } }] as never,
           getExpensesByUserAndCategory: async () => [],
         },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       const result = await service.buildMonthlySummariesBatch(['user-1', 'user-sin-tx'], range);
@@ -396,7 +393,7 @@ describe('NotificationsServiceImpl', () => {
           getExpensesByUserAndCategory: async () =>
             [{ userId: 'user-1', categoryId: 'cat-borrada', _sum: { amount: 30 } }] as never,
         },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       const result = await service.buildMonthlySummariesBatch(['user-1'], range);
@@ -423,7 +420,7 @@ describe('NotificationsServiceImpl', () => {
           getUserTotalsByType: async () => [],
           getExpensesByUserAndCategory: async () => [...manyCategories, ...fewCategories] as never,
         },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       const result = await service.buildMonthlySummariesBatch(['user-1', 'user-2'], range);
@@ -454,7 +451,7 @@ describe('NotificationsServiceImpl', () => {
       const getExpensesByUserAndCategory = vi.fn().mockResolvedValue([]);
       const service = buildService({
         transactionsService: { getUserTotalsByType, getExpensesByUserAndCategory },
-        categoryRepo: { findMany: async () => [] },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
       });
 
       await service.buildMonthlySummariesBatch(['user-1', 'user-2'], range);
