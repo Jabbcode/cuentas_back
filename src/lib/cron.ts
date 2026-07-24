@@ -1,9 +1,8 @@
 import cron from 'node-cron';
 import { prisma } from './prisma.js';
-import { notificationsService, fixedExpensesService } from '../bootstrap.js';
+import { notificationsService, fixedExpensesService, usersService } from '../bootstrap.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { getMonthRange } from './utils/date.utils.js';
-import * as userRepo from '../repositories/user.repository.js';
 
 function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
@@ -108,10 +107,7 @@ async function sendMonthlySummaries(): Promise<void> {
 
   const { start: startOfMonth, end: endOfMonth } = getMonthRange(prevYear, prevMonth);
 
-  const users = await userRepo.findMany(
-    {},
-    { id: true, email: true, name: true, notificationPreferences: true }
-  );
+  const users = await usersService.getAllUsersForSummaries();
 
   const monthNames = [
     'Enero',

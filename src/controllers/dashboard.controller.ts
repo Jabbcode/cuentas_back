@@ -1,6 +1,5 @@
 import { Response, NextFunction } from 'express';
-import { dashboardService } from '../bootstrap.js';
-import * as projectionService from '../services/projection.service.js';
+import { dashboardService, projectionService } from '../bootstrap.js';
 import { AuthRequest } from '../types/index.js';
 
 export async function getSummary(req: AuthRequest, res: Response, next: NextFunction) {
