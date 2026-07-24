@@ -11,6 +11,10 @@ export type TransferWithAccounts = Transfer & { fromAccount: Account; toAccount:
 export interface AccountsService {
   getAccounts(userId: string): Promise<Account[]>;
   getAccountById(id: string, userId: string): Promise<Account>;
+  findAccountById(id: string, userId: string): Promise<Account | null>;
+  getCreditCards(userId: string): Promise<Account[]>;
+  getConfiguredCreditCards(userId: string): Promise<Account[]>;
+  countByUser(userId: string): Promise<number>;
   createAccount(data: CreateAccountInput, userId: string): Promise<Account>;
   updateAccount(id: string, data: UpdateAccountInput, userId: string): Promise<Account>;
   deleteAccount(id: string, userId: string): Promise<Account>;

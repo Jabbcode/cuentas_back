@@ -43,4 +43,5 @@ export interface DebtsService {
   deleteDebt(debtId: string, userId: string): Promise<{ message: string }>;
   payDebt(debtId: string, userId: string, data: PayDebtInput): Promise<PayDebtResult>;
   getDebtsSummary(userId: string): Promise<DebtsSummary>;
+  countByUser(userId: string): Promise<number>;
 }

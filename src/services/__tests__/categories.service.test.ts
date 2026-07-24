@@ -194,4 +194,72 @@ describe('CategoriesServiceImpl', () => {
       expect(result.isOverLimit).toBe(false);
     });
   });
+
+  describe('hydrateCategoriesByIds / hydrateUserCategoriesByIds (Fase 6)', () => {
+    it('hydrateCategoriesByIds consulta por ids sin filtrar por userId (uso de dashboard)', async () => {
+      const calls: unknown[] = [];
+      const service = new CategoriesServiceImpl(
+        fakeCategoryRepo({
+          findMany: async (where) => {
+            calls.push(where);
+            return [fakeCategory() as unknown as Category];
+          },
+        }),
+        fakeTransactionsService()
+      );
+
+      await service.hydrateCategoriesByIds(['cat-1', 'cat-2']);
+
+      expect(calls).toEqual([{ id: { in: ['cat-1', 'cat-2'] } }]);
+    });
+
+    it('hydrateUserCategoriesByIds consulta por ids y userId:{in} (uso de notifications)', async () => {
+      const calls: unknown[] = [];
+      const service = new CategoriesServiceImpl(
+        fakeCategoryRepo({
+          findMany: async (where) => {
+            calls.push(where);
+            return [];
+          },
+        }),
+        fakeTransactionsService()
+      );
+
+      await service.hydrateUserCategoriesByIds(['cat-1'], ['user-1', 'user-2']);
+
+      expect(calls).toEqual([{ id: { in: ['cat-1'] }, userId: { in: ['user-1', 'user-2'] } }]);
+    });
+  });
+
+  describe('getOrCreateSystemCategory (Fase 6)', () => {
+    it('delega en categoryRepo.upsertSystemCategory', async () => {
+      const calls: unknown[] = [];
+      const created = fakeCategory({ id: 'category-payment' }) as unknown as Category;
+      const service = new CategoriesServiceImpl(
+        fakeCategoryRepo({
+          upsertSystemCategory: async (userId, systemKey) => {
+            calls.push({ userId, systemKey });
+            return created;
+          },
+        }),
+        fakeTransactionsService()
+      );
+
+      await expect(
+        service.getOrCreateSystemCategory('user-1', 'CREDIT_CARD_PAYMENT')
+      ).resolves.toEqual(created);
+      expect(calls).toEqual([{ userId: 'user-1', systemKey: 'CREDIT_CARD_PAYMENT' }]);
+    });
+  });
+
+  describe('countByUser (Fase 6)', () => {
+    it('delega en categoryRepo.countByUser', async () => {
+      const service = new CategoriesServiceImpl(
+        fakeCategoryRepo({ countByUser: async () => 6 }),
+        fakeTransactionsService()
+      );
+
+      await expect(service.countByUser('user-1')).resolves.toBe(6);
+    });
+  });
 });

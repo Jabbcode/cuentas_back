@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Account, Category } from '@prisma/client';
-import type { AccountRepository } from '../../repositories/account.repository.port.js';
-import type { FixedExpenseRepository } from '../../repositories/fixed-expense.repository.port.js';
-import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { Account, Category, FixedExpense } from '@prisma/client';
+import type { AccountsService } from '../accounts.service.port.js';
+import type {
+  FixedExpensesService,
+  FixedExpensesSummary,
+  AutoGenerateSummary,
+} from '../fixed-expenses.service.port.js';
+import type { CategoriesService, CategorySpending } from '../categories.service.port.js';
 import type { TransactionsService } from '../transactions.service.port.js';
 import { DashboardServiceImpl } from '../dashboard.service.js';
 
@@ -18,64 +22,79 @@ function fakeAccount(overrides: Partial<Account> = {}): Account {
   } as unknown as Account;
 }
 
-function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRepository {
+function fakeAccountsService(overrides: Partial<AccountsService> = {}): AccountsService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findCreditCardsByUser: async () => [],
-    countByUser: async () => 0,
-    create: async () => fakeAccount(),
-    update: async () => fakeAccount(),
-    updateBalance: async () => fakeAccount(),
-    decrementBalance: async () => fakeAccount(),
-    remove: async () => fakeAccount(),
-    createTransfer: async () => {
-      throw new Error('not implemented');
+    getAccounts: async () => [],
+    getAccountById: async () => {
+      throw new Error('not used in these tests');
     },
-    findTransfersByAccount: async () => [],
+    findAccountById: async () => null,
+    getCreditCards: async () => [],
+    getConfiguredCreditCards: async () => [],
+    countByUser: async () => 0,
+    createAccount: async () => fakeAccount(),
+    updateAccount: async () => fakeAccount(),
+    deleteAccount: async () => fakeAccount(),
+    transferFunds: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransfersByAccount: async () => [],
+    updateAccountBalance: async () => undefined,
+    ...overrides,
+  } as AccountsService;
+}
+
+function fakeFixedExpensesService(
+  overrides: Partial<FixedExpensesService> = {}
+): FixedExpensesService {
+  return {
+    getFixedExpenses: async () => [],
+    getFixedExpenseById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    payFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    getFixedExpensesSummary: async () => ({}) as FixedExpensesSummary,
+    reorderFixedExpenses: async () => ({ success: true }),
+    autoGenerateFixedExpenseTransactions: async () => ({}) as AutoGenerateSummary,
+    getActiveFixedExpenses: async () => [],
+    getActiveFixedExpensesWithCategory: async () => [],
+    getActiveExpenseFixedExpenses: async () => [],
+    countByUser: async () => 0,
     ...overrides,
   };
 }
 
-function fakeFixedExpenseRepo(
-  overrides: Partial<FixedExpenseRepository> = {}
-): FixedExpenseRepository {
+function fakeCategoriesService(overrides: Partial<CategoriesService> = {}): CategoriesService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findFirst: async () => null,
-    findMany: async () => [],
+    getCategories: async () => [],
+    getCategoryById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    getCategorySpending: async () => ({}) as CategorySpending,
+    hydrateCategoriesByIds: async () => [],
+    hydrateUserCategoriesByIds: async () => [],
+    getOrCreateSystemCategory: async () => ({}) as Category,
     countByUser: async () => 0,
-    create: async () => {
-      throw new Error('not implemented');
-    },
-    update: async () => {
-      throw new Error('not implemented');
-    },
-    remove: async () => {
-      throw new Error('not implemented');
-    },
-    ...overrides,
-  };
-}
-
-function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): CategoryRepository {
-  return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findFirst: async () => null,
-    findMany: async () => [],
-    countByUser: async () => 0,
-    create: async () => {
-      throw new Error('not implemented');
-    },
-    update: async () => {
-      throw new Error('not implemented');
-    },
-    remove: async () => {
-      throw new Error('not implemented');
-    },
-    upsertSystemCategory: async () => ({}) as Category,
     ...overrides,
   };
 }
@@ -134,11 +153,11 @@ describe('DashboardServiceImpl', () => {
         .mockResolvedValueOnce({ _sum: { amount: 200 } }); // expense
 
       const service = new DashboardServiceImpl(
-        fakeAccountRepo({
-          findAllByUser: async () => [fakeAccount({ balance: 100 }), fakeAccount({ balance: 50 })],
+        fakeAccountsService({
+          getAccounts: async () => [fakeAccount({ balance: 100 }), fakeAccount({ balance: 50 })],
         }),
-        fakeFixedExpenseRepo(),
-        fakeCategoryRepo(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService(),
         fakeTransactionsService({ getMonthlyTotalByType })
       );
 
@@ -157,14 +176,14 @@ describe('DashboardServiceImpl', () => {
         .mockResolvedValueOnce({ _sum: { amount: 0 } });
 
       const service = new DashboardServiceImpl(
-        fakeAccountRepo({
-          findAllByUser: async () => [
+        fakeAccountsService({
+          getAccounts: async () => [
             fakeAccount({ balance: 100 }),
             fakeAccount({ type: 'credit_card', balance: -300, creditLimit: 1000 }),
           ],
         }),
-        fakeFixedExpenseRepo(),
-        fakeCategoryRepo(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService(),
         fakeTransactionsService({ getMonthlyTotalByType })
       );
 
@@ -175,13 +194,13 @@ describe('DashboardServiceImpl', () => {
     });
   });
 
-  describe('getByCategory (usa TransactionsService.getCategoryBreakdown)', () => {
+  describe('getByCategory (usa TransactionsService.getCategoryBreakdown + CategoriesService.hydrateCategoriesByIds)', () => {
     it('agrupa por categoría y calcula el porcentaje', async () => {
       const service = new DashboardServiceImpl(
-        fakeAccountRepo(),
-        fakeFixedExpenseRepo(),
-        fakeCategoryRepo({
-          findMany: async () =>
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService({
+          hydrateCategoriesByIds: async () =>
             [
               { id: 'cat-1', name: 'Comida', icon: '🍔', color: '#f00', monthlyLimit: null },
               { id: 'cat-2', name: 'Ocio', icon: '🎮', color: '#0f0', monthlyLimit: null },
@@ -206,9 +225,9 @@ describe('DashboardServiceImpl', () => {
 
     it('sin transacciones del período, devuelve un array vacío', async () => {
       const service = new DashboardServiceImpl(
-        fakeAccountRepo(),
-        fakeFixedExpenseRepo(),
-        fakeCategoryRepo(),
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService(),
         fakeTransactionsService({ getCategoryBreakdown: async () => [] })
       );
 
@@ -216,18 +235,14 @@ describe('DashboardServiceImpl', () => {
     });
   });
 
-  describe('getFixedVsVariable (usa TransactionsService.getVariableExpenseTotal)', () => {
+  describe('getFixedVsVariable (usa TransactionsService.getVariableExpenseTotal + FixedExpensesService.getActiveExpenseFixedExpenses)', () => {
     it('combina gastos fijos configurados con transacciones variables', async () => {
       const service = new DashboardServiceImpl(
-        fakeAccountRepo(),
-        fakeFixedExpenseRepo({
-          findAllByUser: async () => [
-            { amount: 60 } as unknown as Awaited<
-              ReturnType<FixedExpenseRepository['findAllByUser']>
-            >[number],
-          ],
+        fakeAccountsService(),
+        fakeFixedExpensesService({
+          getActiveExpenseFixedExpenses: async () => [{ amount: 60 } as unknown as FixedExpense],
         }),
-        fakeCategoryRepo(),
+        fakeCategoriesService(),
         fakeTransactionsService({
           getVariableExpenseTotal: async () => ({ _sum: { amount: 40 } }),
         })

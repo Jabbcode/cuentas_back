@@ -6,7 +6,6 @@ import type {
 import { NotFoundError, ConflictError } from '../lib/errors.js';
 import { calculateNextDueDate } from '../lib/utils/date.utils.js';
 import type { RecurringDebtPaymentRepository } from '../repositories/recurring-debt-payment.repository.port.js';
-import type { DebtRepository } from '../repositories/debt.repository.port.js';
 import type { AccountsService } from './accounts.service.port.js';
 import type { DebtsService } from './debts.service.port.js';
 import { DEBT_STATUS, DEBT_MESSAGES } from '../lib/constants/debt.constants.js';
@@ -26,7 +25,6 @@ import type {
 export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsService {
   constructor(
     private recurringRepo: RecurringDebtPaymentRepository,
-    private debtRepo: DebtRepository,
     private accountsService: AccountsService,
     private debtsService: DebtsService
   ) {}
@@ -36,11 +34,7 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     data: CreateRecurringDebtPaymentInput
   ): Promise<RdpCreated> {
     // Verify debt exists and belongs to user
-    const debt = await this.debtRepo.findByIdAndUser(data.debtId, userId);
-
-    if (!debt) {
-      throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
-    }
+    const debt = await this.debtsService.getDebtById(data.debtId, userId);
 
     if (debt.status === DEBT_STATUS.PAID) {
       throw new ConflictError(RECURRING_DEBT_PAYMENT_MESSAGES.CANNOT_CONFIGURE_ON_PAID_DEBT);
@@ -252,5 +246,13 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
       deactivated: results.filter((r) => r.status === PROCESS_PENDING_STATUS.DEACTIVATED).length,
       results,
     };
+  }
+
+  async findRecurringPaymentById(id: string) {
+    return this.recurringRepo.findUnique(id);
+  }
+
+  async updateRecurringPaymentFields(id: string, data: Prisma.RecurringDebtPaymentUpdateInput) {
+    return this.recurringRepo.update(id, data);
   }
 }
