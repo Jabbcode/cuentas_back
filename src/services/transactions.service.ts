@@ -42,6 +42,11 @@ export class TransactionsServiceImpl implements TransactionsService {
   constructor(
     private transactionRepo: TransactionRepository,
     private accountsService: AccountsService,
+    // ADR-009 (enmienda Fase 6): excepción por ciclo de construcción —
+    // CategoriesService ya depende de TransactionsService (countByCategory),
+    // así que TransactionsService no puede depender de CategoriesService.
+    // Esta lectura (findMany, hidratación de categorías) no tiene lógica de
+    // negocio, se inyecta el repo directo.
     private categoryRepo: CategoryRepository,
     private prisma: PrismaClient
   ) {}
