@@ -2,20 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Account, Debt, DebtPayment, Transaction, PrismaClient } from '@prisma/client';
 import type { DebtRepository } from '../../repositories/debt.repository.port.js';
 import type { RecurringDebtPaymentRepository } from '../../repositories/recurring-debt-payment.repository.port.js';
+import type { FixedExpenseRepository } from '../../repositories/fixed-expense.repository.port.js';
 import type { AccountsService } from '../accounts.service.port.js';
 import type { TransactionsService } from '../transactions.service.port.js';
 import { NotFoundError } from '../../lib/errors.js';
-
-vi.mock('../../repositories/fixed-expense.repository.js', () => ({
-  findFirst: vi.fn(),
-}));
-
-import * as fixedExpenseRepo from '../../repositories/fixed-expense.repository.js';
 import { DebtsServiceImpl } from '../debts.service.js';
 
-const mockedFindFirstFixedExpense = fixedExpenseRepo.findFirst as unknown as ReturnType<
-  typeof vi.fn
->;
+const mockedFindFirstFixedExpense = vi.fn();
 
 function fakeDebt(overrides: Partial<Debt> = {}): Debt {
   return {
@@ -160,6 +153,28 @@ function fakeTransactionsService(
   };
 }
 
+function fakeFixedExpenseRepo(
+  overrides: Partial<FixedExpenseRepository> = {}
+): FixedExpenseRepository {
+  return {
+    findAllByUser: async () => [],
+    findByIdAndUser: async () => null,
+    findFirst: mockedFindFirstFixedExpense,
+    findMany: async () => [],
+    countByUser: async () => 0,
+    create: async () => {
+      throw new Error('not used in these tests');
+    },
+    update: async () => {
+      throw new Error('not used in these tests');
+    },
+    remove: async () => {
+      throw new Error('not used in these tests');
+    },
+    ...overrides,
+  };
+}
+
 function fakePrisma(): PrismaClient {
   const txFake = {
     category: { upsert: async () => ({ id: 'category-1' }) },
@@ -182,6 +197,7 @@ function buildService(
     accountsService?: Partial<AccountsService>;
     recurringRepo?: Partial<RecurringDebtPaymentRepository>;
     transactionsService?: Partial<TransactionsService>;
+    fixedExpenseRepo?: Partial<FixedExpenseRepository>;
   } = {}
 ): DebtsServiceImpl {
   return new DebtsServiceImpl(
@@ -189,6 +205,7 @@ function buildService(
     fakeAccountsService(overrides.accountsService),
     fakeRecurringRepo(overrides.recurringRepo),
     fakeTransactionsService(overrides.transactionsService),
+    fakeFixedExpenseRepo(overrides.fixedExpenseRepo),
     fakePrisma()
   );
 }
@@ -393,6 +410,14 @@ describe('DebtsServiceImpl', () => {
 
       expect(createTransaction).toHaveBeenCalledTimes(1);
       expect(result.payment.id).toBe('payment-1');
+    });
+  });
+
+  describe('countByUser (Fase 6)', () => {
+    it('delega en debtRepo.countByUser', async () => {
+      const service = buildService({ debtRepo: { countByUser: async () => 4 } });
+
+      await expect(service.countByUser('user-1')).resolves.toBe(4);
     });
   });
 });

@@ -1,3 +1,4 @@
+import type { Category } from '@prisma/client';
 import type { CreateCategoryInput, UpdateCategoryInput } from '../schemas/category.schema.js';
 import { NotFoundError, ConflictError } from '../lib/errors.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
@@ -5,6 +6,7 @@ import { getMonthRange } from '../lib/utils/date.utils.js';
 import { CATEGORY_MESSAGES } from '../lib/constants/category.constants.js';
 import type { CategoriesService, CategorySpending } from './categories.service.port.js';
 import type { TransactionsService } from './transactions.service.port.js';
+import type { CategorySystemKey } from '../lib/constants/category-system-keys.js';
 
 export class CategoriesServiceImpl implements CategoriesService {
   constructor(
@@ -77,5 +79,21 @@ export class CategoriesServiceImpl implements CategoriesService {
       percentage,
       isOverLimit: limit ? spent > limit : false,
     };
+  }
+
+  async hydrateCategoriesByIds(categoryIds: string[]): Promise<Category[]> {
+    return this.categoryRepo.findMany({ id: { in: categoryIds } });
+  }
+
+  async hydrateUserCategoriesByIds(categoryIds: string[], userIds: string[]): Promise<Category[]> {
+    return this.categoryRepo.findMany({ id: { in: categoryIds }, userId: { in: userIds } });
+  }
+
+  async getOrCreateSystemCategory(userId: string, systemKey: CategorySystemKey): Promise<Category> {
+    return this.categoryRepo.upsertSystemCategory(userId, systemKey);
+  }
+
+  async countByUser(userId: string): Promise<number> {
+    return this.categoryRepo.countByUser(userId);
   }
 }

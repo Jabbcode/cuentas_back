@@ -1,21 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import bcrypt from 'bcrypt';
-import type { User } from '@prisma/client';
-import type { UserRepository } from '../../repositories/user.repository.port.js';
-import type { AccountRepository } from '../../repositories/account.repository.port.js';
-import type { CategoryRepository } from '../../repositories/category.repository.port.js';
-import type { FixedExpenseRepository } from '../../repositories/fixed-expense.repository.port.js';
+import type { User, Category } from '@prisma/client';
+import type { UsersService } from '../users.service.port.js';
+import type { AccountsService } from '../accounts.service.port.js';
+import type { CategoriesService, CategorySpending } from '../categories.service.port.js';
+import type {
+  FixedExpensesService,
+  FixedExpensesSummary,
+  AutoGenerateSummary,
+} from '../fixed-expenses.service.port.js';
+import type { DebtsService, DebtsSummary } from '../debts.service.port.js';
 import type { TransactionsService } from '../transactions.service.port.js';
 import { ConflictError, ValidationError } from '../../lib/errors.js';
-
-vi.mock('../../repositories/debt.repository.js', () => ({
-  countByUser: vi.fn(),
-}));
-
-import * as debtRepo from '../../repositories/debt.repository.js';
 import { SettingsServiceImpl } from '../settings.service.js';
-
-const mockedDebtCountByUser = debtRepo.countByUser as unknown as ReturnType<typeof vi.fn>;
 
 function fakeUser(overrides: Partial<User> = {}): User {
   return {
@@ -28,89 +25,122 @@ function fakeUser(overrides: Partial<User> = {}): User {
   } as unknown as User;
 }
 
-function fakeUserRepo(overrides: Partial<UserRepository> = {}): UserRepository {
+function fakeUsersService(overrides: Partial<UsersService> = {}): UsersService {
   return {
-    findByEmail: async () => null,
-    findById: async () => fakeUser(),
-    findFirst: async () => null,
-    findMany: async () => [],
-    create: async () => fakeUser(),
-    update: async () => fakeUser(),
-    remove: async () => fakeUser(),
+    findUserById: async () => fakeUser(),
+    findDuplicateEmail: async () => null,
+    getAllUsersForSummaries: async () => [],
+    updateNotificationPreferences: async () => fakeUser(),
+    updateProfile: async () => fakeUser(),
+    updatePassword: async () => fakeUser(),
+    deleteUser: async () => fakeUser(),
     ...overrides,
   };
 }
 
-function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRepository {
+function fakeAccountsService(overrides: Partial<AccountsService> = {}): AccountsService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findCreditCardsByUser: async () => [],
+    getAccounts: async () => [],
+    getAccountById: async () => {
+      throw new Error('not used in these tests');
+    },
+    findAccountById: async () => null,
+    getCreditCards: async () => [],
+    getConfiguredCreditCards: async () => [],
     countByUser: async () => 0,
-    create: async () => {
+    createAccount: async () => {
       throw new Error('not used in these tests');
     },
-    update: async () => {
+    updateAccount: async () => {
       throw new Error('not used in these tests');
     },
-    updateBalance: async () => {
+    deleteAccount: async () => {
       throw new Error('not used in these tests');
     },
-    decrementBalance: async () => {
+    transferFunds: async () => {
       throw new Error('not used in these tests');
     },
-    remove: async () => {
-      throw new Error('not used in these tests');
-    },
-    createTransfer: async () => {
-      throw new Error('not used in these tests');
-    },
-    findTransfersByAccount: async () => [],
+    getTransfersByAccount: async () => [],
+    updateAccountBalance: async () => undefined,
     ...overrides,
   };
 }
 
-function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): CategoryRepository {
+function fakeCategoriesService(overrides: Partial<CategoriesService> = {}): CategoriesService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findFirst: async () => null,
-    findMany: async () => [],
+    getCategories: async () => [],
+    getCategoryById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteCategory: async () => {
+      throw new Error('not used in these tests');
+    },
+    getCategorySpending: async () => ({}) as CategorySpending,
+    hydrateCategoriesByIds: async () => [],
+    hydrateUserCategoriesByIds: async () => [],
+    getOrCreateSystemCategory: async () => ({}) as Category,
     countByUser: async () => 0,
-    create: async () => {
-      throw new Error('not used in these tests');
-    },
-    update: async () => {
-      throw new Error('not used in these tests');
-    },
-    remove: async () => {
-      throw new Error('not used in these tests');
-    },
-    upsertSystemCategory: async () => {
-      throw new Error('not used in these tests');
-    },
     ...overrides,
   };
 }
 
-function fakeFixedExpenseRepo(
-  overrides: Partial<FixedExpenseRepository> = {}
-): FixedExpenseRepository {
+function fakeFixedExpensesService(
+  overrides: Partial<FixedExpensesService> = {}
+): FixedExpensesService {
   return {
-    findAllByUser: async () => [],
-    findByIdAndUser: async () => null,
-    findFirst: async () => null,
-    findMany: async () => [],
+    getFixedExpenses: async () => [],
+    getFixedExpenseById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    payFixedExpense: async () => {
+      throw new Error('not used in these tests');
+    },
+    getFixedExpensesSummary: async () => ({}) as FixedExpensesSummary,
+    reorderFixedExpenses: async () => ({ success: true }),
+    autoGenerateFixedExpenseTransactions: async () => ({}) as AutoGenerateSummary,
+    getActiveFixedExpenses: async () => [],
+    getActiveFixedExpensesWithCategory: async () => [],
+    getActiveExpenseFixedExpenses: async () => [],
     countByUser: async () => 0,
-    create: async () => {
+    ...overrides,
+  };
+}
+
+function fakeDebtsService(overrides: Partial<DebtsService> = {}): DebtsService {
+  return {
+    createDebt: async () => {
       throw new Error('not used in these tests');
     },
-    update: async () => {
+    getDebts: async () => [],
+    getDebtById: async () => {
       throw new Error('not used in these tests');
     },
-    remove: async () => {
+    updateDebt: async () => {
       throw new Error('not used in these tests');
     },
+    deleteDebt: async () => {
+      throw new Error('not used in these tests');
+    },
+    payDebt: async () => {
+      throw new Error('not used in these tests');
+    },
+    getDebtsSummary: async () => ({}) as DebtsSummary,
+    countByUser: async () => 0,
     ...overrides,
   };
 }
@@ -158,19 +188,21 @@ function fakeTransactionsService(
 
 function buildService(
   deps: {
-    userRepo?: UserRepository;
-    accountRepo?: AccountRepository;
-    categoryRepo?: CategoryRepository;
-    fixedExpenseRepo?: FixedExpenseRepository;
-    transactionsService?: TransactionsService;
+    usersService?: Partial<UsersService>;
+    accountsService?: Partial<AccountsService>;
+    categoriesService?: Partial<CategoriesService>;
+    fixedExpensesService?: Partial<FixedExpensesService>;
+    debtsService?: Partial<DebtsService>;
+    transactionsService?: Partial<TransactionsService>;
   } = {}
 ): SettingsServiceImpl {
   return new SettingsServiceImpl(
-    deps.userRepo ?? fakeUserRepo(),
-    deps.accountRepo ?? fakeAccountRepo(),
-    deps.categoryRepo ?? fakeCategoryRepo(),
-    deps.fixedExpenseRepo ?? fakeFixedExpenseRepo(),
-    deps.transactionsService ?? fakeTransactionsService()
+    fakeUsersService(deps.usersService),
+    fakeAccountsService(deps.accountsService),
+    fakeCategoriesService(deps.categoriesService),
+    fakeFixedExpensesService(deps.fixedExpensesService),
+    fakeDebtsService(deps.debtsService),
+    fakeTransactionsService(deps.transactionsService)
   );
 }
 
@@ -179,10 +211,34 @@ describe('SettingsServiceImpl', () => {
     vi.clearAllMocks();
   });
 
-  describe('updateUserProfile', () => {
+  describe('getUserProfile (usa UsersService.findUserById — nunca expone password)', () => {
+    it('lanza NotFoundError si el usuario no existe', async () => {
+      const service = buildService({ usersService: { findUserById: async () => null } });
+
+      await expect(service.getUserProfile('user-1')).rejects.toThrow('Usuario no encontrado');
+    });
+
+    it('devuelve solo id/email/name/createdAt — nunca el hash de password', async () => {
+      const service = buildService({
+        usersService: { findUserById: async () => fakeUser({ password: 'hash-secreto' }) },
+      });
+
+      const profile = await service.getUserProfile('user-1');
+
+      expect(profile).toEqual({
+        id: 'user-1',
+        email: 'user@example.com',
+        name: 'Usuario Test',
+        createdAt: expect.any(Date),
+      });
+      expect(profile).not.toHaveProperty('password');
+    });
+  });
+
+  describe('updateUserProfile (usa UsersService.findDuplicateEmail / updateProfile)', () => {
     it('lanza ConflictError con AUTH_MESSAGES.EMAIL_TAKEN si el email ya existe', async () => {
       const service = buildService({
-        userRepo: fakeUserRepo({ findFirst: async () => fakeUser({ id: 'other-user' }) }),
+        usersService: { findDuplicateEmail: async () => fakeUser({ id: 'other-user' }) },
       });
 
       await expect(
@@ -196,19 +252,32 @@ describe('SettingsServiceImpl', () => {
     it('actualiza el perfil si el email no está en uso', async () => {
       const updated = fakeUser({ name: 'Nuevo Nombre' });
       const service = buildService({
-        userRepo: fakeUserRepo({ findFirst: async () => null, update: async () => updated }),
+        usersService: { findDuplicateEmail: async () => null, updateProfile: async () => updated },
       });
 
       await expect(service.updateUserProfile('user-1', { name: 'Nuevo Nombre' })).resolves.toEqual(
         expect.objectContaining({ name: 'Nuevo Nombre' })
       );
     });
+
+    it('nunca expone el hash de password, aunque updateProfile devuelva el User completo', async () => {
+      const service = buildService({
+        usersService: {
+          findDuplicateEmail: async () => null,
+          updateProfile: async () => fakeUser({ password: 'hash-secreto' }),
+        },
+      });
+
+      const profile = await service.updateUserProfile('user-1', { name: 'Nuevo Nombre' });
+
+      expect(profile).not.toHaveProperty('password');
+    });
   });
 
-  describe('changePassword', () => {
+  describe('changePassword (usa UsersService.findUserById / updatePassword)', () => {
     it('lanza ValidationError con el mensaje traducido si la contraseña actual es incorrecta', async () => {
       const service = buildService({
-        userRepo: fakeUserRepo({ findById: async () => fakeUser() }),
+        usersService: { findUserById: async () => fakeUser() },
       });
 
       await expect(
@@ -226,9 +295,9 @@ describe('SettingsServiceImpl', () => {
     });
 
     it('cambia la contraseña si la actual es correcta', async () => {
-      const update = vi.fn().mockResolvedValue(fakeUser());
+      const updatePassword = vi.fn().mockResolvedValue(fakeUser());
       const service = buildService({
-        userRepo: fakeUserRepo({ findById: async () => fakeUser(), update }),
+        usersService: { findUserById: async () => fakeUser(), updatePassword },
       });
 
       await expect(
@@ -237,22 +306,22 @@ describe('SettingsServiceImpl', () => {
           newPassword: 'new-password',
         })
       ).resolves.toEqual({ message: 'Password changed successfully' });
-      expect(update).toHaveBeenCalledWith('user-1', { password: expect.any(String) });
+      expect(updatePassword).toHaveBeenCalledWith('user-1', expect.any(String));
     });
   });
 
-  describe('getAccountStatistics (usa TransactionsService.countByUser / getFirstTransactionDate)', () => {
-    it('agrega los conteos de todos los dominios, incluida la deuda (vi.mock de debt.repository.js, fuera de alcance)', async () => {
-      mockedDebtCountByUser.mockResolvedValue(3);
+  describe('getAccountStatistics (usa countByUser de accounts/categories/fixedExpenses/debts/transactions)', () => {
+    it('agrega los conteos de todos los dominios', async () => {
       const memberSince = new Date('2025-01-15T00:00:00.000Z');
       const service = buildService({
-        accountRepo: fakeAccountRepo({ countByUser: async () => 2 }),
-        categoryRepo: fakeCategoryRepo({ countByUser: async () => 5 }),
-        fixedExpenseRepo: fakeFixedExpenseRepo({ countByUser: async () => 4 }),
-        transactionsService: fakeTransactionsService({
+        accountsService: { countByUser: async () => 2 },
+        categoriesService: { countByUser: async () => 5 },
+        fixedExpensesService: { countByUser: async () => 4 },
+        debtsService: { countByUser: async () => 3 },
+        transactionsService: {
           countByUser: async () => 7,
           getFirstTransactionDate: async () => ({ date: memberSince }),
-        }),
+        },
       });
 
       const stats = await service.getAccountStatistics('user-1');
@@ -267,7 +336,6 @@ describe('SettingsServiceImpl', () => {
           memberSince,
         })
       );
-      expect(mockedDebtCountByUser).toHaveBeenCalledWith('user-1');
     });
   });
 });

@@ -7,7 +7,7 @@ import type { DebtRepository } from '../repositories/debt.repository.port.js';
 import type { AccountsService } from './accounts.service.port.js';
 import type { RecurringDebtPaymentRepository } from '../repositories/recurring-debt-payment.repository.port.js';
 import type { TransactionsService } from './transactions.service.port.js';
-import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
+import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
 import { DEBT_STATUS, DEBT_MESSAGES } from '../lib/constants/debt.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import { RECURRING_FREQUENCY } from '../lib/constants/recurring-debt-payment.constants.js';
@@ -27,8 +27,19 @@ export class DebtsServiceImpl implements DebtsService {
   constructor(
     private debtRepo: DebtRepository,
     private accountsService: AccountsService,
+    // ADR-009 (enmienda Fase 6): excepción por ciclo de construcción —
+    // RecurringDebtPaymentsService ya depende de DebtsService, así que
+    // DebtsService no puede depender de RecurringDebtPaymentsService. La
+    // lectura (findFirst) y la escritura simple (update de nextDueDate,
+    // ya calculado por calculateNextDueDate, y lastProcessed) no tienen
+    // lógica de negocio en el repo, se inyecta directo.
     private recurringRepo: RecurringDebtPaymentRepository,
     private transactionsService: TransactionsService,
+    // ADR-009 (enmienda Fase 6): excepción por ciclo de construcción —
+    // FixedExpensesService ya depende de DebtsService, así que DebtsService
+    // no puede depender de FixedExpensesService. Esta lectura (findFirst)
+    // no tiene lógica de negocio, se inyecta el repo.
+    private fixedExpenseRepo: FixedExpenseRepository,
     private prisma: PrismaClient
   ) {}
 
@@ -140,7 +151,7 @@ export class DebtsServiceImpl implements DebtsService {
       lastProcessed: new Date(),
     });
 
-    const fixedExpense = await fixedExpenseRepo.findFirst({
+    const fixedExpense = await this.fixedExpenseRepo.findFirst({
       userId,
       recurringDebtPaymentId: recurringPayment.id,
       isActive: true,
@@ -287,5 +298,9 @@ export class DebtsServiceImpl implements DebtsService {
         dueDate: d.dueDate,
       })),
     };
+  }
+
+  async countByUser(userId: string): Promise<number> {
+    return this.debtRepo.countByUser(userId);
   }
 }

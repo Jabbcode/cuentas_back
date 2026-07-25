@@ -7,12 +7,12 @@ import {
 import { NotFoundError, ConflictError, AppError } from '../lib/errors.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
-import type { AccountRepository } from '../repositories/account.repository.port.js';
-import type { CategoryRepository } from '../repositories/category.repository.port.js';
 import type { DebtsService } from './debts.service.port.js';
 import type { CreditCardsService } from './credit-cards.service.port.js';
 import type { TransactionsService } from './transactions.service.port.js';
-import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
+import type { AccountsService } from './accounts.service.port.js';
+import type { CategoriesService } from './categories.service.port.js';
+import type { RecurringDebtPaymentsService } from './recurring-debt-payments.service.port.js';
 import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
 import { FIXED_EXPENSE_MESSAGES } from '../lib/constants/fixed-expense.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
@@ -20,6 +20,7 @@ import type {
   FixedExpensesService,
   FixedExpenseWithRelations,
   FixedExpenseWithTransactions,
+  FixedExpenseWithCategory,
   FixedExpensesSummary,
   AutoGenerateSummary,
   AutoGenerateFailure,
@@ -28,11 +29,12 @@ import type {
 export class FixedExpensesServiceImpl implements FixedExpensesService {
   constructor(
     private fixedExpenseRepo: FixedExpenseRepository,
-    private accountRepo: AccountRepository,
-    private categoryRepo: CategoryRepository,
+    private accountsService: AccountsService,
+    private categoriesService: CategoriesService,
     private debtsService: DebtsService,
     private creditCardsService: CreditCardsService,
     private transactionsService: TransactionsService,
+    private recurringDebtPaymentsService: RecurringDebtPaymentsService,
     private prisma: PrismaClient
   ) {}
 
@@ -105,7 +107,7 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
     // Si este fixed expense está asociado a un recurring debt payment, sincronizar cambios
     if (existingExpense.recurringDebtPaymentId) {
       // Obtener el recurring payment actual para calcular nextDueDate
-      const recurringPayment = await recurringRepo.findUnique(
+      const recurringPayment = await this.recurringDebtPaymentsService.findRecurringPaymentById(
         existingExpense.recurringDebtPaymentId
       );
 
@@ -136,7 +138,7 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
 
         // Actualizar el recurring debt payment si hay cambios
         if (Object.keys(recurringPaymentUpdates).length > 0) {
-          await recurringRepo.update(
+          await this.recurringDebtPaymentsService.updateRecurringPaymentFields(
             existingExpense.recurringDebtPaymentId,
             recurringPaymentUpdates
           );
@@ -199,7 +201,7 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
     if (fixedExpense.recurringDebtPaymentId) {
       try {
         // Get the recurring payment to find the debtId
-        const recurringPayment = await recurringRepo.findUnique(
+        const recurringPayment = await this.recurringDebtPaymentsService.findRecurringPaymentById(
           fixedExpense.recurringDebtPaymentId
         );
 
@@ -374,20 +376,40 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
     } as unknown as FixedExpensesSummary;
   }
 
+  async getActiveFixedExpenses(userId: string) {
+    return this.fixedExpenseRepo.findAllByUser(userId, { isActive: true });
+  }
+
+  async getActiveFixedExpensesWithCategory(userId: string) {
+    return this.fixedExpenseRepo.findAllByUser(
+      userId,
+      { isActive: true },
+      { category: { select: { id: true, name: true, icon: true, color: true } } },
+      [{ sortOrder: 'asc' }, { dueDay: 'asc' }]
+    ) as unknown as Promise<FixedExpenseWithCategory[]>;
+  }
+
+  async getActiveExpenseFixedExpenses(userId: string) {
+    return this.fixedExpenseRepo.findAllByUser(userId, {
+      isActive: true,
+      type: TRANSACTION_TYPE.EXPENSE,
+    });
+  }
+
+  async countByUser(userId: string): Promise<number> {
+    return this.fixedExpenseRepo.countByUser(userId);
+  }
+
   /**
    * Sync credit card fixed expenses
    * Creates or updates fixed expenses for credit cards with pending payments
    */
   private async syncCreditCardFixedExpenses(userId: string) {
     // Get all credit cards with payment account configured
-    const creditCards = await this.accountRepo.findCreditCardsByUser(userId, {
-      paymentAccountId: { not: null },
-      cutoffDay: { not: null },
-      paymentDueDay: { not: null },
-    });
+    const creditCards = await this.accountsService.getConfiguredCreditCards(userId);
 
     // Get or create category for credit card payments
-    const category = await this.categoryRepo.upsertSystemCategory(
+    const category = await this.categoriesService.getOrCreateSystemCategory(
       userId,
       CATEGORY_SYSTEM_KEYS.CREDIT_CARD_PAYMENT
     );
@@ -460,15 +482,14 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
    */
   private async syncRecurringDebtPaymentFixedExpenses(userId: string) {
     // Get all active monthly recurring debt payments
-    const recurringPayments = await recurringRepo.findAllByUser(userId, undefined, {
-      debt: { select: { id: true, creditor: true, description: true, status: true } },
-    });
+    const recurringPayments =
+      await this.recurringDebtPaymentsService.getRecurringDebtPayments(userId);
 
     // Filter active monthly payments in memory (findAllByUser doesn't filter frequency)
     const monthlyActive = recurringPayments.filter((p) => p.isActive && p.frequency === 'monthly');
 
     // Get or create category for debt payments
-    const category = await this.categoryRepo.upsertSystemCategory(
+    const category = await this.categoriesService.getOrCreateSystemCategory(
       userId,
       CATEGORY_SYSTEM_KEYS.DEBT_PAYMENT
     );

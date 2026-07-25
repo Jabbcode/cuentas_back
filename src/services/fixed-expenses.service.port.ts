@@ -20,6 +20,12 @@ export type FixedExpenseWithTransactions = Prisma.FixedExpenseGetPayload<{
   };
 }>;
 
+export type FixedExpenseWithCategory = Prisma.FixedExpenseGetPayload<{
+  include: {
+    category: { select: { id: true; name: true; icon: true; color: true } };
+  };
+}>;
+
 export interface FixedExpensesSummaryItem extends FixedExpenseWithRelations {
   isPaidThisMonth: boolean;
 }
@@ -63,4 +69,8 @@ export interface FixedExpensesService {
     itemOrders: { id: string; sortOrder: number }[]
   ): Promise<{ success: boolean }>;
   autoGenerateFixedExpenseTransactions(today: Date): Promise<AutoGenerateSummary>;
+  getActiveFixedExpenses(userId: string): Promise<FixedExpense[]>;
+  getActiveFixedExpensesWithCategory(userId: string): Promise<FixedExpenseWithCategory[]>;
+  getActiveExpenseFixedExpenses(userId: string): Promise<FixedExpense[]>;
+  countByUser(userId: string): Promise<number>;
 }

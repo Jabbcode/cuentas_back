@@ -2,21 +2,21 @@ import type { Notification, Prisma } from '@prisma/client';
 import type { NotificationPreferences } from '../schemas/notification.schema.js';
 import { NotFoundError } from '../lib/errors.js';
 import type { NotificationRepository } from '../repositories/notification.repository.port.js';
-import type { UserRepository } from '../repositories/user.repository.port.js';
-import type { CategoryRepository } from '../repositories/category.repository.port.js';
 import { NOTIFICATION_MESSAGES } from '../lib/constants/notification.constants.js';
 import { AUTH_MESSAGES } from '../lib/constants/auth.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import type { NotificationsService, MonthlySummaryData } from './notifications.service.port.js';
 import type { TransactionsService } from './transactions.service.port.js';
+import type { UsersService } from './users.service.port.js';
+import type { CategoriesService } from './categories.service.port.js';
 
 const CATEGORY_LIMIT = 10;
 
 export class NotificationsServiceImpl implements NotificationsService {
   constructor(
     private notificationRepo: NotificationRepository,
-    private userRepo: UserRepository,
-    private categoryRepo: CategoryRepository,
+    private usersService: UsersService,
+    private categoriesService: CategoriesService,
     private transactionsService: TransactionsService
   ) {}
 
@@ -65,7 +65,7 @@ export class NotificationsServiceImpl implements NotificationsService {
   }
 
   async getPreferences(userId: string): Promise<NotificationPreferences> {
-    const user = await this.userRepo.findById(userId, { notificationPreferences: true });
+    const user = await this.usersService.findUserById(userId);
     if (!user) throw new NotFoundError(AUTH_MESSAGES.USER_NOT_FOUND);
 
     return user.notificationPreferences as NotificationPreferences;
@@ -78,7 +78,7 @@ export class NotificationsServiceImpl implements NotificationsService {
     const current = await this.getPreferences(userId);
     const updated = { ...current, ...prefs };
 
-    await this.userRepo.update(userId, { notificationPreferences: updated });
+    await this.usersService.updateNotificationPreferences(userId, updated);
 
     return updated;
   }
@@ -96,10 +96,9 @@ export class NotificationsServiceImpl implements NotificationsService {
     ]);
 
     const categoryIds = categoryData.map((c) => c.categoryId);
-    const categories = await this.categoryRepo.findMany(
-      { id: { in: categoryIds }, userId },
-      { id: true, name: true, icon: true }
-    );
+    const categories = await this.categoriesService.hydrateUserCategoriesByIds(categoryIds, [
+      userId,
+    ]);
     const catMap = new Map(categories.map((c) => [c.id, c]));
 
     return {
@@ -114,7 +113,7 @@ export class NotificationsServiceImpl implements NotificationsService {
   }
 
   async getUserContactInfo(userId: string): Promise<{ email: string; name: string } | null> {
-    const user = await this.userRepo.findById(userId, { email: true, name: true });
+    const user = await this.usersService.findUserById(userId);
     if (!user) return null;
     return { email: user.email, name: user.name };
   }
@@ -144,9 +143,9 @@ export class NotificationsServiceImpl implements NotificationsService {
     }
 
     const categoryIds = [...new Set(categoryData.map((c) => c.categoryId))];
-    const categories = await this.categoryRepo.findMany(
-      { id: { in: categoryIds }, userId: { in: userIds } },
-      { id: true, name: true, icon: true }
+    const categories = await this.categoriesService.hydrateUserCategoriesByIds(
+      categoryIds,
+      userIds
     );
     const catMap = new Map(categories.map((c) => [c.id, c]));
 

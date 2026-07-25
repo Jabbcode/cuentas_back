@@ -6,16 +6,16 @@ import {
   getDaysBetween,
   normalizeToUTC,
 } from '../lib/utils/credit-card.utils.js';
-import type { AccountRepository } from '../repositories/account.repository.port.js';
 import type { CreditCardPaymentRepository } from '../repositories/credit-card-payment.repository.port.js';
-import type { CategoryRepository } from '../repositories/category.repository.port.js';
-import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
+import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
 import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
 import { CREDIT_CARD_MESSAGES } from '../lib/constants/credit-card.constants.js';
 import { ACCOUNT_TYPES } from '../lib/constants/account.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import type { TransactionsService } from './transactions.service.port.js';
+import type { AccountsService } from './accounts.service.port.js';
+import type { CategoriesService } from './categories.service.port.js';
 import type {
   CreditCardsService,
   CreditCardStatement,
@@ -156,17 +156,22 @@ export function buildStatement(
 
 export class CreditCardsServiceImpl implements CreditCardsService {
   constructor(
-    private accountRepo: AccountRepository,
+    private accountsService: AccountsService,
     private creditCardPaymentRepo: CreditCardPaymentRepository,
-    private categoryRepo: CategoryRepository,
-    private transactionsService: TransactionsService
+    private categoriesService: CategoriesService,
+    private transactionsService: TransactionsService,
+    // ADR-009 (enmienda Fase 6): excepción por ciclo de construcción —
+    // FixedExpensesService ya depende de CreditCardsService, así que
+    // CreditCardsService no puede depender de FixedExpensesService. Esta
+    // lectura (findFirst) no tiene lógica de negocio, se inyecta el repo.
+    private fixedExpenseRepo: FixedExpenseRepository
   ) {}
 
   /**
    * Get credit card statement with current and closed periods
    */
   async getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement> {
-    const account = await this.accountRepo.findByIdAndUser(accountId, userId);
+    const account = await this.accountsService.findAccountById(accountId, userId);
 
     if (!account || account.type !== ACCOUNT_TYPES.CREDIT_CARD) {
       throw new NotFoundError(CREDIT_CARD_MESSAGES.NOT_FOUND_OR_NOT_CARD);
@@ -196,7 +201,7 @@ export class CreditCardsServiceImpl implements CreditCardsService {
    * Get summary of all credit cards for dashboard
    */
   async getCreditCardsSummary(userId: string): Promise<CreditCardsSummary> {
-    const creditCards = await this.accountRepo.findCreditCardsByUser(userId);
+    const creditCards = await this.accountsService.getCreditCards(userId);
     const eligibleCards = creditCards.filter((card) => card.cutoffDay && card.paymentDueDay);
 
     if (eligibleCards.length === 0) {
@@ -347,7 +352,7 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     });
 
     // Mark associated fixed expense as paid (if exists)
-    const fixedExpense = await fixedExpenseRepo.findFirst({
+    const fixedExpense = await this.fixedExpenseRepo.findFirst({
       userId,
       creditCardAccountId: accountId,
       isActive: true,
@@ -391,6 +396,9 @@ export class CreditCardsServiceImpl implements CreditCardsService {
    * Get or create "Pago de Tarjeta" category
    */
   private async getOrCreatePaymentCategory(userId: string) {
-    return this.categoryRepo.upsertSystemCategory(userId, CATEGORY_SYSTEM_KEYS.CREDIT_CARD_PAYMENT);
+    return this.categoriesService.getOrCreateSystemCategory(
+      userId,
+      CATEGORY_SYSTEM_KEYS.CREDIT_CARD_PAYMENT
+    );
   }
 }
