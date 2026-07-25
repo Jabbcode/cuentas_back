@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import * as creditCardsService from '../services/credit-cards.service.js';
+import { creditCardsService } from '../bootstrap.js';
 import { AuthRequest } from '../types/index.js';
 
 export async function getStatement(req: AuthRequest, res: Response, next: NextFunction) {

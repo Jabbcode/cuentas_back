@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import * as categoriesService from '../services/categories.service.js';
+import { categoriesService } from '../bootstrap.js';
 import { createCategorySchema, updateCategorySchema } from '../schemas/category.schema.js';
 import { AuthRequest } from '../types/index.js';
 

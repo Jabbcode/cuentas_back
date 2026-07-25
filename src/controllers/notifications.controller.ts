@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import * as notificationsService from '../services/notifications.service.js';
+import { notificationsService } from '../bootstrap.js';
 import { notificationPreferencesSchema } from '../schemas/notification.schema.js';
 import { AuthRequest } from '../types/index.js';
 import { sendMonthlySummaryEmail } from '../lib/email/index.js';

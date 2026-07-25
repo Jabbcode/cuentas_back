@@ -1,10 +1,6 @@
 import cron from 'node-cron';
 import { prisma } from './prisma.js';
-import {
-  createNotification,
-  getPreferences,
-  buildMonthlySummariesBatch,
-} from '../services/notifications.service.js';
+import { notificationsService } from '../bootstrap.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
 import { getMonthRange } from './utils/date.utils.js';
@@ -19,7 +15,7 @@ function startCronJobs() {
       );
 
       for (const [userId, count] of Object.entries(createdByUser)) {
-        await createNotification(
+        await notificationsService.createNotification(
           userId,
           'auto_generated',
           'Transacciones generadas automáticamente',
@@ -30,7 +26,7 @@ function startCronJobs() {
 
       for (const [userId, failures] of Object.entries(failedByUser)) {
         const names = failures.map((f) => f.fixedExpenseName).join(', ');
-        await createNotification(
+        await notificationsService.createNotification(
           userId,
           'auto_generate_failed',
           'No se pudieron generar algunos gastos fijos',
@@ -77,7 +73,7 @@ function startCronJobs() {
         if (existing) continue;
 
         try {
-          await createNotification(
+          await notificationsService.createNotification(
             debt.userId,
             'debt_due',
             `Deuda próxima a vencer: ${debt.creditor}`,
@@ -141,7 +137,7 @@ async function sendMonthlySummaries(): Promise<void> {
 
   if (eligible.length === 0) return;
 
-  const summaries = await buildMonthlySummariesBatch(
+  const summaries = await notificationsService.buildMonthlySummariesBatch(
     eligible.map((u) => u.id),
     { start: startOfMonth, end: endOfMonth }
   );
