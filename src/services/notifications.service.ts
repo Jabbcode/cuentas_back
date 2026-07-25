@@ -4,11 +4,11 @@ import { NotFoundError } from '../lib/errors.js';
 import type { NotificationRepository } from '../repositories/notification.repository.port.js';
 import type { UserRepository } from '../repositories/user.repository.port.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
 import { NOTIFICATION_MESSAGES } from '../lib/constants/notification.constants.js';
 import { AUTH_MESSAGES } from '../lib/constants/auth.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
 import type { NotificationsService, MonthlySummaryData } from './notifications.service.port.js';
+import type { TransactionsService } from './transactions.service.port.js';
 
 const CATEGORY_LIMIT = 10;
 
@@ -16,7 +16,8 @@ export class NotificationsServiceImpl implements NotificationsService {
   constructor(
     private notificationRepo: NotificationRepository,
     private userRepo: UserRepository,
-    private categoryRepo: CategoryRepository
+    private categoryRepo: CategoryRepository,
+    private transactionsService: TransactionsService
   ) {}
 
   async getNotifications(userId: string): Promise<Notification[]> {
@@ -86,12 +87,12 @@ export class NotificationsServiceImpl implements NotificationsService {
     userId: string,
     range: { start: Date; end: Date }
   ): Promise<MonthlySummaryData> {
-    const base = { userId, date: { gte: range.start, lt: range.end } };
+    const dateRange = { gte: range.start, lt: range.end };
 
     const [expenseAgg, incomeAgg, categoryData] = await Promise.all([
-      transactionRepo.aggregate({ ...base, type: TRANSACTION_TYPE.EXPENSE }),
-      transactionRepo.aggregate({ ...base, type: TRANSACTION_TYPE.INCOME }),
-      transactionRepo.groupExpensesByCategory({ ...base, type: TRANSACTION_TYPE.EXPENSE }),
+      this.transactionsService.getMonthlyTotalByType(userId, TRANSACTION_TYPE.EXPENSE, dateRange),
+      this.transactionsService.getMonthlyTotalByType(userId, TRANSACTION_TYPE.INCOME, dateRange),
+      this.transactionsService.getTopExpenseCategories(userId, dateRange),
     ]);
 
     const categoryIds = categoryData.map((c) => c.categoryId);
@@ -127,11 +128,11 @@ export class NotificationsServiceImpl implements NotificationsService {
     );
     if (userIds.length === 0) return result;
 
-    const base = { userId: { in: userIds }, date: { gte: range.start, lt: range.end } };
+    const dateRange = { gte: range.start, lt: range.end };
 
     const [totals, categoryData] = await Promise.all([
-      transactionRepo.groupTotalsByUser(base),
-      transactionRepo.groupExpensesByUserAndCategory({ ...base, type: TRANSACTION_TYPE.EXPENSE }),
+      this.transactionsService.getUserTotalsByType(userIds, dateRange),
+      this.transactionsService.getExpensesByUserAndCategory(userIds, dateRange),
     ]);
 
     for (const row of totals) {

@@ -1,33 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Account, CreditCardPayment } from '@prisma/client';
+import type { Account, CreditCardPayment, Transaction } from '@prisma/client';
 import type { AccountRepository } from '../../repositories/account.repository.port.js';
 import type { CreditCardPaymentRepository } from '../../repositories/credit-card-payment.repository.port.js';
 import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { TransactionsService } from '../transactions.service.port.js';
 import { CreditCardsServiceImpl } from '../credit-cards.service.js';
-
-vi.mock('../../repositories/transaction.repository.js', () => ({
-  findMany: vi.fn(),
-  findFirst: vi.fn(),
-}));
 
 vi.mock('../../repositories/fixed-expense.repository.js', () => ({
   findFirst: vi.fn(),
 }));
 
-vi.mock('../transactions.service.js', () => ({
-  createTransaction: vi.fn(),
-}));
-
-import * as transactionRepo from '../../repositories/transaction.repository.js';
 import * as fixedExpenseRepo from '../../repositories/fixed-expense.repository.js';
-import { createTransaction } from '../transactions.service.js';
 
-const mockedFindMany = transactionRepo.findMany as unknown as ReturnType<typeof vi.fn>;
-const mockedFindFirstTx = transactionRepo.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedFindFirstFixedExpense = fixedExpenseRepo.findFirst as unknown as ReturnType<
   typeof vi.fn
 >;
-const mockedCreateTransaction = createTransaction as unknown as ReturnType<typeof vi.fn>;
+const mockedCreateTransaction = vi.fn();
+const mockedFindCardStatementTransactions = vi.fn();
+const mockedFindFixedExpensePaymentInMonth = vi.fn();
 
 function fakeAccount(overrides: Partial<Account> = {}): Account {
   return {
@@ -97,17 +87,58 @@ function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): Category
   };
 }
 
+function fakeTransactionsService(
+  overrides: Partial<TransactionsService> = {}
+): TransactionsService {
+  return {
+    getTransactions: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createTransaction: mockedCreateTransaction,
+    updateTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionSummary: async () => [],
+    getReceiptItems: async () => [],
+    countByCategory: async () => 0,
+    findMonthlyCategoryExpenses: async () => [],
+    findCardStatementTransactions: mockedFindCardStatementTransactions,
+    findFixedExpensePaymentInMonth: mockedFindFixedExpensePaymentInMonth,
+    resyncTransactionsForFixedExpense: async () => ({ count: 0 }),
+    getMonthlyTotalByType: async () => ({ _sum: { amount: null } }),
+    getVariableExpenseTotal: async () => ({ _sum: { amount: null } }),
+    getCategoryBreakdown: async () => [],
+    findTransactionsSince: async () => [],
+    getTopExpenseCategories: async () => [],
+    getUserTotalsByType: async () => [],
+    getExpensesByUserAndCategory: async () => [],
+    countByUser: async () => 0,
+    getFirstTransactionDate: async () => null,
+    findByImageHash: async () => null,
+    findSimilarByAmountAndDate: async () => [],
+    ...overrides,
+  };
+}
+
 function buildService(
   overrides: {
     accountRepo?: Partial<AccountRepository>;
     creditCardPaymentRepo?: Partial<CreditCardPaymentRepository>;
     categoryRepo?: Partial<CategoryRepository>;
+    transactionsService?: Partial<TransactionsService>;
   } = {}
 ) {
   return new CreditCardsServiceImpl(
     fakeAccountRepo(overrides.accountRepo),
     fakeCreditCardPaymentRepo(overrides.creditCardPaymentRepo),
-    fakeCategoryRepo(overrides.categoryRepo)
+    fakeCategoryRepo(overrides.categoryRepo),
+    fakeTransactionsService(overrides.transactionsService)
   );
 }
 
@@ -118,14 +149,15 @@ describe('CreditCardsServiceImpl', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.setSystemTime(today);
-    mockedFindMany.mockResolvedValue([]);
+    mockedFindCardStatementTransactions.mockResolvedValue([]);
+    mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  describe('getCreditCardStatement', () => {
+  describe('getCreditCardStatement (usa TransactionsService.findCardStatementTransactions)', () => {
     it('lanza NotFoundError si la cuenta no existe', async () => {
       const service = buildService({ accountRepo: { findByIdAndUser: async () => null } });
 
@@ -156,7 +188,7 @@ describe('CreditCardsServiceImpl', () => {
       );
     });
 
-    it('éxito: devuelve el statement calculado', async () => {
+    it('éxito: devuelve el statement calculado, consultando 1 sola tarjeta', async () => {
       const service = buildService({
         accountRepo: { findByIdAndUser: async () => fakeAccount() },
       });
@@ -165,6 +197,11 @@ describe('CreditCardsServiceImpl', () => {
 
       expect(statement.account.id).toBe('card-1');
       expect(statement.creditLimit).toBe(1000);
+      expect(mockedFindCardStatementTransactions).toHaveBeenCalledWith(
+        'user-1',
+        ['card-1'],
+        expect.objectContaining({ gte: expect.any(Date), lte: expect.any(Date) })
+      );
     });
   });
 
@@ -256,14 +293,14 @@ describe('CreditCardsServiceImpl', () => {
       expect(mockedCreateTransaction).toHaveBeenCalledTimes(2);
     });
 
-    it('con gasto fijo asociado y sin pago este mes: crea una tercera transacción', async () => {
+    it('con gasto fijo asociado y sin pago este mes: crea una tercera transacción (usa TransactionsService.findFixedExpensePaymentInMonth)', async () => {
       mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
       mockedFindFirstFixedExpense.mockResolvedValue({
         id: 'fe-1',
         name: 'Pago Tarjeta',
         categoryId: 'category-1',
       });
-      mockedFindFirstTx.mockResolvedValue(null);
+      mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
       const service = buildService({
         accountRepo: { findByIdAndUser: async () => fakeAccount() },
       });
@@ -274,6 +311,30 @@ describe('CreditCardsServiceImpl', () => {
       });
 
       expect(mockedCreateTransaction).toHaveBeenCalledTimes(2);
+      expect(mockedFindFixedExpensePaymentInMonth).toHaveBeenCalledWith(
+        'fe-1',
+        expect.objectContaining({ gte: expect.any(Date), lt: expect.any(Date) })
+      );
+    });
+
+    it('con gasto fijo asociado y pago ya existente este mes: no crea la tercera transacción', async () => {
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+      mockedFindFirstFixedExpense.mockResolvedValue({
+        id: 'fe-1',
+        name: 'Pago Tarjeta',
+        categoryId: 'category-1',
+      });
+      mockedFindFixedExpensePaymentInMonth.mockResolvedValue({ id: 'existing-tx' });
+      const service = buildService({
+        accountRepo: { findByIdAndUser: async () => fakeAccount() },
+      });
+
+      await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 50,
+        paymentAccountId: 'card-1',
+      });
+
+      expect(mockedCreateTransaction).toHaveBeenCalledTimes(1);
     });
   });
 });

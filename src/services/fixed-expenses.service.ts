@@ -5,14 +5,13 @@ import {
   PayFixedExpenseInput,
 } from '../schemas/fixed-expense.schema.js';
 import { NotFoundError, ConflictError, AppError } from '../lib/errors.js';
-import { createTransaction } from './transactions.service.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
 import type { AccountRepository } from '../repositories/account.repository.port.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
 import type { DebtsService } from './debts.service.port.js';
 import type { CreditCardsService } from './credit-cards.service.port.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
+import type { TransactionsService } from './transactions.service.port.js';
 import * as recurringRepo from '../repositories/recurring-debt-payment.repository.js';
 import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
 import { FIXED_EXPENSE_MESSAGES } from '../lib/constants/fixed-expense.constants.js';
@@ -33,6 +32,7 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
     private categoryRepo: CategoryRepository,
     private debtsService: DebtsService,
     private creditCardsService: CreditCardsService,
+    private transactionsService: TransactionsService,
     private prisma: PrismaClient
   ) {}
 
@@ -95,8 +95,9 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
 
     // Si hay cambios en categoría o cuenta, actualizar las transacciones asociadas
     if (Object.keys(transactionUpdates).length > 0) {
-      await transactionRepo.updateMany(
-        { fixedExpenseId: id, userId },
+      await this.transactionsService.resyncTransactionsForFixedExpense(
+        userId,
+        id,
         transactionUpdates as Prisma.TransactionUpdateManyMutationInput
       );
     }
@@ -161,7 +162,7 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
     const amount = data.amount ?? Number(fixedExpense.amount);
     const date = data.date ?? new Date().toISOString();
 
-    const transaction = await createTransaction(
+    const transaction = await this.transactionsService.createTransaction(
       {
         amount,
         type: fixedExpense.type as 'expense' | 'income',
@@ -258,7 +259,7 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
       if (alreadyGenerated.has(fe.id)) continue;
 
       try {
-        await createTransaction(
+        await this.transactionsService.createTransaction(
           {
             amount: Number(fe.amount),
             type: fe.type as 'expense' | 'income',

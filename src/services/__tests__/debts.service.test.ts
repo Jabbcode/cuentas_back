@@ -1,10 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Account, Debt, DebtPayment, Transaction, PrismaClient } from '@prisma/client';
 import type { DebtRepository } from '../../repositories/debt.repository.port.js';
 import type { RecurringDebtPaymentRepository } from '../../repositories/recurring-debt-payment.repository.port.js';
 import type { AccountsService } from '../accounts.service.port.js';
+import type { TransactionsService } from '../transactions.service.port.js';
 import { NotFoundError } from '../../lib/errors.js';
+
+vi.mock('../../repositories/fixed-expense.repository.js', () => ({
+  findFirst: vi.fn(),
+}));
+
+import * as fixedExpenseRepo from '../../repositories/fixed-expense.repository.js';
 import { DebtsServiceImpl } from '../debts.service.js';
+
+const mockedFindFirstFixedExpense = fixedExpenseRepo.findFirst as unknown as ReturnType<
+  typeof vi.fn
+>;
 
 function fakeDebt(overrides: Partial<Debt> = {}): Debt {
   return {
@@ -110,6 +121,45 @@ function fakeRecurringRepo(
   };
 }
 
+function fakeTransactionsService(
+  overrides: Partial<TransactionsService> = {}
+): TransactionsService {
+  return {
+    getTransactions: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createTransaction: async () => fakeTransaction(),
+    updateTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionSummary: async () => [],
+    getReceiptItems: async () => [],
+    countByCategory: async () => 0,
+    findMonthlyCategoryExpenses: async () => [],
+    findCardStatementTransactions: async () => [],
+    findFixedExpensePaymentInMonth: async () => null,
+    resyncTransactionsForFixedExpense: async () => ({ count: 0 }),
+    getMonthlyTotalByType: async () => ({ _sum: { amount: null } }),
+    getVariableExpenseTotal: async () => ({ _sum: { amount: null } }),
+    getCategoryBreakdown: async () => [],
+    findTransactionsSince: async () => [],
+    getTopExpenseCategories: async () => [],
+    getUserTotalsByType: async () => [],
+    getExpensesByUserAndCategory: async () => [],
+    countByUser: async () => 0,
+    getFirstTransactionDate: async () => null,
+    findByImageHash: async () => null,
+    findSimilarByAmountAndDate: async () => [],
+    ...overrides,
+  };
+}
+
 function fakePrisma(): PrismaClient {
   const txFake = {
     category: { upsert: async () => ({ id: 'category-1' }) },
@@ -126,27 +176,38 @@ function fakePrisma(): PrismaClient {
   } as unknown as PrismaClient;
 }
 
+function buildService(
+  overrides: {
+    debtRepo?: Partial<DebtRepository>;
+    accountsService?: Partial<AccountsService>;
+    recurringRepo?: Partial<RecurringDebtPaymentRepository>;
+    transactionsService?: Partial<TransactionsService>;
+  } = {}
+): DebtsServiceImpl {
+  return new DebtsServiceImpl(
+    fakeDebtRepo(overrides.debtRepo),
+    fakeAccountsService(overrides.accountsService),
+    fakeRecurringRepo(overrides.recurringRepo),
+    fakeTransactionsService(overrides.transactionsService),
+    fakePrisma()
+  );
+}
+
 describe('DebtsServiceImpl', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   describe('getDebtById', () => {
     it('lanza NotFoundError si el repo devuelve null', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => null }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({ debtRepo: { findByIdAndUser: async () => null } });
 
       await expect(service.getDebtById('debt-1', 'user-1')).rejects.toThrow('Deuda no encontrada');
     });
 
     it('devuelve la deuda si existe', async () => {
       const debt = fakeDebt();
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => debt }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({ debtRepo: { findByIdAndUser: async () => debt } });
 
       await expect(service.getDebtById('debt-1', 'user-1')).resolves.toEqual(debt);
     });
@@ -155,12 +216,7 @@ describe('DebtsServiceImpl', () => {
   describe('createDebt / updateDebt / deleteDebt', () => {
     it('createDebt devuelve la deuda creada', async () => {
       const created = fakeDebt({ creditor: 'Nuevo acreedor' });
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ create: async () => created }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({ debtRepo: { create: async () => created } });
 
       await expect(
         service.createDebt('user-1', {
@@ -174,12 +230,9 @@ describe('DebtsServiceImpl', () => {
     it('updateDebt devuelve la deuda actualizada', async () => {
       const existing = fakeDebt();
       const updated = fakeDebt({ creditor: 'Actualizado' });
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => existing, update: async () => updated }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => existing, update: async () => updated },
+      });
 
       await expect(
         service.updateDebt('debt-1', 'user-1', { creditor: 'Actualizado' })
@@ -187,12 +240,7 @@ describe('DebtsServiceImpl', () => {
     });
 
     it('deleteDebt devuelve el mensaje de confirmación', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt() }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({ debtRepo: { findByIdAndUser: async () => fakeDebt() } });
 
       await expect(service.deleteDebt('debt-1', 'user-1')).resolves.toEqual({
         message: 'Deuda eliminada correctamente',
@@ -202,12 +250,7 @@ describe('DebtsServiceImpl', () => {
 
   describe('payDebt', () => {
     it('lanza NotFoundError si la deuda no existe', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => null }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({ debtRepo: { findByIdAndUser: async () => null } });
 
       await expect(
         service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' })
@@ -215,12 +258,9 @@ describe('DebtsServiceImpl', () => {
     });
 
     it('lanza ConflictError si la deuda ya está pagada', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt({ status: 'paid' }) }),
-        fakeAccountsService(),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt({ status: 'paid' }) },
+      });
 
       await expect(
         service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' })
@@ -228,16 +268,14 @@ describe('DebtsServiceImpl', () => {
     });
 
     it('propaga NotFoundError si la cuenta no existe (vía AccountsService)', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt() }),
-        fakeAccountsService({
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: {
           getAccountById: async () => {
             throw new NotFoundError('Cuenta no encontrada');
           },
-        }),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+        },
+      });
 
       await expect(
         service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' })
@@ -245,12 +283,10 @@ describe('DebtsServiceImpl', () => {
     });
 
     it('lanza ValidationError si el saldo es insuficiente', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt() }),
-        fakeAccountsService({ getAccountById: async () => fakeAccount({ balance: 10 }) }),
-        fakeRecurringRepo(),
-        fakePrisma()
-      );
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 10 }) },
+      });
 
       await expect(
         service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' })
@@ -258,12 +294,11 @@ describe('DebtsServiceImpl', () => {
     });
 
     it('en éxito invoca $transaction y devuelve { debt, payment, transaction }', async () => {
-      const service = new DebtsServiceImpl(
-        fakeDebtRepo({ findByIdAndUser: async () => fakeDebt() }),
-        fakeAccountsService({ getAccountById: async () => fakeAccount({ balance: 1000 }) }),
-        fakeRecurringRepo({ findFirst: async () => null }),
-        fakePrisma()
-      );
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 1000 }) },
+        recurringRepo: { findFirst: async () => null },
+      });
 
       const result = await service.payDebt('debt-1', 'user-1', {
         amount: 50,
@@ -272,6 +307,92 @@ describe('DebtsServiceImpl', () => {
 
       expect(result.payment.id).toBe('payment-1');
       expect(result.transaction.id).toBe('transaction-1');
+    });
+  });
+
+  describe('handleRecurringPaymentSideEffects (vía payDebt, usa TransactionsService)', () => {
+    const recurringPayment = {
+      id: 'rp-1',
+      debtId: 'debt-1',
+      isActive: true,
+      frequency: 'monthly',
+      dayOfMonth: 5,
+      dayOfWeek: null,
+      nextDueDate: new Date(),
+      lastProcessed: null,
+    };
+    const fixedExpense = {
+      id: 'fe-1',
+      name: 'Pago recurrente',
+      categoryId: 'category-1',
+      userId: 'user-1',
+      recurringDebtPaymentId: 'rp-1',
+      isActive: true,
+    };
+
+    it('sin pago del gasto fijo este mes: llama a createTransaction', async () => {
+      const createTransaction = vi.fn().mockResolvedValue(fakeTransaction());
+      const update = vi.fn().mockResolvedValue(recurringPayment);
+      mockedFindFirstFixedExpense.mockResolvedValue(fixedExpense);
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 1000 }) },
+        recurringRepo: { findFirst: async () => recurringPayment, update },
+        transactionsService: {
+          createTransaction,
+          findFixedExpensePaymentInMonth: async () => null,
+        },
+      });
+
+      await service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' });
+
+      expect(createTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('con pago del gasto fijo ya existente este mes: no duplica la transacción', async () => {
+      const createTransaction = vi.fn().mockResolvedValue(fakeTransaction());
+      mockedFindFirstFixedExpense.mockResolvedValue(fixedExpense);
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 1000 }) },
+        recurringRepo: {
+          findFirst: async () => recurringPayment,
+          update: async () => recurringPayment,
+        },
+        transactionsService: {
+          createTransaction,
+          findFixedExpensePaymentInMonth: async () => fakeTransaction({ id: 'existing-tx' }),
+        },
+      });
+
+      await service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' });
+
+      expect(createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('createTransaction lanza: el error se traga y payDebt igual resuelve exitosamente', async () => {
+      const createTransaction = vi.fn().mockRejectedValue(new Error('fallo al crear transacción'));
+      mockedFindFirstFixedExpense.mockResolvedValue(fixedExpense);
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 1000 }) },
+        recurringRepo: {
+          findFirst: async () => recurringPayment,
+          update: async () => recurringPayment,
+        },
+        transactionsService: {
+          createTransaction,
+          findFixedExpensePaymentInMonth: async () => null,
+        },
+      });
+
+      const result = await service.payDebt('debt-1', 'user-1', {
+        amount: 50,
+        accountId: 'account-1',
+      });
+
+      expect(createTransaction).toHaveBeenCalledTimes(1);
+      expect(result.payment.id).toBe('payment-1');
     });
   });
 });

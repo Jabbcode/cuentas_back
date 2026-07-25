@@ -9,25 +9,19 @@ import {
 import type { AccountRepository } from '../repositories/account.repository.port.js';
 import type { CreditCardPaymentRepository } from '../repositories/credit-card-payment.repository.port.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import { getMonthRange } from '../lib/utils/date.utils.js';
 import { CATEGORY_SYSTEM_KEYS } from '../lib/constants/category-system-keys.js';
 import { CREDIT_CARD_MESSAGES } from '../lib/constants/credit-card.constants.js';
 import { ACCOUNT_TYPES } from '../lib/constants/account.constants.js';
 import { TRANSACTION_TYPE } from '../lib/constants/shared.constants.js';
-import { createTransaction } from './transactions.service.js';
+import type { TransactionsService } from './transactions.service.port.js';
 import type {
   CreditCardsService,
   CreditCardStatement,
   CreditCardsSummary,
   PayCreditCardStatementInput,
 } from './credit-cards.service.port.js';
-
-const TRANSACTION_INCLUDE = {
-  category: { select: { id: true, name: true, icon: true, color: true } },
-  fixedExpense: { select: { id: true, name: true } },
-} as const;
 
 /**
  * Calcula el statement (períodos, balances, alertas) de una tarjeta a partir de datos
@@ -164,7 +158,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
   constructor(
     private accountRepo: AccountRepository,
     private creditCardPaymentRepo: CreditCardPaymentRepository,
-    private categoryRepo: CategoryRepository
+    private categoryRepo: CategoryRepository,
+    private transactionsService: TransactionsService
   ) {}
 
   /**
@@ -187,15 +182,10 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     previousCutoff.setMonth(previousCutoff.getMonth() - 1);
 
     const [transactions, payments] = await Promise.all([
-      transactionRepo.findMany(
-        {
-          accountId,
-          userId,
-          type: TRANSACTION_TYPE.EXPENSE,
-          date: { gte: previousCutoff, lte: today },
-        },
-        { include: TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
-      ),
+      this.transactionsService.findCardStatementTransactions(userId, [accountId], {
+        gte: previousCutoff,
+        lte: today,
+      }),
       this.creditCardPaymentRepo.findMany({ accountId }),
     ]);
 
@@ -225,15 +215,10 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     const minPreviousCutoff = new Date(Math.min(...previousCutoffs.map((d) => d.getTime())));
 
     const [allTransactions, allPayments] = await Promise.all([
-      transactionRepo.findMany(
-        {
-          accountId: { in: cardIds },
-          userId,
-          type: TRANSACTION_TYPE.EXPENSE,
-          date: { gte: minPreviousCutoff, lte: today },
-        },
-        { include: TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
-      ),
+      this.transactionsService.findCardStatementTransactions(userId, cardIds, {
+        gte: minPreviousCutoff,
+        lte: today,
+      }),
       this.creditCardPaymentRepo.findMany({ accountId: { in: cardIds } }),
     ]);
 
@@ -320,7 +305,7 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     // This automatically updates the credit card balance
     const paymentCategory = await this.getOrCreatePaymentCategory(userId);
 
-    const transaction = await createTransaction(
+    const transaction = await this.transactionsService.createTransaction(
       {
         amount: data.amount,
         type: TRANSACTION_TYPE.INCOME,
@@ -335,7 +320,7 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     // If paying from another account, create expense transaction
     // This automatically updates the payment account balance
     if (data.paymentAccountId !== accountId) {
-      await createTransaction(
+      await this.transactionsService.createTransaction(
         {
           amount: data.amount,
           type: TRANSACTION_TYPE.EXPENSE,
@@ -377,14 +362,14 @@ export class CreditCardsServiceImpl implements CreditCardsService {
       );
 
       // Check if there's already a payment this month
-      const existingPayment = await transactionRepo.findFirst({
-        fixedExpenseId: fixedExpense.id,
-        date: { gte: startOfMonth, lt: endOfMonth },
-      });
+      const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
+        fixedExpense.id,
+        { gte: startOfMonth, lt: endOfMonth }
+      );
 
       // Only create if there's no payment this month
       if (!existingPayment) {
-        await createTransaction(
+        await this.transactionsService.createTransaction(
           {
             amount: data.amount,
             type: TRANSACTION_TYPE.EXPENSE,

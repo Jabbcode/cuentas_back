@@ -3,25 +3,8 @@ import type { Notification, User } from '@prisma/client';
 import type { NotificationRepository } from '../../repositories/notification.repository.port.js';
 import type { UserRepository } from '../../repositories/user.repository.port.js';
 import type { CategoryRepository } from '../../repositories/category.repository.port.js';
+import type { TransactionsService } from '../transactions.service.port.js';
 import { NotificationsServiceImpl } from '../notifications.service.js';
-
-vi.mock('../../repositories/transaction.repository.js', () => ({
-  aggregate: vi.fn(),
-  groupExpensesByCategory: vi.fn(),
-  groupTotalsByUser: vi.fn(),
-  groupExpensesByUserAndCategory: vi.fn(),
-}));
-
-import * as transactionRepo from '../../repositories/transaction.repository.js';
-
-const mockedAggregate = transactionRepo.aggregate as unknown as ReturnType<typeof vi.fn>;
-const mockedGroupExpensesByCategory =
-  transactionRepo.groupExpensesByCategory as unknown as ReturnType<typeof vi.fn>;
-const mockedGroupTotalsByUser = transactionRepo.groupTotalsByUser as unknown as ReturnType<
-  typeof vi.fn
->;
-const mockedGroupExpensesByUserAndCategory =
-  transactionRepo.groupExpensesByUserAndCategory as unknown as ReturnType<typeof vi.fn>;
 
 function fakeNotification(overrides: Partial<Notification> = {}): Notification {
   return {
@@ -99,17 +82,60 @@ function fakeCategoryRepo(overrides: Partial<CategoryRepository> = {}): Category
   };
 }
 
+function fakeTransactionsService(
+  overrides: Partial<TransactionsService> = {}
+): TransactionsService {
+  return {
+    getTransactions: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionById: async () => {
+      throw new Error('not used in these tests');
+    },
+    createTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    updateTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    deleteTransaction: async () => {
+      throw new Error('not used in these tests');
+    },
+    getTransactionSummary: async () => [],
+    getReceiptItems: async () => [],
+    countByCategory: async () => 0,
+    findMonthlyCategoryExpenses: async () => [],
+    findCardStatementTransactions: async () => [],
+    findFixedExpensePaymentInMonth: async () => null,
+    resyncTransactionsForFixedExpense: async () => ({ count: 0 }),
+    getMonthlyTotalByType: async () => ({ _sum: { amount: null } }),
+    getVariableExpenseTotal: async () => ({ _sum: { amount: null } }),
+    getCategoryBreakdown: async () => [],
+    findTransactionsSince: async () => [],
+    getTopExpenseCategories: async () => [],
+    getUserTotalsByType: async () => [],
+    getExpensesByUserAndCategory: async () => [],
+    countByUser: async () => 0,
+    getFirstTransactionDate: async () => null,
+    findByImageHash: async () => null,
+    findSimilarByAmountAndDate: async () => [],
+    ...overrides,
+  };
+}
+
 function buildService(
   overrides: {
     notificationRepo?: Partial<NotificationRepository>;
     userRepo?: Partial<UserRepository>;
     categoryRepo?: Partial<CategoryRepository>;
+    transactionsService?: Partial<TransactionsService>;
   } = {}
 ) {
   return new NotificationsServiceImpl(
     fakeNotificationRepo(overrides.notificationRepo),
     fakeUserRepo(overrides.userRepo),
-    fakeCategoryRepo(overrides.categoryRepo)
+    fakeCategoryRepo(overrides.categoryRepo),
+    fakeTransactionsService(overrides.transactionsService)
   );
 }
 
@@ -207,18 +233,23 @@ describe('NotificationsServiceImpl', () => {
     });
   });
 
-  describe('buildMonthlySummary', () => {
+  describe('buildMonthlySummary (usa TransactionsService.getMonthlyTotalByType / getTopExpenseCategories)', () => {
     const range = { start: new Date(2026, 5, 1), end: new Date(2026, 6, 1) };
 
     it('con transacciones: totales y desglose por categoría se calculan correctamente', async () => {
-      mockedAggregate
+      const getMonthlyTotalByType = vi
+        .fn()
         .mockResolvedValueOnce({ _sum: { amount: 150 } }) // expense
         .mockResolvedValueOnce({ _sum: { amount: 1000 } }); // income
-      mockedGroupExpensesByCategory.mockResolvedValueOnce([
-        { categoryId: 'cat-1', _sum: { amount: 100 } },
-        { categoryId: 'cat-2', _sum: { amount: 50 } },
-      ]);
       const service = buildService({
+        transactionsService: {
+          getMonthlyTotalByType,
+          getTopExpenseCategories: async () =>
+            [
+              { categoryId: 'cat-1', _sum: { amount: 100 } },
+              { categoryId: 'cat-2', _sum: { amount: 50 } },
+            ] as never,
+        },
         categoryRepo: {
           findMany: async () =>
             [
@@ -239,13 +270,18 @@ describe('NotificationsServiceImpl', () => {
     });
 
     it('categoría sin match en el mapa: usa "Sin categoría" e icon undefined', async () => {
-      mockedAggregate
+      const getMonthlyTotalByType = vi
+        .fn()
         .mockResolvedValueOnce({ _sum: { amount: 100 } })
         .mockResolvedValueOnce({ _sum: { amount: 0 } });
-      mockedGroupExpensesByCategory.mockResolvedValueOnce([
-        { categoryId: 'cat-borrada', _sum: { amount: 100 } },
-      ]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+      const service = buildService({
+        transactionsService: {
+          getMonthlyTotalByType,
+          getTopExpenseCategories: async () =>
+            [{ categoryId: 'cat-borrada', _sum: { amount: 100 } }] as never,
+        },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       const result = await service.buildMonthlySummary('user-1', range);
 
@@ -255,11 +291,14 @@ describe('NotificationsServiceImpl', () => {
     });
 
     it('sin transacciones: totales en 0 y breakdown vacío', async () => {
-      mockedAggregate
+      const getMonthlyTotalByType = vi
+        .fn()
         .mockResolvedValueOnce({ _sum: { amount: null } })
         .mockResolvedValueOnce({ _sum: { amount: null } });
-      mockedGroupExpensesByCategory.mockResolvedValueOnce([]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+      const service = buildService({
+        transactionsService: { getMonthlyTotalByType, getTopExpenseCategories: async () => [] },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       const result = await service.buildMonthlySummary('user-1', range);
 
@@ -268,48 +307,43 @@ describe('NotificationsServiceImpl', () => {
       expect(result.categoryBreakdown).toEqual([]);
     });
 
-    it('envía el where esperado ({ userId, type, date }) a aggregate y groupExpensesByCategory', async () => {
-      mockedAggregate.mockResolvedValue({ _sum: { amount: 0 } });
-      mockedGroupExpensesByCategory.mockResolvedValueOnce([]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+    it('envía el where esperado ({ userId, type, date }) a getMonthlyTotalByType y getTopExpenseCategories', async () => {
+      const getMonthlyTotalByType = vi.fn().mockResolvedValue({ _sum: { amount: 0 } });
+      const getTopExpenseCategories = vi.fn().mockResolvedValue([]);
+      const service = buildService({
+        transactionsService: { getMonthlyTotalByType, getTopExpenseCategories },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       await service.buildMonthlySummary('user-1', range);
 
       const expectedDate = { gte: range.start, lt: range.end };
-      expect(mockedAggregate).toHaveBeenNthCalledWith(1, {
-        userId: 'user-1',
-        type: 'expense',
-        date: expectedDate,
-      });
-      expect(mockedAggregate).toHaveBeenNthCalledWith(2, {
-        userId: 'user-1',
-        type: 'income',
-        date: expectedDate,
-      });
-      expect(mockedGroupExpensesByCategory).toHaveBeenCalledWith({
-        userId: 'user-1',
-        type: 'expense',
-        date: expectedDate,
-      });
+      expect(getMonthlyTotalByType).toHaveBeenNthCalledWith(1, 'user-1', 'expense', expectedDate);
+      expect(getMonthlyTotalByType).toHaveBeenNthCalledWith(2, 'user-1', 'income', expectedDate);
+      expect(getTopExpenseCategories).toHaveBeenCalledWith('user-1', expectedDate);
     });
   });
 
-  describe('buildMonthlySummariesBatch', () => {
+  describe('buildMonthlySummariesBatch (usa TransactionsService.getUserTotalsByType / getExpensesByUserAndCategory)', () => {
     const range = { start: new Date(2026, 5, 1), end: new Date(2026, 6, 1) };
 
     it('batch básico: totales y desglose por categoría correctos para 2 usuarios', async () => {
-      mockedGroupTotalsByUser.mockResolvedValueOnce([
-        { userId: 'user-1', type: 'expense', _sum: { amount: 150 } },
-        { userId: 'user-1', type: 'income', _sum: { amount: 1000 } },
-        { userId: 'user-2', type: 'expense', _sum: { amount: 80 } },
-        { userId: 'user-2', type: 'income', _sum: { amount: 500 } },
-      ]);
-      mockedGroupExpensesByUserAndCategory.mockResolvedValueOnce([
-        { userId: 'user-1', categoryId: 'cat-1', _sum: { amount: 100 } },
-        { userId: 'user-1', categoryId: 'cat-2', _sum: { amount: 50 } },
-        { userId: 'user-2', categoryId: 'cat-1', _sum: { amount: 80 } },
-      ]);
       const service = buildService({
+        transactionsService: {
+          getUserTotalsByType: async () =>
+            [
+              { userId: 'user-1', type: 'expense', _sum: { amount: 150 } },
+              { userId: 'user-1', type: 'income', _sum: { amount: 1000 } },
+              { userId: 'user-2', type: 'expense', _sum: { amount: 80 } },
+              { userId: 'user-2', type: 'income', _sum: { amount: 500 } },
+            ] as never,
+          getExpensesByUserAndCategory: async () =>
+            [
+              { userId: 'user-1', categoryId: 'cat-1', _sum: { amount: 100 } },
+              { userId: 'user-1', categoryId: 'cat-2', _sum: { amount: 50 } },
+              { userId: 'user-2', categoryId: 'cat-1', _sum: { amount: 80 } },
+            ] as never,
+        },
         categoryRepo: {
           findMany: async () =>
             [
@@ -337,11 +371,14 @@ describe('NotificationsServiceImpl', () => {
     });
 
     it('usuario sin transacciones: entrada pre-seeded con totales 0 y breakdown vacío', async () => {
-      mockedGroupTotalsByUser.mockResolvedValueOnce([
-        { userId: 'user-1', type: 'expense', _sum: { amount: 50 } },
-      ]);
-      mockedGroupExpensesByUserAndCategory.mockResolvedValueOnce([]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+      const service = buildService({
+        transactionsService: {
+          getUserTotalsByType: async () =>
+            [{ userId: 'user-1', type: 'expense', _sum: { amount: 50 } }] as never,
+          getExpensesByUserAndCategory: async () => [],
+        },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       const result = await service.buildMonthlySummariesBatch(['user-1', 'user-sin-tx'], range);
 
@@ -353,11 +390,14 @@ describe('NotificationsServiceImpl', () => {
     });
 
     it('categoría sin match en el mapa: usa "Sin categoría" e icon undefined', async () => {
-      mockedGroupTotalsByUser.mockResolvedValueOnce([]);
-      mockedGroupExpensesByUserAndCategory.mockResolvedValueOnce([
-        { userId: 'user-1', categoryId: 'cat-borrada', _sum: { amount: 30 } },
-      ]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+      const service = buildService({
+        transactionsService: {
+          getUserTotalsByType: async () => [],
+          getExpensesByUserAndCategory: async () =>
+            [{ userId: 'user-1', categoryId: 'cat-borrada', _sum: { amount: 30 } }] as never,
+        },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       const result = await service.buildMonthlySummariesBatch(['user-1'], range);
 
@@ -378,12 +418,13 @@ describe('NotificationsServiceImpl', () => {
         _sum: { amount: 10 - i },
       }));
 
-      mockedGroupTotalsByUser.mockResolvedValueOnce([]);
-      mockedGroupExpensesByUserAndCategory.mockResolvedValueOnce([
-        ...manyCategories,
-        ...fewCategories,
-      ]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+      const service = buildService({
+        transactionsService: {
+          getUserTotalsByType: async () => [],
+          getExpensesByUserAndCategory: async () => [...manyCategories, ...fewCategories] as never,
+        },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       const result = await service.buildMonthlySummariesBatch(['user-1', 'user-2'], range);
 
@@ -394,33 +435,33 @@ describe('NotificationsServiceImpl', () => {
       expect(result.get('user-2')?.categoryBreakdown).toHaveLength(3);
     });
 
-    it('userIds vacío: devuelve Map vacío y no llama a los repos', async () => {
-      const service = buildService();
+    it('userIds vacío: devuelve Map vacío y no llama a TransactionsService', async () => {
+      const getUserTotalsByType = vi.fn();
+      const getExpensesByUserAndCategory = vi.fn();
+      const service = buildService({
+        transactionsService: { getUserTotalsByType, getExpensesByUserAndCategory },
+      });
 
       const result = await service.buildMonthlySummariesBatch([], range);
 
       expect(result.size).toBe(0);
-      expect(mockedGroupTotalsByUser).not.toHaveBeenCalled();
-      expect(mockedGroupExpensesByUserAndCategory).not.toHaveBeenCalled();
+      expect(getUserTotalsByType).not.toHaveBeenCalled();
+      expect(getExpensesByUserAndCategory).not.toHaveBeenCalled();
     });
 
-    it('envía el where esperado a groupTotalsByUser y groupExpensesByUserAndCategory', async () => {
-      mockedGroupTotalsByUser.mockResolvedValueOnce([]);
-      mockedGroupExpensesByUserAndCategory.mockResolvedValueOnce([]);
-      const service = buildService({ categoryRepo: { findMany: async () => [] } });
+    it('envía el where esperado a getUserTotalsByType y getExpensesByUserAndCategory', async () => {
+      const getUserTotalsByType = vi.fn().mockResolvedValue([]);
+      const getExpensesByUserAndCategory = vi.fn().mockResolvedValue([]);
+      const service = buildService({
+        transactionsService: { getUserTotalsByType, getExpensesByUserAndCategory },
+        categoryRepo: { findMany: async () => [] },
+      });
 
       await service.buildMonthlySummariesBatch(['user-1', 'user-2'], range);
 
       const expectedDate = { gte: range.start, lt: range.end };
-      expect(mockedGroupTotalsByUser).toHaveBeenCalledWith({
-        userId: { in: ['user-1', 'user-2'] },
-        date: expectedDate,
-      });
-      expect(mockedGroupExpensesByUserAndCategory).toHaveBeenCalledWith({
-        userId: { in: ['user-1', 'user-2'] },
-        date: expectedDate,
-        type: 'expense',
-      });
+      expect(getUserTotalsByType).toHaveBeenCalledWith(['user-1', 'user-2'], expectedDate);
+      expect(getExpensesByUserAndCategory).toHaveBeenCalledWith(['user-1', 'user-2'], expectedDate);
     });
   });
 });

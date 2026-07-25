@@ -5,18 +5,19 @@ import type { UserRepository } from '../repositories/user.repository.port.js';
 import type { AccountRepository } from '../repositories/account.repository.port.js';
 import type { CategoryRepository } from '../repositories/category.repository.port.js';
 import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
-import * as transactionRepo from '../repositories/transaction.repository.js';
 import * as debtRepo from '../repositories/debt.repository.js';
 import { AUTH_MESSAGES } from '../lib/constants/auth.constants.js';
 import { SETTINGS_MESSAGES } from '../lib/constants/settings.constants.js';
 import type { SettingsService, UserProfile, AccountStatistics } from './settings.service.port.js';
+import type { TransactionsService } from './transactions.service.port.js';
 
 export class SettingsServiceImpl implements SettingsService {
   constructor(
     private userRepo: UserRepository,
     private accountRepo: AccountRepository,
     private categoryRepo: CategoryRepository,
-    private fixedExpenseRepo: FixedExpenseRepository
+    private fixedExpenseRepo: FixedExpenseRepository,
+    private transactionsService: TransactionsService
   ) {}
 
   async getUserProfile(userId: string): Promise<UserProfile> {
@@ -102,14 +103,14 @@ export class SettingsServiceImpl implements SettingsService {
     const [accountsCount, transactionsCount, categoriesCount, fixedExpensesCount, debtsCount] =
       await Promise.all([
         this.accountRepo.countByUser(userId),
-        transactionRepo.countByUser(userId),
+        this.transactionsService.countByUser(userId),
         this.categoryRepo.countByUser(userId),
         this.fixedExpenseRepo.countByUser(userId),
         debtRepo.countByUser(userId),
       ]);
 
     // Get first transaction date
-    const firstTransaction = await transactionRepo.findFirstByUser(userId, { date: 'asc' });
+    const firstTransaction = await this.transactionsService.getFirstTransactionDate(userId);
 
     return {
       accounts: accountsCount,
