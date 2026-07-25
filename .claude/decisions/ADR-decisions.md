@@ -118,6 +118,23 @@ Registro de decisiones arquitectónicas del proyecto backend.
 - Rollout gradual por fases documentado en spec (`~/vault/workspaces/cuentas-app/specs/`) — mientras dura la migración, conviven el estilo funcional (features no migradas) y el estilo interfaz+clase (features migradas). Excepción puntual y documentada a la regla general de "sin shims", justificada por el volumen (~41 archivos).
 - Nomenclatura: `<Entity>Repository` (interfaz) / `<Entity>RepositoryImpl` (clase); `<Feature>Service` (interfaz) / `<Feature>ServiceImpl` (clase).
 - Nuevo archivo `src/bootstrap.ts` — único lugar donde se instancian repositories/services con `new`.
+- **Actualización 2026-07-23 (Fase 2):** el port (interfaz) vive en su propio fichero `<nombre>.port.ts`, separado del adapter (`class ...Impl`, en `<nombre>.ts`), que importa el tipo desde su `.port.ts`. Rige para las Fases 3-5. Las Fases 1 y 2 ya siguen esta convención (Fase 1 recibió un retrofit en el mismo ciclo de implementación de la Fase 2, sin cambio de comportamiento).
+
+---
+
+## ADR-010: Normalización de magic numbers/strings a constantes/enums
+
+**Fecha:** 2026-07-23 | **Estado:** Aceptada
+
+**Decisión:** Ningún literal de dominio (status, tipos, frecuencias, mensajes de error) vive suelto en el código — se extrae a `src/lib/constants/<archivo>.constants.ts`, con el patrón `export const X = { ... } as const` (+ tipo derivado `(typeof X)[keyof typeof X]`, + tupla `X_VALUES` cuando alimenta un `z.enum()`). Regla de ubicación: si el literal es propio de un solo dominio (ej. `DEBT_STATUS`), vive en `<dominio>.constants.ts`; si se usa en 3+ dominios distintos (ej. `'expense'/'income'`, `'Cuenta no encontrada'`), vive en `shared.constants.ts`. Un dominio puede reutilizar la constante de otro dominio dueño (ej. `recurring-debt-payments.service.ts` reusa `DEBT_MESSAGES.NOT_FOUND` de `debt.constants.ts`) — eso no lo convierte en global, sigue siendo del dominio dueño.
+
+**Justificación:** El código tenía literales repetidos sin nombre en varios archivos (ej. `'active'/'paid'/'overdue'` duplicado entre `debt.schema.ts`, `debt.utils.ts` y `debts.service.ts`; `expiresIn: '7d'` repetido sin constante) — dificulta saber a simple vista qué representa un valor y su alcance de reutilización real. Se integra dentro de cada fase del rollout Ports & Adapters (ADR-009) en vez de abrir un frente aparte: cada fase, al convertir sus repos/services, también normaliza los literales de los archivos que ya está tocando.
+
+**Consecuencias:**
+- ✅ `src/lib/constants/` (ya existía con `category-system-keys.ts`) pasa a ser la carpeta única para constantes de dominio y globales — un archivo por dominio, más `shared.constants.ts` para lo cross-domain.
+- ✅ Retrofit aplicado en el mismo ciclo a Fases 1 (`account`, `auth`) y 2 (`debt`, `recurring-debt-payment`): `ACCOUNT_TYPES`, `ACCOUNT_MESSAGES`, `AUTH_MESSAGES`, `JWT_EXPIRES_IN`, `DEBT_STATUS`, `INTEREST_TYPE`, `DEBT_MESSAGES`, `RECURRING_FREQUENCY`, `RECURRING_DEBT_PAYMENT_MESSAGES`, `PROCESS_PENDING_STATUS`/`PROCESS_PENDING_REASONS`, y los globales `TRANSACTION_TYPE`/`SHARED_MESSAGES`.
+- ⚠️ No se retrofittean los ~20 archivos fuera del rollout (ej. `transactions.service.ts`, `categories.service.ts`) que también usan `'expense'/'income'` — se normalizan cuando su propio dominio entre en una fase, igual que el resto de la convivencia gradual de ADR-009.
+- Rige para Fases 3-5: cada fase normaliza los literales de los archivos que convierte, sin excepción.
 
 ---
 

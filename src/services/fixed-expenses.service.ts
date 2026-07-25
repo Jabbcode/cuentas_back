@@ -8,7 +8,7 @@ import {
 import { NotFoundError, ConflictError, AppError } from '../lib/errors.js';
 import { createTransaction } from './transactions.service.js';
 import { payCreditCardStatement, getCreditCardStatement } from './credit-cards.service.js';
-import { payDebt } from './debts.service.js';
+import { debtsService } from '../bootstrap.js';
 import { calculateNextDueDate, getMonthRange } from '../lib/utils/date.utils.js';
 import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
@@ -167,7 +167,7 @@ export async function payFixedExpense(id: string, data: PayFixedExpenseInput, us
       const recurringPayment = await recurringRepo.findUnique(fixedExpense.recurringDebtPaymentId);
 
       if (recurringPayment) {
-        await payDebt(recurringPayment.debtId, userId, {
+        await debtsService.payDebt(recurringPayment.debtId, userId, {
           amount,
           accountId: fixedExpense.accountId,
           notes: `Pago automático desde gasto fijo`,
