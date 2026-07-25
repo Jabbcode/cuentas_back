@@ -104,6 +104,23 @@ Registro de decisiones arquitectónicas del proyecto backend.
 
 ---
 
+## ADR-009: Ports & Adapters para repositories y services
+
+**Fecha:** 2026-07-22 | **Estado:** Aceptada | **Reemplaza parcialmente:** convención de REFACTOR-BE-002 citada en ADR-008
+
+**Decisión:** `repositories/` y `services/` se definen como `interface` (el *port*) + `class XImpl implements Interface` (el *adapter*), con inyección de dependencias por constructor. Un service que necesita datos o lógica de otro dominio inyecta la **interfaz** del service dueño — nunca su repositorio ni su clase concreta. El wiring vive en un único archivo `src/bootstrap.ts` (composition root): instancia todo con `new`, en orden de dependencia, sin librería de DI. Los controllers importan las instancias ya armadas desde `bootstrap.ts`, no desde el archivo de service.
+
+**Justificación:** Nombre arquitectónico: **Ports & Adapters / Arquitectura Hexagonal** (Cockburn), consistente con Clean Architecture y el principio de inversión de dependencias (la "D" de SOLID). Resuelve un hallazgo real: 13 de 15 services importaban repositorios de otros dominios directamente, bypaseando la lógica de negocio del dueño (ej. `debts.service` escribía en `recurring-debt-payment.repository` sin pasar por `recurring-debt-payments.service`). Se adopta esta forma concreta (clases + `implements`, no factory functions) para que el mismo patrón, con la misma nomenclatura, se reutilice en proyectos futuros del usuario.
+
+**Consecuencias:**
+- ⚠️ Reemplaza ADR-008 solo en **cómo se estructuran** `repositories/` y `services/`. El resto de ADR-008 sigue vigente: 3 capas estrictas, solo la capa repository (ahora sus clases `Impl`) toca Prisma.
+- ⚠️ Esta decisión **no aplica** a `lib/utils/` — sigue siendo funciones puras exportadas individualmente, sin clases, sin cambio (la parte de REFACTOR-BE-002 sobre utils permanece vigente).
+- Rollout gradual por fases documentado en spec (`~/vault/workspaces/cuentas-app/specs/`) — mientras dura la migración, conviven el estilo funcional (features no migradas) y el estilo interfaz+clase (features migradas). Excepción puntual y documentada a la regla general de "sin shims", justificada por el volumen (~41 archivos).
+- Nomenclatura: `<Entity>Repository` (interfaz) / `<Entity>RepositoryImpl` (clase); `<Feature>Service` (interfaz) / `<Feature>ServiceImpl` (clase).
+- Nuevo archivo `src/bootstrap.ts` — único lugar donde se instancian repositories/services con `new`.
+
+---
+
 ## Cómo agregar una decisión
 
 ```markdown
