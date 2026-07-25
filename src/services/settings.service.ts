@@ -1,113 +1,123 @@
 import bcrypt from 'bcrypt';
 import { UpdateProfileInput, ChangePasswordInput } from '../schemas/settings.schema.js';
 import { NotFoundError, ConflictError, ValidationError } from '../lib/errors.js';
-import * as userRepo from '../repositories/user.repository.js';
-import * as accountRepo from '../repositories/account.repository.js';
+import type { UserRepository } from '../repositories/user.repository.port.js';
+import type { AccountRepository } from '../repositories/account.repository.port.js';
+import type { CategoryRepository } from '../repositories/category.repository.port.js';
+import type { FixedExpenseRepository } from '../repositories/fixed-expense.repository.port.js';
 import * as transactionRepo from '../repositories/transaction.repository.js';
-import * as categoryRepo from '../repositories/category.repository.js';
-import * as fixedExpenseRepo from '../repositories/fixed-expense.repository.js';
 import * as debtRepo from '../repositories/debt.repository.js';
+import { AUTH_MESSAGES } from '../lib/constants/auth.constants.js';
+import { SETTINGS_MESSAGES } from '../lib/constants/settings.constants.js';
+import type { SettingsService, UserProfile, AccountStatistics } from './settings.service.port.js';
 
-// Get user profile
-export async function getUserProfile(userId: string) {
-  const user = await userRepo.findById(userId, {
-    id: true,
-    email: true,
-    name: true,
-    createdAt: true,
-  });
+export class SettingsServiceImpl implements SettingsService {
+  constructor(
+    private userRepo: UserRepository,
+    private accountRepo: AccountRepository,
+    private categoryRepo: CategoryRepository,
+    private fixedExpenseRepo: FixedExpenseRepository
+  ) {}
 
-  if (!user) {
-    throw new NotFoundError('User not found');
-  }
+  async getUserProfile(userId: string): Promise<UserProfile> {
+    const user = await this.userRepo.findById(userId, {
+      id: true,
+      email: true,
+      name: true,
+      createdAt: true,
+    });
 
-  return user;
-}
-
-// Update user profile
-export async function updateUserProfile(userId: string, data: UpdateProfileInput) {
-  // Check if email is being changed and if it's already taken
-  if (data.email) {
-    const existingUser = await userRepo.findFirst({ email: data.email, NOT: { id: userId } });
-
-    if (existingUser) {
-      throw new ConflictError('Email is already in use');
+    if (!user) {
+      throw new NotFoundError(AUTH_MESSAGES.USER_NOT_FOUND);
     }
+
+    return user as unknown as UserProfile;
   }
 
-  const updatedUser = await userRepo.update(
-    userId,
-    { ...(data.name && { name: data.name }), ...(data.email && { email: data.email }) },
-    { id: true, email: true, name: true, createdAt: true }
-  );
+  async updateUserProfile(userId: string, data: UpdateProfileInput): Promise<UserProfile> {
+    // Check if email is being changed and if it's already taken
+    if (data.email) {
+      const existingUser = await this.userRepo.findFirst({
+        email: data.email,
+        NOT: { id: userId },
+      });
 
-  return updatedUser;
-}
+      if (existingUser) {
+        throw new ConflictError(AUTH_MESSAGES.EMAIL_TAKEN);
+      }
+    }
 
-// Change password
-export async function changePassword(userId: string, data: ChangePasswordInput) {
-  const user = await userRepo.findById(userId);
+    const updatedUser = await this.userRepo.update(
+      userId,
+      { ...(data.name && { name: data.name }), ...(data.email && { email: data.email }) },
+      { id: true, email: true, name: true, createdAt: true }
+    );
 
-  if (!user) {
-    throw new NotFoundError('User not found');
+    return updatedUser as unknown as UserProfile;
   }
 
-  // Verify current password
-  const isValidPassword = await bcrypt.compare(data.currentPassword, user.password);
+  async changePassword(userId: string, data: ChangePasswordInput): Promise<{ message: string }> {
+    const user = await this.userRepo.findById(userId);
 
-  if (!isValidPassword) {
-    throw new ValidationError('Current password is incorrect');
+    if (!user) {
+      throw new NotFoundError(AUTH_MESSAGES.USER_NOT_FOUND);
+    }
+
+    // Verify current password
+    const isValidPassword = await bcrypt.compare(data.currentPassword, user.password);
+
+    if (!isValidPassword) {
+      throw new ValidationError(SETTINGS_MESSAGES.INVALID_CURRENT_PASSWORD);
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(data.newPassword, 10);
+
+    await this.userRepo.update(userId, { password: hashedPassword });
+
+    return { message: 'Password changed successfully' };
   }
 
-  // Hash new password
-  const hashedPassword = await bcrypt.hash(data.newPassword, 10);
+  async deleteUserAccount(userId: string, password: string): Promise<{ message: string }> {
+    const user = await this.userRepo.findById(userId);
 
-  await userRepo.update(userId, { password: hashedPassword });
+    if (!user) {
+      throw new NotFoundError(AUTH_MESSAGES.USER_NOT_FOUND);
+    }
 
-  return { message: 'Password changed successfully' };
-}
+    // Verify password before deletion
+    const isValidPassword = await bcrypt.compare(password, user.password);
 
-// Delete user account
-export async function deleteUserAccount(userId: string, password: string) {
-  const user = await userRepo.findById(userId);
+    if (!isValidPassword) {
+      throw new ValidationError(SETTINGS_MESSAGES.INVALID_PASSWORD);
+    }
 
-  if (!user) {
-    throw new NotFoundError('User not found');
+    // Delete user (cascade will delete all related data)
+    await this.userRepo.remove(userId);
+
+    return { message: 'Account deleted successfully' };
   }
 
-  // Verify password before deletion
-  const isValidPassword = await bcrypt.compare(password, user.password);
+  async getAccountStatistics(userId: string): Promise<AccountStatistics> {
+    const [accountsCount, transactionsCount, categoriesCount, fixedExpensesCount, debtsCount] =
+      await Promise.all([
+        this.accountRepo.countByUser(userId),
+        transactionRepo.countByUser(userId),
+        this.categoryRepo.countByUser(userId),
+        this.fixedExpenseRepo.countByUser(userId),
+        debtRepo.countByUser(userId),
+      ]);
 
-  if (!isValidPassword) {
-    throw new ValidationError('Incorrect password');
+    // Get first transaction date
+    const firstTransaction = await transactionRepo.findFirstByUser(userId, { date: 'asc' });
+
+    return {
+      accounts: accountsCount,
+      transactions: transactionsCount,
+      categories: categoriesCount,
+      fixedExpenses: fixedExpensesCount,
+      debts: debtsCount,
+      memberSince: firstTransaction?.date || new Date(),
+    };
   }
-
-  // Delete user (cascade will delete all related data)
-  await userRepo.remove(userId);
-
-  return { message: 'Account deleted successfully' };
-}
-
-// Get account statistics
-export async function getAccountStatistics(userId: string) {
-  const [accountsCount, transactionsCount, categoriesCount, fixedExpensesCount, debtsCount] =
-    await Promise.all([
-      accountRepo.countByUser(userId),
-      transactionRepo.countByUser(userId),
-      categoryRepo.countByUser(userId),
-      fixedExpenseRepo.countByUser(userId),
-      debtRepo.countByUser(userId),
-    ]);
-
-  // Get first transaction date
-  const firstTransaction = await transactionRepo.findFirstByUser(userId, { date: 'asc' });
-
-  return {
-    accounts: accountsCount,
-    transactions: transactionsCount,
-    categories: categoriesCount,
-    fixedExpenses: fixedExpensesCount,
-    debts: debtsCount,
-    memberSince: firstTransaction?.date || new Date(),
-  };
 }

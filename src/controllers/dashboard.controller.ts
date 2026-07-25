@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express';
-import * as dashboardService from '../services/dashboard.service.js';
+import { dashboardService } from '../bootstrap.js';
 import * as projectionService from '../services/projection.service.js';
 import { AuthRequest } from '../types/index.js';
 

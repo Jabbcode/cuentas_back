@@ -1,8 +1,7 @@
 import cron from 'node-cron';
 import { prisma } from './prisma.js';
-import { notificationsService } from '../bootstrap.js';
+import { notificationsService, fixedExpensesService } from '../bootstrap.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
-import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
 import { getMonthRange } from './utils/date.utils.js';
 import * as userRepo from '../repositories/user.repository.js';
 
@@ -10,9 +9,8 @@ function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
   cron.schedule('0 7 * * *', async () => {
     try {
-      const { createdByUser, failedByUser } = await autoGenerateFixedExpenseTransactions(
-        new Date()
-      );
+      const { createdByUser, failedByUser } =
+        await fixedExpensesService.autoGenerateFixedExpenseTransactions(new Date());
 
       for (const [userId, count] of Object.entries(createdByUser)) {
         await notificationsService.createNotification(

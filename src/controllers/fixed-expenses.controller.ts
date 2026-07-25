@@ -1,6 +1,11 @@
 import { Response, NextFunction } from 'express';
-import * as fixedExpensesService from '../services/fixed-expenses.service.js';
-import { createFixedExpenseSchema, updateFixedExpenseSchema, payFixedExpenseSchema, reorderFixedExpensesSchema } from '../schemas/fixed-expense.schema.js';
+import { fixedExpensesService } from '../bootstrap.js';
+import {
+  createFixedExpenseSchema,
+  updateFixedExpenseSchema,
+  payFixedExpenseSchema,
+  reorderFixedExpensesSchema,
+} from '../schemas/fixed-expense.schema.js';
 import { AuthRequest } from '../types/index.js';
 
 export async function getFixedExpenses(req: AuthRequest, res: Response, next: NextFunction) {
