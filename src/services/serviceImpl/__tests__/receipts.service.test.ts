@@ -155,6 +155,87 @@ describe('ReceiptsServiceImpl.scanReceipt', () => {
     expect(result.scannedData?.amount).toBe(25.5);
   });
 
+  it('similar por descripción: si comparten suficientes palabras clave, se reporta como duplicado', async () => {
+    mockTesseractRecognize.mockResolvedValue({ data: { text: LONG_OCR_TEXT } });
+    mockAnthropicCreate.mockResolvedValue(
+      claudeResponse({ ...VALID_SCANNED_DATA, description: 'supermercado central' })
+    );
+    const service = new ReceiptsServiceImpl(
+      fakeTransactionsService({
+        findSimilarByAmountAndDate: async () =>
+          [
+            fakeTx({ id: 'tx-match', description: 'Pago supermercado' }),
+            fakeTx({ id: 'tx-no-match', description: 'Factura restaurante' }),
+          ] as never,
+      })
+    );
+
+    const result = await service.scanReceipt(Buffer.from('img'), 'user-1');
+
+    expect(result.duplicate).toBe(true);
+    expect(result.existingTransaction?.id).toBe('tx-match');
+  });
+
+  it('similar por descripción: sin palabras clave en común, no se reporta duplicado', async () => {
+    mockTesseractRecognize.mockResolvedValue({ data: { text: LONG_OCR_TEXT } });
+    mockAnthropicCreate.mockResolvedValue(
+      claudeResponse({ ...VALID_SCANNED_DATA, description: 'supermercado central' })
+    );
+    const service = new ReceiptsServiceImpl(
+      fakeTransactionsService({
+        findSimilarByAmountAndDate: async () =>
+          [fakeTx({ id: 'tx-1', description: 'cine entradas' })] as never,
+      })
+    );
+
+    const result = await service.scanReceipt(Buffer.from('img'), 'user-1');
+
+    expect(result.duplicate).toBe(false);
+  });
+
+  it('respuesta de Claude sin JSON: lanza AppError (AI_NO_JSON)', async () => {
+    mockTesseractRecognize.mockResolvedValue({ data: { text: LONG_OCR_TEXT } });
+    mockAnthropicCreate.mockResolvedValue({
+      content: [{ type: 'text', text: 'no hay datos aquí' }],
+    });
+    const service = new ReceiptsServiceImpl(fakeTransactionsService());
+
+    await expect(service.scanReceipt(Buffer.from('img'), 'user-1')).rejects.toThrow(AppError);
+  });
+
+  it('respuesta de Claude con JSON malformado: lanza AppError', async () => {
+    mockTesseractRecognize.mockResolvedValue({ data: { text: LONG_OCR_TEXT } });
+    mockAnthropicCreate.mockResolvedValue({
+      content: [{ type: 'text', text: '{ esto no es json válido }' }],
+    });
+    const service = new ReceiptsServiceImpl(fakeTransactionsService());
+
+    await expect(service.scanReceipt(Buffer.from('img'), 'user-1')).rejects.toThrow(AppError);
+  });
+
+  it('mapea los items del recibo aplicando los fallbacks de tipo', async () => {
+    mockTesseractRecognize.mockResolvedValue({ data: { text: LONG_OCR_TEXT } });
+    mockAnthropicCreate.mockResolvedValue(
+      claudeResponse({
+        ...VALID_SCANNED_DATA,
+        items: [
+          { name: 'Leche', quantity: 2, unitPrice: 1.5, totalPrice: 3 },
+          {}, // fuerza los defaults: nombre genérico, quantity 1, precios 0
+        ],
+      })
+    );
+    const service = new ReceiptsServiceImpl(
+      fakeTransactionsService({ findSimilarByAmountAndDate: async () => [] })
+    );
+
+    const result = await service.scanReceipt(Buffer.from('img'), 'user-1');
+
+    expect(result.scannedData?.items).toEqual([
+      { name: 'Leche', quantity: 2, unitPrice: 1.5, totalPrice: 3 },
+      { name: 'Producto sin nombre', quantity: 1, unitPrice: 0, totalPrice: 0 },
+    ]);
+  });
+
   it('duplicado similar: devuelve la transacción existente + scannedData', async () => {
     mockTesseractRecognize.mockResolvedValue({ data: { text: LONG_OCR_TEXT } });
     mockAnthropicCreate.mockResolvedValue(

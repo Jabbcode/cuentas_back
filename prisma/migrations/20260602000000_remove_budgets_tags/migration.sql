@@ -1,8 +1,8 @@
 -- DropForeignKey
-ALTER TABLE "Budget" DROP CONSTRAINT IF EXISTS "Budget_categoryId_fkey";
+ALTER TABLE IF EXISTS "Budget" DROP CONSTRAINT IF EXISTS "Budget_categoryId_fkey";
 
 -- DropForeignKey
-ALTER TABLE "Budget" DROP CONSTRAINT IF EXISTS "Budget_userId_fkey";
+ALTER TABLE IF EXISTS "Budget" DROP CONSTRAINT IF EXISTS "Budget_userId_fkey";
 
 -- DropForeignKey
 ALTER TABLE "TransactionTag" DROP CONSTRAINT IF EXISTS "TransactionTag_tagId_fkey";

@@ -230,6 +230,35 @@ describe('DebtsServiceImpl', () => {
     });
   });
 
+  describe('getDebts', () => {
+    it('sin status: filtra únicamente por userId', async () => {
+      const findAllByUser = vi.fn().mockResolvedValue([]);
+      const service = buildService({ debtRepo: { findAllByUser } });
+
+      await service.getDebts('user-1');
+
+      expect(findAllByUser.mock.calls[0][0]).toEqual({ userId: 'user-1' });
+    });
+
+    it('con status: agrega el filtro de estado', async () => {
+      const findAllByUser = vi.fn().mockResolvedValue([]);
+      const service = buildService({ debtRepo: { findAllByUser } });
+
+      await service.getDebts('user-1', 'overdue');
+
+      expect(findAllByUser.mock.calls[0][0]).toEqual({ userId: 'user-1', status: 'overdue' });
+    });
+
+    it('devuelve las deudas del repositorio', async () => {
+      const debt = fakeDebt();
+      const service = buildService({
+        debtRepo: { findAllByUser: async () => [debt] as never },
+      });
+
+      await expect(service.getDebts('user-1')).resolves.toEqual([debt]);
+    });
+  });
+
   describe('createDebt / updateDebt / deleteDebt', () => {
     it('createDebt devuelve la deuda creada', async () => {
       const created = fakeDebt({ creditor: 'Nuevo acreedor' });
@@ -254,6 +283,28 @@ describe('DebtsServiceImpl', () => {
       await expect(
         service.updateDebt('debt-1', 'user-1', { creditor: 'Actualizado' })
       ).resolves.toEqual(updated);
+    });
+
+    it('updateDebt lanza NotFoundError si no pertenece al usuario, y no llama update', async () => {
+      const update = vi.fn();
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => null, update },
+      });
+
+      await expect(service.updateDebt('debt-1', 'user-1', { creditor: 'x' })).rejects.toThrow(
+        NotFoundError
+      );
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('deleteDebt lanza NotFoundError si no pertenece al usuario, y no llama remove', async () => {
+      const remove = vi.fn();
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => null, remove },
+      });
+
+      await expect(service.deleteDebt('debt-1', 'user-1')).rejects.toThrow(NotFoundError);
+      expect(remove).not.toHaveBeenCalled();
     });
 
     it('deleteDebt devuelve el mensaje de confirmación', async () => {
@@ -410,6 +461,97 @@ describe('DebtsServiceImpl', () => {
 
       expect(createTransaction).toHaveBeenCalledTimes(1);
       expect(result.payment.id).toBe('payment-1');
+    });
+
+    it('recurring payment sin fixed expense asociado: actualiza el recurring pero no crea transacción', async () => {
+      const createTransaction = vi.fn();
+      const update = vi.fn().mockResolvedValue(recurringPayment);
+      mockedFindFirstFixedExpense.mockResolvedValue(null);
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 1000 }) },
+        recurringRepo: { findFirst: async () => recurringPayment, update },
+        transactionsService: { createTransaction },
+      });
+
+      await service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' });
+
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('sin recurring payment activo: no toca el recurringRepo.update', async () => {
+      const update = vi.fn();
+      const service = buildService({
+        debtRepo: { findByIdAndUser: async () => fakeDebt() },
+        accountsService: { getAccountById: async () => fakeAccount({ balance: 1000 }) },
+        recurringRepo: { findFirst: async () => null, update },
+      });
+
+      await service.payDebt('debt-1', 'user-1', { amount: 50, accountId: 'account-1' });
+
+      expect(update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getDebtsSummary', () => {
+    it('separa deudas activas de vencidas y suma sus montos por separado', async () => {
+      const service = buildService({
+        debtRepo: {
+          findAllByUser: async () =>
+            [
+              fakeDebt({ id: 'd1', status: 'active', remainingAmount: 100 }),
+              fakeDebt({ id: 'd2', status: 'overdue', remainingAmount: 50 }),
+              fakeDebt({ id: 'd3', status: 'paid', remainingAmount: 0 }),
+            ] as never,
+        },
+      });
+
+      const summary = await service.getDebtsSummary('user-1');
+
+      expect(summary.totalActiveDebts).toBe(1);
+      expect(summary.totalOverdueDebts).toBe(1);
+      expect(summary.totalDebtAmount).toBe(150);
+      expect(summary.totalOverdueAmount).toBe(50);
+    });
+
+    it('marca como "due soon" solo deudas activas con vencimiento dentro de los próximos 7 días', async () => {
+      const inThreeDays = new Date();
+      inThreeDays.setDate(inThreeDays.getDate() + 3);
+      const inTwentyDays = new Date();
+      inTwentyDays.setDate(inTwentyDays.getDate() + 20);
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      const service = buildService({
+        debtRepo: {
+          findAllByUser: async () =>
+            [
+              fakeDebt({ id: 'due-soon', status: 'active', dueDate: inThreeDays }),
+              fakeDebt({ id: 'due-later', status: 'active', dueDate: inTwentyDays }),
+              fakeDebt({ id: 'already-overdue', status: 'active', dueDate: yesterday }),
+              fakeDebt({ id: 'no-due-date', status: 'active', dueDate: null }),
+            ] as never,
+        },
+      });
+
+      const summary = await service.getDebtsSummary('user-1');
+
+      expect(summary.debtsDueSoon).toBe(1);
+      expect(summary.upcomingDebts).toEqual([expect.objectContaining({ id: 'due-soon' })]);
+    });
+
+    it('sin deudas: devuelve un resumen todo en cero', async () => {
+      const service = buildService({ debtRepo: { findAllByUser: async () => [] } });
+
+      await expect(service.getDebtsSummary('user-1')).resolves.toEqual({
+        totalActiveDebts: 0,
+        totalOverdueDebts: 0,
+        totalDebtAmount: 0,
+        totalOverdueAmount: 0,
+        debtsDueSoon: 0,
+        upcomingDebts: [],
+      });
     });
   });
 

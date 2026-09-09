@@ -80,6 +80,23 @@ describe('CategoriesServiceImpl', () => {
     vi.clearAllMocks();
   });
 
+  describe('getCategories', () => {
+    it('delega en el repositorio pasando userId y el filtro de tipo opcional', async () => {
+      const categories = [fakeCategory()];
+      const findAllByUser = vi.fn().mockResolvedValue(categories);
+      const service = new CategoriesServiceImpl(
+        fakeCategoryRepo({ findAllByUser }),
+        fakeTransactionsService()
+      );
+
+      await expect(service.getCategories('user-1', 'expense')).resolves.toEqual(categories);
+      expect(findAllByUser).toHaveBeenCalledWith('user-1', 'expense');
+
+      await service.getCategories('user-1');
+      expect(findAllByUser).toHaveBeenLastCalledWith('user-1', undefined);
+    });
+  });
+
   describe('getCategoryById', () => {
     it('lanza NotFoundError si el repo devuelve null', async () => {
       const service = new CategoriesServiceImpl(

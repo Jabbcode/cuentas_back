@@ -613,4 +613,488 @@ describe('FixedExpensesServiceImpl', () => {
       await expect(service.countByUser('user-1')).resolves.toBe(9);
     });
   });
+
+  describe('getFixedExpenses / createFixedExpense / deleteFixedExpense', () => {
+    it('getFixedExpenses aplica el filtro isActive solo cuando activeOnly es true', async () => {
+      const calls: unknown[] = [];
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findAllByUser: async (userId, filters) => {
+            calls.push(filters);
+            return [];
+          },
+        }),
+      });
+
+      await service.getFixedExpenses('user-1');
+      await service.getFixedExpenses('user-1', true);
+
+      expect(calls).toEqual([undefined, { isActive: true }]);
+    });
+
+    it('createFixedExpense delega en el repositorio incluyendo el userId', async () => {
+      const create = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const service = buildService({ fixedExpenseRepo: fakeFixedExpenseRepo({ create }) });
+
+      await service.createFixedExpense({ name: 'Renta' } as never, 'user-1');
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Renta', userId: 'user-1' }),
+        expect.anything()
+      );
+    });
+
+    it('deleteFixedExpense lanza NotFoundError si no pertenece al usuario, y no llama remove', async () => {
+      const remove = vi.fn();
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => null, remove }),
+      });
+
+      await expect(service.deleteFixedExpense('fe-1', 'user-1')).rejects.toThrow(NotFoundError);
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it('deleteFixedExpense elimina cuando existe', async () => {
+      const remove = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findByIdAndUser: async () => fakeFixedExpense(),
+          remove,
+        }),
+      });
+
+      await service.deleteFixedExpense('fe-1', 'user-1');
+
+      expect(remove).toHaveBeenCalledWith('fe-1');
+    });
+  });
+
+  describe('updateFixedExpense — sincronización del recurring debt payment asociado', () => {
+    it('sin recurringDebtPaymentId: no consulta ni actualiza el recurring payment', async () => {
+      const findRecurringPaymentById = vi.fn();
+      const existing = fakeFixedExpense({ recurringDebtPaymentId: null });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          findRecurringPaymentById,
+        }),
+      });
+
+      await service.updateFixedExpense('fe-1', { name: 'x' }, 'user-1');
+
+      expect(findRecurringPaymentById).not.toHaveBeenCalled();
+    });
+
+    it('cambia dueDay: recalcula nextDueDate y actualiza dayOfMonth + nextDueDate', async () => {
+      const updateRecurringPaymentFields = vi.fn().mockResolvedValue({});
+      const existing = fakeFixedExpense({ recurringDebtPaymentId: 'recurring-1', dueDay: 5 });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          findRecurringPaymentById: async () =>
+            ({ frequency: 'monthly', dayOfMonth: 5, dayOfWeek: null }) as never,
+          updateRecurringPaymentFields,
+        }),
+      });
+
+      await service.updateFixedExpense('fe-1', { dueDay: 20 }, 'user-1');
+
+      expect(updateRecurringPaymentFields).toHaveBeenCalledWith(
+        'recurring-1',
+        expect.objectContaining({ dayOfMonth: 20, nextDueDate: expect.any(Date) })
+      );
+    });
+
+    it('cambia amount y accountId (sin cambiar dueDay): actualiza esos campos sin recalcular nextDueDate', async () => {
+      const updateRecurringPaymentFields = vi.fn().mockResolvedValue({});
+      const existing = fakeFixedExpense({
+        recurringDebtPaymentId: 'recurring-1',
+        amount: 100,
+        accountId: 'account-old',
+      });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          findRecurringPaymentById: async () =>
+            ({ frequency: 'monthly', dayOfMonth: 5, dayOfWeek: null }) as never,
+          updateRecurringPaymentFields,
+        }),
+      });
+
+      await service.updateFixedExpense('fe-1', { amount: 250, accountId: 'account-new' }, 'user-1');
+
+      expect(updateRecurringPaymentFields).toHaveBeenCalledWith('recurring-1', {
+        amount: 250,
+        accountId: 'account-new',
+      });
+    });
+
+    it('sin cambios relevantes: no llama updateRecurringPaymentFields', async () => {
+      const updateRecurringPaymentFields = vi.fn();
+      const existing = fakeFixedExpense({ recurringDebtPaymentId: 'recurring-1' });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          findRecurringPaymentById: async () =>
+            ({ frequency: 'monthly', dayOfMonth: 5, dayOfWeek: null }) as never,
+          updateRecurringPaymentFields,
+        }),
+      });
+
+      await service.updateFixedExpense('fe-1', { name: 'Solo el nombre' }, 'user-1');
+
+      expect(updateRecurringPaymentFields).not.toHaveBeenCalled();
+    });
+
+    it('el recurring payment ya no existe: no falla, solo omite la sincronización', async () => {
+      const existing = fakeFixedExpense({ recurringDebtPaymentId: 'recurring-1' });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ findByIdAndUser: async () => existing }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          findRecurringPaymentById: async () => null as never,
+        }),
+      });
+
+      await expect(service.updateFixedExpense('fe-1', { dueDay: 20 }, 'user-1')).resolves.toEqual(
+        fakeFixedExpense()
+      );
+    });
+  });
+
+  describe('payFixedExpense — recurring debt payment no encontrado', () => {
+    beforeEach(() => {
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+    });
+
+    it('si el recurring payment ya no existe, no llama payDebt y el pago igual se resuelve', async () => {
+      const payDebt = vi.fn();
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findByIdAndUser: async () => fakeFixedExpense({ recurringDebtPaymentId: 'recurring-1' }),
+        }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          findRecurringPaymentById: async () => null as never,
+        }),
+        debtsService: fakeDebtsService({ payDebt }),
+      });
+
+      await expect(service.payFixedExpense('fe-1', {}, 'user-1')).resolves.toEqual({
+        id: 'tx-1',
+      });
+      expect(payDebt).not.toHaveBeenCalled();
+    });
+
+    it('si payDebt falla, el error se loguea pero no se relanza (el pago igual se resuelve)', async () => {
+      mockedFindUnique.mockResolvedValue({ debtId: 'debt-1' });
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findByIdAndUser: async () => fakeFixedExpense({ recurringDebtPaymentId: 'recurring-1' }),
+        }),
+        debtsService: fakeDebtsService({ payDebt: async () => Promise.reject(new Error('boom')) }),
+      });
+
+      await expect(service.payFixedExpense('fe-1', {}, 'user-1')).resolves.toEqual({
+        id: 'tx-1',
+      });
+    });
+  });
+
+  describe('getFixedExpensesSummary', () => {
+    function fakeCard(overrides: Partial<Account> = {}): Account {
+      return fakeAccount({
+        id: 'card-1',
+        name: 'Visa',
+        type: 'credit_card',
+        paymentDueDay: 15,
+        paymentAccountId: 'account-1',
+        ...overrides,
+      } as never);
+    }
+
+    function fakeStatement(overrides: Record<string, unknown> = {}) {
+      return {
+        account: fakeCard(),
+        currentPeriod: { startDate: new Date(), endDate: new Date(), balance: 0, transactions: [] },
+        closedPeriod: {
+          startDate: new Date(),
+          endDate: new Date(),
+          balance: 0,
+          transactions: [],
+          isPaid: true,
+          paymentDueDate: new Date(),
+          daysUntilDue: 5,
+        },
+        creditLimit: 1000,
+        available: 1000,
+        usagePercentage: 0,
+        alerts: [],
+        ...overrides,
+      } as never;
+    }
+
+    it('sin tarjetas configuradas ni recurring payments: no crea ni actualiza fixed expenses', async () => {
+      const create = vi.fn();
+      const update = vi.fn();
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ create, update, findAllByUser: async () => [] }),
+        accountsService: fakeAccountsService({ getConfiguredCreditCards: async () => [] }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          getRecurringDebtPayments: async () => [],
+        }),
+      });
+
+      const summary = await service.getFixedExpensesSummary('user-1');
+
+      expect(create).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(summary).toMatchObject({ totalCount: 0, paidCount: 0, pendingCount: 0 });
+    });
+
+    it('tarjeta con período cerrado pendiente y sin fixed expense previo: crea uno nuevo urgente', async () => {
+      const create = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ create, findFirst: async () => null }),
+        accountsService: fakeAccountsService({
+          getConfiguredCreditCards: async () => [fakeCard()],
+        }),
+        creditCardsService: fakeCreditCardsService({
+          getCreditCardStatement: async () =>
+            fakeStatement({ closedPeriod: { balance: 300, isPaid: false } }),
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Pago Tarjeta Visa', amount: 300 })
+      );
+    });
+
+    it('tarjeta con fixed expense existente y saldo del período actual: lo actualiza (proyección)', async () => {
+      const update = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          update,
+          findFirst: async () => fakeFixedExpense({ id: 'fe-card' }),
+        }),
+        accountsService: fakeAccountsService({
+          getConfiguredCreditCards: async () => [fakeCard()],
+        }),
+        creditCardsService: fakeCreditCardsService({
+          getCreditCardStatement: async () => fakeStatement({ currentPeriod: { balance: 120 } }),
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(update).toHaveBeenCalledWith(
+        'fe-card',
+        expect.objectContaining({ amount: 120, isActive: true })
+      );
+    });
+
+    it('tarjeta sin saldo pendiente y con fixed expense existente: lo desactiva', async () => {
+      const update = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          update,
+          findFirst: async () => fakeFixedExpense({ id: 'fe-card' }),
+        }),
+        accountsService: fakeAccountsService({
+          getConfiguredCreditCards: async () => [fakeCard()],
+        }),
+        creditCardsService: fakeCreditCardsService({
+          getCreditCardStatement: async () => fakeStatement(),
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(update).toHaveBeenCalledWith('fe-card', { isActive: false });
+    });
+
+    it('si getCreditCardStatement falla para una tarjeta, se ignora y no interrumpe el resto', async () => {
+      const service = buildService({
+        accountsService: fakeAccountsService({
+          getConfiguredCreditCards: async () => [fakeCard()],
+        }),
+        creditCardsService: fakeCreditCardsService({
+          getCreditCardStatement: async () => {
+            throw new Error('fechas no configuradas');
+          },
+        }),
+      });
+
+      await expect(service.getFixedExpensesSummary('user-1')).resolves.toBeDefined();
+    });
+
+    it('recurring payment con deuda ya pagada y fixed expense existente: lo desactiva y no crea transacción', async () => {
+      const update = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const rdp = {
+        id: 'rdp-1',
+        isActive: true,
+        frequency: 'monthly',
+        accountId: 'account-1',
+        amount: 50,
+        dayOfMonth: 10,
+        debt: { status: 'paid', creditor: 'Banco X', description: null },
+      } as never;
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          update,
+          findMany: async () => [
+            fakeFixedExpense({ id: 'fe-debt', recurringDebtPaymentId: 'rdp-1' }),
+          ],
+        }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          getRecurringDebtPayments: async () => [rdp],
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(update).toHaveBeenCalledWith('fe-debt', { isActive: false });
+    });
+
+    it('recurring payment activo sin fixed expense previo: crea uno nuevo', async () => {
+      const create = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const rdp = {
+        id: 'rdp-1',
+        isActive: true,
+        frequency: 'monthly',
+        accountId: 'account-1',
+        amount: 75,
+        dayOfMonth: 12,
+        debt: { status: 'active', creditor: 'Banco Y', description: 'Préstamo' },
+      } as never;
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ create, findMany: async () => [] }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          getRecurringDebtPayments: async () => [rdp],
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'Pago Deuda: Banco Y - Préstamo', amount: 75 })
+      );
+    });
+
+    it('recurring payment activo con fixed expense previo: lo actualiza en vez de crear uno nuevo', async () => {
+      const update = vi.fn().mockResolvedValue(fakeFixedExpense());
+      const create = vi.fn();
+      const rdp = {
+        id: 'rdp-1',
+        isActive: true,
+        frequency: 'monthly',
+        accountId: 'account-1',
+        amount: 90,
+        dayOfMonth: 12,
+        debt: { status: 'active', creditor: 'Banco Z', description: null },
+      } as never;
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          update,
+          create,
+          findMany: async () =>
+            [fakeFixedExpense({ id: 'fe-existing', recurringDebtPaymentId: 'rdp-1' })] as never,
+        }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          getRecurringDebtPayments: async () => [rdp],
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(update).toHaveBeenCalledWith(
+        'fe-existing',
+        expect.objectContaining({ name: 'Pago Deuda: Banco Z', amount: 90 })
+      );
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('si falla el sync de un recurring payment, se loguea y no interrumpe el resto de la sincronización', async () => {
+      const rdp = {
+        id: 'rdp-1',
+        isActive: true,
+        frequency: 'monthly',
+        accountId: 'account-1',
+        amount: 90,
+        dayOfMonth: 12,
+        debt: { status: 'active', creditor: 'Banco Z', description: null },
+      } as never;
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          create: async () => {
+            throw new Error('db error');
+          },
+          findMany: async () => [],
+        }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          getRecurringDebtPayments: async () => [rdp],
+        }),
+      });
+
+      await expect(service.getFixedExpensesSummary('user-1')).resolves.toBeDefined();
+    });
+
+    it('ignora recurring payments inactivos o no mensuales', async () => {
+      const create = vi.fn();
+      const rdpInactive = {
+        id: 'rdp-1',
+        isActive: false,
+        frequency: 'monthly',
+        debt: { status: 'active', creditor: 'X', description: null },
+      } as never;
+      const rdpWeekly = {
+        id: 'rdp-2',
+        isActive: true,
+        frequency: 'weekly',
+        debt: { status: 'active', creditor: 'Y', description: null },
+      } as never;
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({ create, findMany: async () => [] }),
+        recurringDebtPaymentsService: fakeRecurringDebtPaymentsService({
+          getRecurringDebtPayments: async () => [rdpInactive, rdpWeekly],
+        }),
+      });
+
+      await service.getFixedExpensesSummary('user-1');
+
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('calcula totales mensuales solo con items activos y separa pagados/pendientes por transacciones del mes', async () => {
+      const items = [
+        fakeFixedExpense({
+          id: 'fe-1',
+          isActive: true,
+          type: 'expense',
+          amount: 100,
+        }),
+        fakeFixedExpense({
+          id: 'fe-2',
+          isActive: true,
+          type: 'income',
+          amount: 40,
+        }),
+        fakeFixedExpense({ id: 'fe-3', isActive: false, type: 'expense', amount: 999 }),
+      ].map((fe) => ({ ...fe, transactions: fe.id === 'fe-1' ? [{ id: 'tx-1' }] : [] }));
+
+      const service = buildService({
+        fixedExpenseRepo: fakeFixedExpenseRepo({
+          findAllByUser: async () => items as never,
+        }),
+      });
+
+      const summary = await service.getFixedExpensesSummary('user-1');
+
+      expect(summary.totalMonthlyExpenses).toBe(100);
+      expect(summary.totalMonthlyIncome).toBe(40);
+      expect(summary.totalCount).toBe(2);
+      expect(summary.paidCount).toBe(1);
+      expect(summary.pendingCount).toBe(1);
+    });
+  });
 });

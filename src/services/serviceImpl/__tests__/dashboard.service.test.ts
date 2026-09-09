@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Account, Category, FixedExpense } from '@prisma/client';
 import type { AccountsService } from '../../interfaces/accounts.service.port.js';
 import type {
@@ -235,6 +235,154 @@ describe('DashboardServiceImpl', () => {
       );
 
       await expect(service.getByCategory('user-1')).resolves.toEqual([]);
+    });
+
+    it('ignora filas sin categoryId y no consulta las categorías si no queda ninguna', async () => {
+      const hydrateCategoriesByIds = vi.fn().mockResolvedValue([]);
+      const service = new DashboardServiceImpl(
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService({ hydrateCategoriesByIds }),
+        fakeTransactionsService({
+          getCategoryBreakdown: async () =>
+            [
+              { categoryId: null, type: 'expense', _sum: { amount: 999 }, _count: { _all: 1 } },
+            ] as never,
+        })
+      );
+
+      await expect(service.getByCategory('user-1')).resolves.toEqual([]);
+      expect(hydrateCategoriesByIds).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getMonthlyTrend (usa TransactionsService.findTransactionsSince)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 5, 15)); // 15 jun 2026
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function monthKey(year: number, month0: number): string {
+      return new Date(year, month0, 1).toLocaleString('es-ES', { month: 'short', year: '2-digit' });
+    }
+
+    it('devuelve una entrada por cada uno de los `months` pedidos, en orden cronológico', async () => {
+      const service = new DashboardServiceImpl(
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService(),
+        fakeTransactionsService({ findTransactionsSince: async () => [] })
+      );
+
+      const result = await service.getMonthlyTrend('user-1', 3);
+
+      expect(result.map((r) => r.month)).toEqual([
+        monthKey(2026, 3),
+        monthKey(2026, 4),
+        monthKey(2026, 5),
+      ]);
+      expect(result.every((r) => r.income === 0 && r.expenses === 0 && r.net === 0)).toBe(true);
+    });
+
+    it('consulta desde el primer día del rango de `months` meses atrás', async () => {
+      const findTransactionsSince = vi.fn().mockResolvedValue([]);
+      const service = new DashboardServiceImpl(
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService(),
+        fakeTransactionsService({ findTransactionsSince })
+      );
+
+      await service.getMonthlyTrend('user-1', 6);
+
+      expect(findTransactionsSince).toHaveBeenCalledWith('user-1', new Date(2026, 0, 1));
+    });
+
+    it('agrupa income y expense por mes y calcula el neto', async () => {
+      const service = new DashboardServiceImpl(
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService(),
+        fakeTransactionsService({
+          findTransactionsSince: async () =>
+            [
+              { date: new Date(2026, 3, 5), type: 'income', amount: 100 },
+              { date: new Date(2026, 3, 20), type: 'income', amount: 50 },
+              { date: new Date(2026, 3, 10), type: 'expense', amount: 30 },
+              { date: new Date(2026, 5, 1), type: 'expense', amount: 20 },
+            ] as never,
+        })
+      );
+
+      const result = await service.getMonthlyTrend('user-1', 6);
+      const april = result.find((r) => r.month === monthKey(2026, 3));
+      const june = result.find((r) => r.month === monthKey(2026, 5));
+
+      expect(april).toEqual({ month: monthKey(2026, 3), income: 150, expenses: 30, net: 120 });
+      expect(june).toEqual({ month: monthKey(2026, 5), income: 0, expenses: 20, net: -20 });
+    });
+  });
+
+  describe('getMonthlySummary (usa TransactionsService.getCategoryBreakdown)', () => {
+    it('separa income/expense, agrupa gastos por categoría y calcula porcentajes', async () => {
+      const service = new DashboardServiceImpl(
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService({
+          hydrateCategoriesByIds: async () =>
+            [
+              { id: 'cat-1', name: 'Comida', icon: null, color: null },
+              { id: 'cat-2', name: 'Ocio', icon: null, color: null },
+            ] as unknown as Category[],
+        }),
+        fakeTransactionsService({
+          getCategoryBreakdown: async () =>
+            [
+              { categoryId: 'cat-1', type: 'expense', _sum: { amount: 75 }, _count: { _all: 1 } },
+              { categoryId: 'cat-2', type: 'expense', _sum: { amount: 25 }, _count: { _all: 1 } },
+              { categoryId: null, type: 'income', _sum: { amount: 200 }, _count: { _all: 1 } },
+            ] as never,
+        })
+      );
+
+      const summary = await service.getMonthlySummary('user-1', 6, 2026);
+
+      expect(summary).toMatchObject({
+        month: 6,
+        year: 2026,
+        totalExpenses: 100,
+        totalIncome: 200,
+        net: 100,
+      });
+      expect(summary.categories).toEqual([
+        expect.objectContaining({ id: 'cat-1', total: 75, percentage: 75 }),
+        expect.objectContaining({ id: 'cat-2', total: 25, percentage: 25 }),
+      ]);
+    });
+
+    it('un gasto sin categoryId suma al total pero no genera una entrada en categories', async () => {
+      const hydrateCategoriesByIds = vi.fn().mockResolvedValue([]);
+      const service = new DashboardServiceImpl(
+        fakeAccountsService(),
+        fakeFixedExpensesService(),
+        fakeCategoriesService({ hydrateCategoriesByIds }),
+        fakeTransactionsService({
+          getCategoryBreakdown: async () =>
+            [
+              { categoryId: null, type: 'expense', _sum: { amount: 40 }, _count: { _all: 1 } },
+            ] as never,
+        })
+      );
+
+      const summary = await service.getMonthlySummary('user-1', 6, 2026);
+
+      expect(summary.totalExpenses).toBe(40);
+      expect(summary.categories).toEqual([]);
+      expect(hydrateCategoriesByIds).not.toHaveBeenCalled();
     });
   });
 

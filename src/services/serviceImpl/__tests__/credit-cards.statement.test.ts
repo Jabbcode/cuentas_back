@@ -92,4 +92,77 @@ describe('buildStatement', () => {
       expect.objectContaining({ type: 'high_usage', severity: 'error' })
     );
   });
+
+  it('uso entre 80% y 89% genera alerta de severidad warning', () => {
+    const account = fakeAccount({ creditLimit: 100 });
+    const transactions = [fakeTx(new Date(2026, 5, 7), 85)];
+
+    const statement = buildStatement(account, transactions, [], today);
+
+    expect(statement.alerts).toContainEqual(
+      expect.objectContaining({ type: 'high_usage', severity: 'warning' })
+    );
+  });
+
+  it('lanza ValidationError si la cuenta no tiene cutoffDay o paymentDueDay', () => {
+    expect(() => buildStatement(fakeAccount({ cutoffDay: null }), [], [], today)).toThrow(
+      'La tarjeta no tiene configuradas las fechas de corte y pago'
+    );
+    expect(() => buildStatement(fakeAccount({ paymentDueDay: null }), [], [], today)).toThrow(
+      'La tarjeta no tiene configuradas las fechas de corte y pago'
+    );
+  });
+
+  it('ordena las transacciones de cada período por fecha descendente', () => {
+    const account = fakeAccount();
+    const older = fakeTx(new Date(2026, 4, 5), 10);
+    const newer = fakeTx(new Date(2026, 4, 20), 20);
+
+    const statement = buildStatement(account, [older, newer], [], today);
+
+    expect(statement.closedPeriod.transactions).toEqual([newer, older]);
+  });
+
+  it('pago vence en 2 días (<=3): alerta payment_due_soon con severidad error', () => {
+    const account = fakeAccount({ paymentDueDay: 12 }); // due = 12 jun, today = 10 jun -> 2 días
+
+    const statement = buildStatement(account, [], [], today);
+
+    expect(statement.closedPeriod.daysUntilDue).toBe(2);
+    expect(statement.alerts).toContainEqual(
+      expect.objectContaining({ type: 'payment_due_soon', severity: 'error' })
+    );
+  });
+
+  it('pago vence en 5 días (<=7): alerta payment_due_soon con severidad warning', () => {
+    const account = fakeAccount({ paymentDueDay: 15 }); // due = 15 jun, today = 10 jun -> 5 días
+
+    const statement = buildStatement(account, [], [], today);
+
+    expect(statement.closedPeriod.daysUntilDue).toBe(5);
+    expect(statement.alerts).toContainEqual(
+      expect.objectContaining({ type: 'payment_due_soon', severity: 'warning' })
+    );
+  });
+
+  it('el período cerrado ya pagado suprime la alerta de pago próximo', () => {
+    const account = fakeAccount({ paymentDueDay: 12 });
+    const payments = [fakePayment(new Date(Date.UTC(2026, 4, 5)), new Date(Date.UTC(2026, 5, 4)))];
+
+    const statement = buildStatement(account, [], payments, today);
+
+    expect(statement.alerts.some((a) => a.type === 'payment_due_soon')).toBe(false);
+  });
+
+  it('corte próximo (<=3 días) genera alerta cutoff_soon', () => {
+    // today=10 jun, cutoffDay=12 -> currentDay(10) < cutoffDay -> nextCutoff = 12 jun (2 días)
+    const account = fakeAccount({ cutoffDay: 12 });
+
+    const statement = buildStatement(account, [], [], today);
+
+    expect(statement.currentPeriod.daysUntilCutoff).toBe(2);
+    expect(statement.alerts).toContainEqual(
+      expect.objectContaining({ type: 'cutoff_soon', severity: 'info' })
+    );
+  });
 });

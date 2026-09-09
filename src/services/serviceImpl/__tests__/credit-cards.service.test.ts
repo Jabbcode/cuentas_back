@@ -232,6 +232,112 @@ describe('CreditCardsServiceImpl', () => {
     });
   });
 
+  describe('getCreditCardsSummary', () => {
+    it('sin tarjetas con fechas configuradas: devuelve el resumen vacío sin consultar transacciones', async () => {
+      const service = buildService({
+        accountsService: {
+          getCreditCards: async () => [
+            fakeAccount({ id: 'card-1', cutoffDay: null }),
+            fakeAccount({ id: 'card-2', paymentDueDay: null }),
+          ],
+        },
+      });
+
+      const summary = await service.getCreditCardsSummary('user-1');
+
+      expect(summary).toEqual({ totalToPay: 0, upcomingPayments: [], alerts: [], cards: [] });
+      expect(mockedFindCardStatementTransactions).not.toHaveBeenCalled();
+    });
+
+    it('suma totalToPay solo de los períodos cerrados no pagados', async () => {
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 4, 10), amount: 200 }, // cerrado, card-1
+        { accountId: 'card-2', date: new Date(2026, 4, 10), amount: 300 }, // cerrado, card-2
+      ]);
+      const service = buildService({
+        accountsService: {
+          getCreditCards: async () => [
+            fakeAccount({ id: 'card-1', name: 'Visa' }),
+            fakeAccount({ id: 'card-2', name: 'Mastercard' }),
+          ],
+        },
+        creditCardPaymentRepo: {
+          // card-2 ya pagó su período cerrado
+          findMany: async () => [
+            {
+              accountId: 'card-2',
+              periodStart: new Date(Date.UTC(2026, 4, 5)),
+              periodEnd: new Date(Date.UTC(2026, 5, 4)),
+            } as unknown as CreditCardPayment,
+          ],
+        },
+      });
+
+      const summary = await service.getCreditCardsSummary('user-1');
+
+      expect(summary.totalToPay).toBe(200);
+      expect(summary.cards).toHaveLength(2);
+    });
+
+    it('reparte transacciones y pagos por cuenta antes de construir cada statement', async () => {
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 4, 10), amount: 111 },
+        { accountId: 'card-2', date: new Date(2026, 4, 10), amount: 222 },
+      ]);
+      const service = buildService({
+        accountsService: {
+          getCreditCards: async () => [
+            fakeAccount({ id: 'card-1' }),
+            fakeAccount({ id: 'card-2' }),
+          ],
+        },
+      });
+
+      const summary = await service.getCreditCardsSummary('user-1');
+      const card1 = summary.cards.find((c) => c.account.id === 'card-1');
+      const card2 = summary.cards.find((c) => c.account.id === 'card-2');
+
+      expect(card1?.closedPeriod.balance).toBe(111);
+      expect(card2?.closedPeriod.balance).toBe(222);
+    });
+
+    it('upcomingPayments queda ordenado por daysUntilDue ascendente', async () => {
+      const service = buildService({
+        accountsService: {
+          getCreditCards: async () => [
+            fakeAccount({ id: 'card-1', name: 'Lejano', paymentDueDay: 20 }), // due 20 jun -> 10 días
+            fakeAccount({ id: 'card-2', name: 'Cercano', paymentDueDay: 12 }), // due 12 jun -> 2 días
+          ],
+        },
+        creditCardPaymentRepo: { findMany: async () => [] },
+      });
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 4, 10), amount: 50 },
+        { accountId: 'card-2', date: new Date(2026, 4, 10), amount: 60 },
+      ]);
+
+      const summary = await service.getCreditCardsSummary('user-1');
+
+      expect(summary.upcomingPayments.map((p) => p.accountId)).toEqual(['card-2', 'card-1']);
+    });
+
+    it('las alertas quedan ordenadas por severidad: error, warning, info', async () => {
+      const service = buildService({
+        accountsService: {
+          getCreditCards: async () => [
+            fakeAccount({ id: 'card-info', cutoffDay: 12 }), // solo genera cutoff_soon (info)
+            fakeAccount({ id: 'card-error', paymentDueDay: 12 }), // payment_due_soon (error)
+          ],
+        },
+      });
+
+      const summary = await service.getCreditCardsSummary('user-1');
+      const types = summary.alerts.map((a) => a.severity);
+
+      expect(types.indexOf('error')).toBeLessThan(types.indexOf('info'));
+    });
+  });
+
   describe('payCreditCardStatement', () => {
     it('lanza ConflictError si el período cerrado ya está pagado', async () => {
       const account = fakeAccount();
