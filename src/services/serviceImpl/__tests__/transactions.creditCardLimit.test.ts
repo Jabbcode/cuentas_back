@@ -223,6 +223,47 @@ describe('TransactionsServiceImpl.createTransaction — límite de tarjeta de cr
       service.createTransaction(baseCreateInput({ fixedExpenseId: 'fe-1' }), 'user-1')
     ).rejects.toThrow('Gasto fijo no encontrado');
   });
+
+  it('la cuenta pasa el chequeo de ownership pero desaparece antes del lock FOR UPDATE: lanza NotFoundError', async () => {
+    const updateAccountBalance = vi.fn();
+    const { prisma, txFake } = fakePrisma({ queryRaw: vi.fn().mockResolvedValue([]) });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService({ updateAccountBalance }),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(service.createTransaction(baseCreateInput(), 'user-1')).rejects.toThrow(
+      'Cuenta no encontrada'
+    );
+    expect(txFake.transaction.create).not.toHaveBeenCalled();
+    expect(updateAccountBalance).not.toHaveBeenCalled();
+  });
+
+  it('con receiptItems: los mapea al crear la transacción', async () => {
+    const { prisma, txFake } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ type: 'bank', creditLimit: null })]),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await service.createTransaction(
+      baseCreateInput({
+        receiptItems: [{ name: 'Leche', quantity: 2, unitPrice: 1.5, totalPrice: 3 }],
+      }),
+      'user-1'
+    );
+
+    const [{ data }] = txFake.transaction.create.mock.calls[0];
+    expect(data.receiptItems).toEqual({
+      create: [{ name: 'Leche', quantity: 2, unitPrice: 1.5, totalPrice: 3 }],
+    });
+  });
 });
 
 describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicación de balance', () => {
@@ -271,6 +312,64 @@ describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicaci�
     expect(updateAccountBalance.mock.calls[1]).toEqual(
       expect.arrayContaining(['account-1', 'user-1', 80, 'expense'])
     );
+  });
+
+  it('actualiza type/description/accountId/categoryId/fixedExpenseId/imageHash/date cuando se pasan', async () => {
+    const transactionUpdate = vi
+      .fn()
+      .mockResolvedValue({ id: 'tx-1', accountId: 'account-2', amount: 50, type: 'income' });
+    const { prisma } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ type: 'bank', creditLimit: null })]),
+      transactionUpdate,
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => fakeExisting() as never }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    const data: UpdateTransactionInput = {
+      type: 'income',
+      description: 'Nueva descripción',
+      accountId: 'account-2',
+      categoryId: 'category-2',
+      fixedExpenseId: 'fe-2',
+      imageHash: 'hash-2',
+      date: '2026-01-15',
+    };
+
+    await service.updateTransaction('tx-1', data, 'user-1');
+
+    const [updateArgs] = transactionUpdate.mock.calls[0];
+    expect(updateArgs.data).toEqual({
+      type: 'income',
+      description: 'Nueva descripción',
+      account: { connect: { id: 'account-2' } },
+      category: { connect: { id: 'category-2' } },
+      fixedExpense: { connect: { id: 'fe-2' } },
+      imageHash: 'hash-2',
+      date: new Date('2026-01-15'),
+    });
+  });
+
+  it('la cuenta resultante desaparece antes del lock FOR UPDATE: lanza NotFoundError y no persiste', async () => {
+    const transactionUpdate = vi.fn();
+    const { prisma } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([]),
+      transactionUpdate,
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => fakeExisting() as never }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(service.updateTransaction('tx-1', { amount: 80 }, 'user-1')).rejects.toThrow(
+      'Cuenta no encontrada'
+    );
+    expect(transactionUpdate).not.toHaveBeenCalled();
   });
 
   it('editar subiendo el monto por encima del límite lanza ConflictError y no persiste', async () => {

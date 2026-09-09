@@ -278,6 +278,17 @@ describe('SettingsServiceImpl', () => {
   });
 
   describe('changePassword (usa UsersService.findUserById / updatePassword)', () => {
+    it('lanza NotFoundError si el usuario no existe', async () => {
+      const service = buildService({ usersService: { findUserById: async () => null } });
+
+      await expect(
+        service.changePassword('user-1', {
+          currentPassword: 'x',
+          newPassword: 'new-password',
+        })
+      ).rejects.toThrow('Usuario no encontrado');
+    });
+
     it('lanza ValidationError con el mensaje traducido si la contraseña actual es incorrecta', async () => {
       const service = buildService({
         usersService: { findUserById: async () => fakeUser() },
@@ -310,6 +321,40 @@ describe('SettingsServiceImpl', () => {
         })
       ).resolves.toEqual({ message: 'Password changed successfully' });
       expect(updatePassword).toHaveBeenCalledWith('user-1', expect.any(String));
+    });
+  });
+
+  describe('deleteUserAccount (usa UsersService.findUserById / deleteUser)', () => {
+    it('lanza NotFoundError si el usuario no existe', async () => {
+      const service = buildService({ usersService: { findUserById: async () => null } });
+
+      await expect(service.deleteUserAccount('user-1', 'cualquier-password')).rejects.toThrow(
+        'Usuario no encontrado'
+      );
+    });
+
+    it('lanza ValidationError si la contraseña es incorrecta, y no elimina al usuario', async () => {
+      const deleteUser = vi.fn();
+      const service = buildService({
+        usersService: { findUserById: async () => fakeUser(), deleteUser },
+      });
+
+      await expect(service.deleteUserAccount('user-1', 'wrong-password')).rejects.toBeInstanceOf(
+        ValidationError
+      );
+      expect(deleteUser).not.toHaveBeenCalled();
+    });
+
+    it('elimina la cuenta si la contraseña es correcta', async () => {
+      const deleteUser = vi.fn().mockResolvedValue(fakeUser());
+      const service = buildService({
+        usersService: { findUserById: async () => fakeUser(), deleteUser },
+      });
+
+      await expect(service.deleteUserAccount('user-1', 'correct-password')).resolves.toEqual({
+        message: 'Account deleted successfully',
+      });
+      expect(deleteUser).toHaveBeenCalledWith('user-1');
     });
   });
 

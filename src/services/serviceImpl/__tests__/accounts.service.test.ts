@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Account, Transfer, PrismaClient } from '@prisma/client';
 import type { AccountRepository } from '../../../repositories/interfaces/account.repository.port.js';
 import { AccountsServiceImpl } from '../accounts.service.js';
@@ -56,7 +56,10 @@ function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRep
   };
 }
 
-function fakePrisma(txOverrides: Record<string, unknown> = {}): PrismaClient {
+function fakePrisma(
+  txOverrides: Record<string, unknown> = {},
+  accountOverrides: { updateMany?: ReturnType<typeof vi.fn> } = {}
+): PrismaClient {
   const txFake = {
     account: { update: async () => fakeAccount() },
     transfer: {
@@ -71,10 +74,23 @@ function fakePrisma(txOverrides: Record<string, unknown> = {}): PrismaClient {
 
   return {
     $transaction: async (cb: (tx: unknown) => unknown) => cb(txFake),
+    account: {
+      updateMany: accountOverrides.updateMany ?? vi.fn().mockResolvedValue({ count: 1 }),
+    },
   } as unknown as PrismaClient;
 }
 
 describe('AccountsServiceImpl', () => {
+  describe('getAccounts', () => {
+    it('delega en accountRepo.findAllByUser', async () => {
+      const accounts = [fakeAccount()];
+      const repo = fakeAccountRepo({ findAllByUser: async () => accounts });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.getAccounts('user-1')).resolves.toEqual(accounts);
+    });
+  });
+
   describe('getAccountById', () => {
     it('lanza NotFoundError si el repo devuelve null', async () => {
       const repo = fakeAccountRepo({ findByIdAndUser: async () => null });
@@ -147,7 +163,7 @@ describe('AccountsServiceImpl', () => {
       ).rejects.toThrow('Las cuentas de origen y destino deben ser diferentes');
     });
 
-    it('lanza NotFoundError si alguna cuenta no existe', async () => {
+    it('lanza NotFoundError si la cuenta destino no existe', async () => {
       const repo = fakeAccountRepo({
         findByIdAndUser: async (id: string) => (id === 'account-1' ? fakeAccount() : null),
       });
@@ -159,6 +175,20 @@ describe('AccountsServiceImpl', () => {
           'user-1'
         )
       ).rejects.toThrow('Cuenta destino no encontrada');
+    });
+
+    it('lanza NotFoundError si la cuenta origen no existe', async () => {
+      const repo = fakeAccountRepo({
+        findByIdAndUser: async (id: string) => (id === 'account-2' ? fakeAccount() : null),
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(
+        service.transferFunds(
+          { fromAccountId: 'account-1', toAccountId: 'account-2', amount: 10 },
+          'user-1'
+        )
+      ).rejects.toThrow('Cuenta origen no encontrada');
     });
 
     it('lanza ValidationError si el saldo es insuficiente', async () => {
@@ -249,6 +279,81 @@ describe('AccountsServiceImpl', () => {
       const service = new AccountsServiceImpl(repo, fakePrisma());
 
       await expect(service.countByUser('user-1')).resolves.toBe(3);
+    });
+  });
+
+  describe('getTransfersByAccount', () => {
+    it('lanza NotFoundError si la cuenta no pertenece al usuario, sin consultar transferencias', async () => {
+      const findTransfersByAccount = vi.fn();
+      const repo = fakeAccountRepo({
+        findByIdAndUser: async () => null,
+        findTransfersByAccount,
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.getTransfersByAccount('account-1', 'user-1')).rejects.toThrow(
+        'Cuenta no encontrada'
+      );
+      expect(findTransfersByAccount).not.toHaveBeenCalled();
+    });
+
+    it('devuelve las transferencias de la cuenta', async () => {
+      const transfers = [
+        { ...fakeTransfer(), fromAccount: fakeAccount(), toAccount: fakeAccount() },
+      ];
+      const repo = fakeAccountRepo({
+        findByIdAndUser: async () => fakeAccount(),
+        findTransfersByAccount: async () => transfers,
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma());
+
+      await expect(service.getTransfersByAccount('account-1', 'user-1')).resolves.toEqual(
+        transfers
+      );
+    });
+  });
+
+  describe('updateAccountBalance', () => {
+    it('income: incrementa el balance', async () => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+
+      await service.updateAccountBalance('account-1', 'user-1', 50, 'income');
+
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { id: 'account-1', userId: 'user-1' },
+        data: { balance: { increment: 50 } },
+      });
+    });
+
+    it('expense: decrementa el balance', async () => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+
+      await service.updateAccountBalance('account-1', 'user-1', 50, 'expense');
+
+      expect(updateMany).toHaveBeenCalledWith({
+        where: { id: 'account-1', userId: 'user-1' },
+        data: { balance: { decrement: 50 } },
+      });
+    });
+
+    it('lanza NotFoundError si no actualiza ninguna fila (cuenta inexistente o de otro usuario)', async () => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+
+      await expect(
+        service.updateAccountBalance('account-1', 'user-1', 50, 'expense')
+      ).rejects.toThrow('Cuenta no encontrada');
+    });
+
+    it('usa this.prisma por defecto cuando no se pasa un tx explícito', async () => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+
+      await service.updateAccountBalance('account-1', 'user-1', 10, 'income');
+
+      expect(updateMany).toHaveBeenCalledTimes(1);
     });
   });
 });

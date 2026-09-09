@@ -81,6 +81,23 @@ describe('AuthServiceImpl', () => {
         service.login({ email: 'test@test.com', password: 'wrong-password' })
       ).rejects.toThrow('Credenciales inválidas');
     });
+
+    it('en éxito devuelve { user, token } sin exponer el hash de password', async () => {
+      const hashed = await bcrypt.hash('correct-password', 10);
+      const repo = fakeUserRepo({
+        findByEmail: async () => fakeUser({ password: hashed }),
+      });
+      const service = new AuthServiceImpl(repo);
+
+      const result = await service.login({
+        email: 'test@test.com',
+        password: 'correct-password',
+      });
+
+      expect(result.user).toEqual({ id: 'user-1', email: 'test@test.com', name: 'Test User' });
+      expect(result.user).not.toHaveProperty('password');
+      expect(typeof result.token).toBe('string');
+    });
   });
 
   describe('getMe', () => {
@@ -89,6 +106,32 @@ describe('AuthServiceImpl', () => {
       const service = new AuthServiceImpl(repo);
 
       await expect(service.getMe('user-1')).rejects.toThrow('Usuario no encontrado');
+    });
+
+    it('en éxito devuelve el perfil consultando solo los campos seleccionados', async () => {
+      const findById = vi.fn().mockResolvedValue({
+        id: 'user-1',
+        email: 'test@test.com',
+        name: 'Test User',
+        createdAt: fakeUser().createdAt,
+      });
+      const repo = fakeUserRepo({ findById });
+      const service = new AuthServiceImpl(repo);
+
+      const result = await service.getMe('user-1');
+
+      expect(result).toEqual({
+        id: 'user-1',
+        email: 'test@test.com',
+        name: 'Test User',
+        createdAt: expect.any(Date),
+      });
+      expect(findById).toHaveBeenCalledWith('user-1', {
+        id: true,
+        email: true,
+        name: true,
+        createdAt: true,
+      });
     });
   });
 });

@@ -150,6 +150,75 @@ describe('NotificationsServiceImpl', () => {
     vi.clearAllMocks();
   });
 
+  describe('getNotifications / getUnreadCount / markAllAsRead / createNotification', () => {
+    it('getNotifications delega en el repositorio', async () => {
+      const notifications = [fakeNotification()];
+      const service = buildService({
+        notificationRepo: { findAllByUser: async () => notifications },
+      });
+
+      await expect(service.getNotifications('user-1')).resolves.toEqual(notifications);
+    });
+
+    it('getUnreadCount delega en el repositorio', async () => {
+      const service = buildService({ notificationRepo: { countUnread: async () => 5 } });
+
+      await expect(service.getUnreadCount('user-1')).resolves.toBe(5);
+    });
+
+    it('markAllAsRead marca como leídas solo las no leídas del usuario', async () => {
+      const updateMany = vi.fn().mockResolvedValue({ count: 3 });
+      const service = buildService({ notificationRepo: { updateMany } });
+
+      await expect(service.markAllAsRead('user-1')).resolves.toEqual({ count: 3 });
+      expect(updateMany).toHaveBeenCalledWith({ userId: 'user-1', read: false }, { read: true });
+    });
+
+    it('createNotification arma el create con user.connect y sin metadata si no se pasa', async () => {
+      const create = vi.fn().mockResolvedValue(fakeNotification());
+      const service = buildService({ notificationRepo: { create } });
+
+      await service.createNotification('user-1', 'debt_due', 'Título', 'Mensaje');
+
+      expect(create).toHaveBeenCalledWith({
+        user: { connect: { id: 'user-1' } },
+        type: 'debt_due',
+        title: 'Título',
+        message: 'Mensaje',
+      });
+    });
+
+    it('createNotification incluye metadata cuando se pasa', async () => {
+      const create = vi.fn().mockResolvedValue(fakeNotification());
+      const service = buildService({ notificationRepo: { create } });
+
+      await service.createNotification('user-1', 'debt_due', 'Título', 'Mensaje', { debtId: 'd1' });
+
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ metadata: { debtId: 'd1' } }));
+    });
+  });
+
+  describe('getUserContactInfo', () => {
+    it('devuelve null si el usuario no existe', async () => {
+      const service = buildService({ usersService: { findUserById: async () => null } });
+
+      await expect(service.getUserContactInfo('user-1')).resolves.toBeNull();
+    });
+
+    it('devuelve email y name si existe', async () => {
+      const service = buildService({
+        usersService: {
+          findUserById: async () => fakeUser({ email: 'x@test.com', name: 'X' }),
+        },
+      });
+
+      await expect(service.getUserContactInfo('user-1')).resolves.toEqual({
+        email: 'x@test.com',
+        name: 'X',
+      });
+    });
+  });
+
   describe('markAsRead', () => {
     it('lanza NotFoundError si el repo devuelve null', async () => {
       const service = buildService({ notificationRepo: { findByIdAndUser: async () => null } });
@@ -447,6 +516,27 @@ describe('NotificationsServiceImpl', () => {
       expect(result.size).toBe(0);
       expect(getUserTotalsByType).not.toHaveBeenCalled();
       expect(getExpensesByUserAndCategory).not.toHaveBeenCalled();
+    });
+
+    it('ignora filas de totales/categorías cuyo userId no está en la lista pedida (dato inconsistente)', async () => {
+      const service = buildService({
+        transactionsService: {
+          getUserTotalsByType: async () =>
+            [{ userId: 'user-ajeno', type: 'expense', _sum: { amount: 999 } }] as never,
+          getExpensesByUserAndCategory: async () =>
+            [{ userId: 'user-ajeno', categoryId: 'cat-1', _sum: { amount: 999 } }] as never,
+        },
+        categoriesService: { hydrateUserCategoriesByIds: async () => [] },
+      });
+
+      const result = await service.buildMonthlySummariesBatch(['user-1'], range);
+
+      expect(result.get('user-1')).toEqual({
+        totalExpenses: 0,
+        totalIncome: 0,
+        categoryBreakdown: [],
+      });
+      expect(result.has('user-ajeno')).toBe(false);
     });
 
     it('envía el where esperado a getUserTotalsByType y getExpensesByUserAndCategory', async () => {

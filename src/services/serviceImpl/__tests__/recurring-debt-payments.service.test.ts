@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Account, Debt, RecurringDebtPayment } from '@prisma/client';
 import type { RecurringDebtPaymentRepository } from '../../../repositories/interfaces/recurring-debt-payment.repository.port.js';
 import type { AccountsService } from '../../interfaces/accounts.service.port.js';
@@ -189,6 +189,153 @@ describe('RecurringDebtPaymentsServiceImpl', () => {
       await expect(service.getRecurringDebtPaymentById('rdp-1', 'user-1')).rejects.toThrow(
         'Pago recurrente no encontrado'
       );
+    });
+
+    it('devuelve el pago recurrente si existe y pertenece al usuario', async () => {
+      const found = { ...fakeRdp(), account: fakeAccount(), debt: fakeDebt() };
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => found as never }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(service.getRecurringDebtPaymentById('rdp-1', 'user-1')).resolves.toEqual(found);
+    });
+  });
+
+  describe('getRecurringDebtPayments', () => {
+    it('delega en el repositorio filtrando por userId y, opcionalmente, debtId', async () => {
+      const calls: unknown[] = [];
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({
+          findAllByUser: async (userId, debtId) => {
+            calls.push({ userId, debtId });
+            return [];
+          },
+        }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await service.getRecurringDebtPayments('user-1');
+      await service.getRecurringDebtPayments('user-1', 'debt-1');
+
+      expect(calls).toEqual([
+        { userId: 'user-1', debtId: undefined },
+        { userId: 'user-1', debtId: 'debt-1' },
+      ]);
+    });
+  });
+
+  describe('updateRecurringDebtPayment', () => {
+    it('lanza NotFoundError si no pertenece al usuario', async () => {
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => null }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(
+        service.updateRecurringDebtPayment('rdp-1', 'user-1', { amount: 100 })
+      ).rejects.toThrow('Pago recurrente no encontrado');
+    });
+
+    it('sin cambio de frecuencia/día: conserva el nextDueDate existente', async () => {
+      const update = vi.fn().mockResolvedValue(fakeRdp());
+      const existing = fakeRdp({ nextDueDate: new Date('2026-07-05') });
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => existing, update }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await service.updateRecurringDebtPayment('rdp-1', 'user-1', { amount: 100 });
+
+      expect(update).toHaveBeenCalledWith(
+        'rdp-1',
+        expect.objectContaining({ amount: 100, nextDueDate: existing.nextDueDate }),
+        expect.anything()
+      );
+    });
+
+    it('cambia frequency: recalcula nextDueDate usando los valores existentes de día', async () => {
+      const update = vi.fn().mockResolvedValue(fakeRdp());
+      const existing = fakeRdp({ frequency: 'monthly', dayOfMonth: 5, dayOfWeek: null });
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => existing, update }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await service.updateRecurringDebtPayment('rdp-1', 'user-1', { frequency: 'weekly' });
+
+      const [, data] = update.mock.calls[0];
+      expect(data.nextDueDate).toBeInstanceOf(Date);
+      expect(data.nextDueDate).not.toEqual(existing.nextDueDate);
+    });
+
+    it('cambia solo dayOfMonth: recalcula nextDueDate conservando la frecuencia existente', async () => {
+      const update = vi.fn().mockResolvedValue(fakeRdp());
+      const existing = fakeRdp({ frequency: 'monthly', dayOfMonth: 5, dayOfWeek: null });
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => existing, update }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await service.updateRecurringDebtPayment('rdp-1', 'user-1', { dayOfMonth: 20 });
+
+      expect(update).toHaveBeenCalledWith(
+        'rdp-1',
+        expect.objectContaining({ dayOfMonth: 20, nextDueDate: expect.any(Date) }),
+        expect.anything()
+      );
+    });
+
+    it('devuelve el pago recurrente actualizado', async () => {
+      const updated = { ...fakeRdp({ amount: 200 }), account: fakeAccount(), debt: fakeDebt() };
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({
+          findByIdAndUser: async () => fakeRdp(),
+          update: async () => updated as never,
+        }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(
+        service.updateRecurringDebtPayment('rdp-1', 'user-1', { amount: 200 })
+      ).resolves.toEqual(updated);
+    });
+  });
+
+  describe('deleteRecurringDebtPayment', () => {
+    it('lanza NotFoundError si no pertenece al usuario, y no llama remove', async () => {
+      const remove = vi.fn();
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => null, remove }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(service.deleteRecurringDebtPayment('rdp-1', 'user-1')).rejects.toThrow(
+        'Pago recurrente no encontrado'
+      );
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it('elimina y devuelve el mensaje de confirmación', async () => {
+      const remove = vi.fn().mockResolvedValue(undefined);
+      const service = new RecurringDebtPaymentsServiceImpl(
+        fakeRecurringRepo({ findByIdAndUser: async () => fakeRdp(), remove }),
+        fakeAccountsService(),
+        fakeDebtsService()
+      );
+
+      await expect(service.deleteRecurringDebtPayment('rdp-1', 'user-1')).resolves.toEqual({
+        message: expect.any(String),
+      });
+      expect(remove).toHaveBeenCalledWith('rdp-1');
     });
   });
 
