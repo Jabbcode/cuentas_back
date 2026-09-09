@@ -10,14 +10,21 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "format": "prettier --write \"src/**/*.ts\" \"prisma/schema.prisma\"",
-    "prepare": "husky",
+    "prepare": "husky || true",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "data:backfill-system-keys": "tsx prisma/data-migrations/backfill-category-system-keys.ts"
+    "data:backfill-system-keys": "tsx prisma/data-migrations/backfill-category-system-keys.ts",
+    "dev:pre": "dotenv -e .env.pre -- tsx watch src/index.ts",
+    "db:migrate:pre": "dotenv -e .env.pre -- prisma migrate deploy",
+    "db:studio:pre": "dotenv -e .env.pre -- prisma studio",
+    "dev:test": "dotenv -e .env.test -- tsx watch src/index.ts",
+    "db:migrate:test": "dotenv -e .env.test -- prisma migrate deploy",
+    "test:e2e": "playwright test"
   },
   "lint-staged": {
     "*.ts": [
@@ -41,6 +48,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/bcrypt": "^6.0.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
@@ -49,6 +57,8 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^22.9.0",
     "@types/node-cron": "^3.0.11",
+    "@vitest/coverage-v8": "^4.1.10",
+    "dotenv-cli": "^11.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.3",

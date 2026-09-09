@@ -3,7 +3,7 @@
 Documento vivo del estado actual del backend. Actualizar regularmente.
 
 ## 📅 Fecha de Actualización
-**Última actualización:** 2026-07-20
+**Última actualización:** 2026-07-23
 
 ## 🚀 Estado General
 API REST en producción activa. Arquitectura Clean (repositories + services + controllers) completada. Observabilidad con Sentry tunnel operativa. JWT migrado a httpOnly cookies. Features Budgets y Tags eliminadas (2026-06-02).
@@ -97,6 +97,26 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - [x] Cookie: `httpOnly`, `secure` en prod, `sameSite: none` (cross-origin Vercel→Render)
 - [x] `authMiddleware` lee `req.cookies.token`
 
+### ✅ Cleanup de arquitectura backend (PRs #45–#51 — 2026-07-21)
+6 hallazgos de la revisión de arquitectura, implementados vía spec-driven development
+(`~/vault/workspaces/cuentas-app/specs/backend-cleanup-*`), mergeados a `develop` y `main`:
+- [x] #45 — Imports dinámicos → estáticos entre `credit-cards.service.ts` y
+      `fixed-expenses.service.ts` (rompe acoplamiento circular oculto)
+- [x] #46 — `payFixedExpense` detecta pago de tarjeta ya existente por
+      `instanceof ConflictError` en vez de por texto del mensaje
+- [x] #47 — `dashboard.service.ts` agrega en la base de datos (`aggregate`/`groupBy`)
+      en vez de traer todo a memoria y usar `.reduce()`
+- [x] #48 — `sendTestEmail` y `sendMonthlySummaries` (cron) ya no acceden a `prisma.*`
+      directamente; cálculo de resumen mensual unificado en
+      `notificationsService.buildMonthlySummary`
+- [x] #49 — Cron mensual sin N+1: `buildMonthlySummariesBatch` reemplaza 4 queries por
+      usuario por 3 queries en lote, independiente del número de usuarios
+- [x] #50 — `Category.systemKey` (estable, no editable por el usuario) reemplaza el
+      find-or-create por `name` en las 4 categorías de sistema (pago de deuda/tarjeta);
+      incluye script de backfill versionado (`prisma/data-migrations/`) ya ejecutado
+      contra la DB de producción — duplicados reales unificados
+- [x] #51 — Release a `main`
+
 ### 📝 Pendiente
 - [ ] FEAT-014: Metas de ahorro (modelo SavingsGoal + CRUD)
 - [ ] FEAT-012: Exportación CSV/PDF
@@ -107,8 +127,10 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - Ninguno crítico
 
 ## 🔧 Deuda Técnica
-- ❌ Sin tests unitarios (0% cobertura)
-- ⚠️ N+1 queries en algunos endpoints
+- ❌ Sin tests unitarios (0% cobertura) — desactualizado: hay suite vitest activa (65+ tests),
+  ver PR #002 y los cleanups #45–#51; falta actualizar este punto con cobertura real
+- ✅ N+1 queries conocidas resueltas: credit cards summary + sync recurrentes (PR #008),
+  dashboard (PR #47), cron mensual de resúmenes (PR #49)
 - ⚠️ Notificaciones de límite de categoría: `checkBudgetAndNotify` no sobrevivió a la
   eliminación de Budgets (2026-06-02) — el tipo de notificación `category_limit` existe
   en el schema y en las preferencias (`categoryLimit: true`), pero ningún código lo
@@ -125,11 +147,69 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 - [ ] Helmet para headers (pendiente)
 
 ## 🌐 Despliegue
+
+### Producción
 - **Backend:** Render — https://cuentas-back-fgep.onrender.com
-- **Frontend:** Vercel — https://cuentas-front-amber.vercel.app
+- **Frontend:** Vercel — https://cuentas-front-amber.vercel.app (rama `main`)
 - **CORS_ORIGIN:** https://cuentas-front-amber.vercel.app (sin trailing slash)
 
+### Staging / pre-producción (2026-07-23) — validado end-to-end
+Entorno completo backend+frontend para probar cambios con datos desechables antes de
+promoverlos a producción. Los 3 componentes viven en la rama `develop` de cada repo.
+
+**Neon (BD):** proyecto único con 2 ramas — `produccion` (`DATABASE_URL` en `.env`) y
+`develop` (staging, datos desechables). `develop` tenía drift de un experimento
+abandonado (`feature/banking-sync-truelayer`, bloqueado — ver "Pendiente") que dejó
+migraciones huérfanas; se reseteó desde `produccion` ("Reset from parent" en Neon) y
+quedó sincronizada con las 14 migraciones actuales.
+- `.env.pre` (gitignored, no versionado): mismas variables que `.env` pero
+  `DATABASE_URL` apunta a la rama `develop` de Neon, `PORT=4001`.
+- Scripts npm: `dev:pre`, `db:migrate:pre`, `db:studio:pre` (usan `dotenv-cli` para
+  cargar `.env.pre`).
+
+**Render (backend):** servicio `cuentas-back-staging` —
+https://cuentas-back-staging.onrender.com — definido vía Blueprint (`render.yaml` en
+la raíz del repo, rama `develop`, plan free). Dos fixes necesarios tras la creación:
+- `buildCommand` debía forzar `npm install --include=dev` — con `NODE_ENV=production`,
+  Render omite `devDependencies` (`typescript` y todos los `@types/*`), rompiendo
+  `tsc` con cientos de falsos positivos.
+- `"prepare": "husky"` → `"husky || true"` en `package.json` — el script fallaba con
+  exit 127 al no encontrar el binario de `husky` (devDependency) en el install de
+  producción, tumbando el build completo.
+- `CORS_ORIGIN` = `https://cuentas-front-git-develop-jabbcodes-projects.vercel.app`
+  (alias estable de la rama `develop` en Vercel).
+- Secrets (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CORS_ORIGIN`)
+  completados manualmente en el dashboard de Render (`sync: false` en el Blueprint).
+
+**Vercel (frontend, repo `cuentas_front`):** el proyecto tenía `vercel.json` con
+`ignoreCommand`/`git.deploymentEnabled` configurados para deployar solo `main` —
+cancelaba automáticamente todo build de `develop`. Se amplió a `main` + `develop`.
+`VITE_API_URL` configurado en Vercel, scoped a `Preview` + rama `develop`, apuntando
+al backend de staging (`.../api`) — coexiste con el `VITE_API_URL` genérico de
+Production/Preview/Development sin conflicto (el scoped a rama tiene prioridad).
+Preview: `cuentas-front-git-develop-jabbcodes-projects.vercel.app`.
+
+**Validación end-to-end (2026-07-23):** `/api/health` en staging → 200; preflight CORS
+desde el origen real de Vercel → `Access-Control-Allow-Origin` correcto (no `*`);
+`POST /auth/register` → cookie `HttpOnly; Secure; SameSite=None`; `GET /auth/me` con
+esa cookie → 200. Usuarios de prueba (`staging-test-*@example.com`) creados y
+eliminados tras la verificación.
+
+PRs: `cuentas_back` #56 (entorno `.env.pre`), #57 (`render.yaml`), #58 (fix husky),
+#59 (fix build `--include=dev`) — todas mergeadas a `develop`. `cuentas_front` #64
+(fix `vercel.json`) — mergeada a `develop`.
+
 ## 📊 Cambios Recientes
+- **Entorno de staging/pre-producción (PRs #56–#59, #64 — 2026-07-23):** Neon `develop`
+  (reset de drift), `cuentas-back-staging` en Render (Blueprint + fixes de build),
+  preview de Vercel para `develop` habilitado, `VITE_API_URL` scoped. Validado
+  end-to-end (health, CORS, cookie de auth cross-origin). Ver sección "Despliegue".
+- **Cleanup de arquitectura (PRs #45–#51 — 2026-07-21):** 6 hallazgos cerrados (imports
+  circulares, detección de conflicto por tipo, dashboard con agregación en DB, capas
+  Prisma en notificaciones/cron, N+1 del cron mensual, `systemKey` estable para
+  categorías de sistema + backfill ejecutado en prod). Ver sección "Cleanup de
+  arquitectura backend" arriba y las specs en
+  `~/vault/workspaces/cuentas-app/specs/backend-cleanup-*`.
 - **chore (2026-06-02):** Eliminadas las features Budgets y Tags del backend (modelos, endpoints, servicios y specs relacionadas)
 - **FIX-032 (PR #29 — 2026-06-01):** JWT migrado de localStorage a httpOnly cookie; `sameSite: none` para cross-origin prod; nuevo `POST /auth/logout`
 - **PR #27 (2026-06-01):** Sentry tunnel endpoint `/api/monitoring/sentry-tunnel` para evitar bloqueo por ad blockers

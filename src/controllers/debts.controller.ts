@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import type { AuthRequest } from '../types/index.js';
-import * as debtsService from '../services/debts.service.js';
+import { debtsService } from '../bootstrap.js';
 import { createDebtSchema, updateDebtSchema, payDebtSchema } from '../schemas/debt.schema.js';
 
 export async function createDebt(req: AuthRequest, res: Response, next: NextFunction) {

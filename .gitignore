@@ -1,6 +1,8 @@
 node_modules
 dist
 .env
+.env.*
+!.env.example
 
 # Documentation
 docs
@@ -16,3 +18,8 @@ src/scripts/
 graphify-out/
 .claude/settings.json
 .claude/scheduled_tasks.lock
+
+# Test reports/coverage
+coverage/
+playwright-report/
+test-results/

@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { ACCOUNT_TYPE_VALUES } from '../lib/constants/account.constants.js';
 
 export const createAccountSchema = z.object({
   name: z.string().min(1, 'El nombre es requerido'),
-  type: z.enum(['cash', 'bank', 'credit_card']),
+  type: z.enum(ACCOUNT_TYPE_VALUES),
   balance: z.number().default(0),
   currency: z.string().default('EUR'),
   color: z.string().optional(),

@@ -1,28 +1,34 @@
 import cron from 'node-cron';
 import { prisma } from './prisma.js';
-import {
-  createNotification,
-  getPreferences,
-  buildMonthlySummariesBatch,
-} from '../services/notifications.service.js';
+import { notificationsService, fixedExpensesService, usersService } from '../bootstrap.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
-import { autoGenerateFixedExpenseTransactions } from '../services/fixed-expenses.service.js';
 import { getMonthRange } from './utils/date.utils.js';
-import * as userRepo from '../repositories/user.repository.js';
 
 function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
   cron.schedule('0 7 * * *', async () => {
     try {
-      const createdByUser = await autoGenerateFixedExpenseTransactions(new Date());
+      const { createdByUser, failedByUser } =
+        await fixedExpensesService.autoGenerateFixedExpenseTransactions(new Date());
 
       for (const [userId, count] of Object.entries(createdByUser)) {
-        await createNotification(
+        await notificationsService.createNotification(
           userId,
           'auto_generated',
           'Transacciones generadas automáticamente',
           `Se generaron ${count} transacción${count > 1 ? 'es' : ''} automática${count > 1 ? 's' : ''} hoy.`,
           { created: count }
+        );
+      }
+
+      for (const [userId, failures] of Object.entries(failedByUser)) {
+        const names = failures.map((f) => f.fixedExpenseName).join(', ');
+        await notificationsService.createNotification(
+          userId,
+          'auto_generate_failed',
+          'No se pudieron generar algunos gastos fijos',
+          `No se generaron automáticamente: ${names}. Revisa el detalle de cada gasto fijo.`,
+          { failures }
         );
       }
     } catch (err) {
@@ -64,7 +70,7 @@ function startCronJobs() {
         if (existing) continue;
 
         try {
-          await createNotification(
+          await notificationsService.createNotification(
             debt.userId,
             'debt_due',
             `Deuda próxima a vencer: ${debt.creditor}`,
@@ -101,10 +107,7 @@ async function sendMonthlySummaries(): Promise<void> {
 
   const { start: startOfMonth, end: endOfMonth } = getMonthRange(prevYear, prevMonth);
 
-  const users = await userRepo.findMany(
-    {},
-    { id: true, email: true, name: true, notificationPreferences: true }
-  );
+  const users = await usersService.getAllUsersForSummaries();
 
   const monthNames = [
     'Enero',
@@ -128,7 +131,7 @@ async function sendMonthlySummaries(): Promise<void> {
 
   if (eligible.length === 0) return;
 
-  const summaries = await buildMonthlySummariesBatch(
+  const summaries = await notificationsService.buildMonthlySummariesBatch(
     eligible.map((u) => u.id),
     { start: startOfMonth, end: endOfMonth }
   );

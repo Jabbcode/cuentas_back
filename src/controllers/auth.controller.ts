@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import * as authService from '../services/auth.service.js';
+import { authService } from '../bootstrap.js';
 import { registerSchema, loginSchema } from '../schemas/auth.schema.js';
 import { AuthRequest } from '../types/index.js';
 

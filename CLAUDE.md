@@ -50,6 +50,24 @@ Node.js + Express 4.21 + TypeScript 5.6 + Prisma 5.22 + PostgreSQL + Zod + JWT +
 | `data-processing-agent` | Agregaciones, dashboards, cálculos complejos |
 | `database-migration-agent` | Cambios en schema Prisma |
 
+## Verificación
+
+- Tests: `npm test`
+- Types: `npx tsc --noEmit`
+- E2E (manual, requiere Docker Desktop corriendo): `npm run test:e2e` — levanta Postgres efímero vía `docker-compose.test.yml`, aplica `prisma migrate deploy` contra `.env.test` y corre Playwright contra la API en `:3001`. No se ejecuta en el flujo normal de verificación.
+  - `.env.test` no está en el repo (gitignored, cada dev lo crea localmente). Contenido mínimo:
+    ```
+    DATABASE_URL="postgresql://postgres:postgres@localhost:5433/cuentas_test?schema=public"
+    JWT_SECRET="cualquier-valor-para-test"
+    PORT=3001
+    ANTHROPIC_API_KEY="test-anthropic-key"
+    RESEND_API_KEY="test-resend-key"
+    RESEND_FROM_EMAIL="MisCuentas <noreply@miscuentas.app>"
+    NODE_ENV=test
+    DISABLE_RATE_LIMIT=true
+    ```
+    `DISABLE_RATE_LIMIT` es un flag dedicado (no reutiliza `NODE_ENV`) para que la suite E2E no choque contra el rate limiter de `/api/auth/*` — ver `src/middlewares/rate-limit.middleware.ts`.
+
 ## Estado actual
 
 Ver `.claude/project-state.md`

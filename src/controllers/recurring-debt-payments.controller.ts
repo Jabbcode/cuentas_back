@@ -1,6 +1,6 @@
 import { Response, NextFunction } from 'express';
 import type { AuthRequest } from '../types/index.js';
-import * as recurringDebtPaymentsService from '../services/recurring-debt-payments.service.js';
+import { recurringDebtPaymentsService } from '../bootstrap.js';
 import {
   createRecurringDebtPaymentSchema,
   updateRecurringDebtPaymentSchema,
