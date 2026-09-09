@@ -1,15 +1,24 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, request as apiRequest, type APIRequestContext } from '@playwright/test';
+import { PrismaClient } from '@prisma/client';
+
+// Misma DB efímera que docker-compose.test.yml/.env.test — el proceso de Playwright
+// no carga .env.test (solo el webServer del backend lo hace), así que se apunta
+// directo a la URL conocida del contenedor de test.
+const TEST_DATABASE_URL =
+  'postgresql://postgres:postgres@localhost:5433/cuentas_test?schema=public';
 
 function uniqueEmail(): string {
   return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
 }
 
-async function registerUser(request: APIRequestContext) {
+async function registerUser(request: APIRequestContext): Promise<{ id: string; email: string }> {
   const email = uniqueEmail();
   const res = await request.post('/api/auth/register', {
     data: { email, password: 'password123', name: 'E2E User' },
   });
   expect(res.status()).toBe(201);
+  const body = await res.json();
+  return body.user;
 }
 
 test.describe('Notifications API', () => {
@@ -69,5 +78,43 @@ test.describe('Notifications API', () => {
 
     const deleteRes = await request.delete('/api/notifications/does-not-exist');
     expect(deleteRes.status()).toBe(404);
+  });
+
+  test('aislamiento multi-tenant: el usuario B no puede leer, marcar ni borrar una notificación real de A', async () => {
+    const contextA = await apiRequest.newContext({ baseURL: 'http://localhost:3001' });
+    const contextB = await apiRequest.newContext({ baseURL: 'http://localhost:3001' });
+    const prisma = new PrismaClient({ datasources: { db: { url: TEST_DATABASE_URL } } });
+
+    try {
+      const userA = await registerUser(contextA);
+      await registerUser(contextB);
+
+      // No hay endpoint público para crear una notificación (las genera el cron) —
+      // se siembra directo en la DB de test para probar el filtro de ownership real.
+      const notification = await prisma.notification.create({
+        data: {
+          userId: userA.id,
+          type: 'debt_due',
+          title: 'Pago próximo a vencer',
+          message: 'Deuda E2E vence en 3 días',
+        },
+      });
+
+      const readRes = await contextB.patch(`/api/notifications/${notification.id}/read`);
+      expect(readRes.status()).toBe(404);
+
+      const deleteRes = await contextB.delete(`/api/notifications/${notification.id}`);
+      expect(deleteRes.status()).toBe(404);
+
+      // La notificación de A sigue intacta y sin leer
+      const listA = await (await contextA.get('/api/notifications')).json();
+      const stillThere = listA.notifications.find((n: { id: string }) => n.id === notification.id);
+      expect(stillThere).toBeDefined();
+      expect(stillThere.read).toBe(false);
+    } finally {
+      await prisma.$disconnect();
+      await contextA.dispose();
+      await contextB.dispose();
+    }
   });
 });
