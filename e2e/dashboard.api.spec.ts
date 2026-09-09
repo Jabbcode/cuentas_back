@@ -1,17 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
-
-async function registerUser(request: APIRequestContext) {
-  const email = uniqueEmail();
-  const res = await request.post('/api/auth/register', {
-    data: { email, password: 'password123', name: 'E2E User' },
-  });
-  expect(res.status()).toBe(201);
-  return email;
-}
+import { registerUser, createAccount as createAccountShared } from './api-helpers';
 
 async function getCategoryId(request: APIRequestContext, name: string): Promise<string> {
   const res = await request.get('/api/categories');
@@ -23,12 +11,8 @@ async function getCategoryId(request: APIRequestContext, name: string): Promise<
 }
 
 async function createAccount(request: APIRequestContext, balance = 1000): Promise<string> {
-  const res = await request.post('/api/accounts', {
-    data: { name: 'Cuenta E2E', type: 'bank', balance, currency: 'EUR' },
-  });
-  expect(res.status()).toBe(201);
-  const account = await res.json();
-  return account.id as string;
+  const account = await createAccountShared(request, { balance });
+  return account.id;
 }
 
 test.describe('Dashboard API', () => {

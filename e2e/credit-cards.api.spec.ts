@@ -1,39 +1,5 @@
-import { test, expect, APIRequestContext } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
-
-async function registerWithBankAndCard(
-  request: APIRequestContext
-): Promise<{ bankId: string; cardId: string }> {
-  const email = uniqueEmail();
-  await request.post('/api/auth/register', {
-    data: { email, password: 'password123', name: 'E2E User' },
-  });
-
-  const bank = await (
-    await request.post('/api/accounts', {
-      data: { name: 'Cuenta Débito', type: 'bank', balance: 1000, currency: 'EUR' },
-    })
-  ).json();
-
-  const card = await (
-    await request.post('/api/accounts', {
-      data: {
-        name: 'Tarjeta E2E',
-        type: 'credit_card',
-        balance: 0,
-        currency: 'EUR',
-        creditLimit: 1000,
-        cutoffDay: 5,
-        paymentDueDay: 20,
-      },
-    })
-  ).json();
-
-  return { bankId: bank.id, cardId: card.id };
-}
+import { test, expect } from '@playwright/test';
+import { registerWithBankAndCard } from './api-helpers';
 
 test.describe('Credit Cards API', () => {
   test('crea una tarjeta configurada y obtiene su statement', async ({ request }) => {

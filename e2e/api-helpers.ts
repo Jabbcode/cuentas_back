@@ -7,16 +7,16 @@ export function uniqueEmail(): string {
 export async function registerUser(
   request: APIRequestContext,
   overrides: { email?: string; password?: string; name?: string } = {}
-): Promise<{ email: string; password: string }> {
+): Promise<{ id: string; email: string; password: string; name: string }> {
   const email = overrides.email ?? uniqueEmail();
   const password = overrides.password ?? 'password123';
-  const res = await request.post('/api/auth/register', {
-    data: { email, password, name: overrides.name ?? 'E2E User' },
-  });
+  const name = overrides.name ?? 'E2E User';
+  const res = await request.post('/api/auth/register', { data: { email, password, name } });
   if (!res.ok()) {
     throw new Error(`registro falló: ${res.status()} ${await res.text()}`);
   }
-  return { email, password };
+  const body = await res.json();
+  return { id: body.user.id, email, password, name };
 }
 
 export async function createAccount(
@@ -43,4 +43,38 @@ export async function getCategoryByType(
     throw new Error(`no hay categorías seed de tipo ${type}`);
   }
   return category;
+}
+
+/**
+ * Registra un usuario nuevo y le crea una cuenta bancaria — el setup mínimo que
+ * necesitan la mayoría de los dominios (transactions, debts, fixed-expenses, etc.).
+ */
+export async function registerWithAccount(
+  request: APIRequestContext,
+  accountOverrides: Record<string, unknown> = {}
+): Promise<{ userId: string; accountId: string; email: string; password: string }> {
+  const user = await registerUser(request);
+  const account = await createAccount(request, accountOverrides);
+  return { userId: user.id, accountId: account.id, email: user.email, password: user.password };
+}
+
+/**
+ * Registra un usuario, le crea una cuenta bancaria de débito y una tarjeta de
+ * crédito configurada (cutoffDay/paymentDueDay/creditLimit) — setup para el
+ * dominio de Credit Cards.
+ */
+export async function registerWithBankAndCard(
+  request: APIRequestContext
+): Promise<{ bankId: string; cardId: string }> {
+  await registerUser(request);
+  const bank = await createAccount(request, { name: 'Cuenta Débito' });
+  const card = await createAccount(request, {
+    name: 'Tarjeta E2E',
+    type: 'credit_card',
+    balance: 0,
+    creditLimit: 1000,
+    cutoffDay: 5,
+    paymentDueDay: 20,
+  });
+  return { bankId: bank.id, cardId: card.id };
 }

@@ -1,19 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { FixedExpenseRepositoryImpl } from '../fixed-expense.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    fixedExpense: {
-      findMany: vi.fn().mockResolvedValue([]),
-      findFirst: vi.fn().mockResolvedValue(null),
-      count: vi.fn().mockResolvedValue(0),
-      create: vi.fn().mockResolvedValue({ id: 'fe-1' }),
-      update: vi.fn().mockResolvedValue({ id: 'fe-1' }),
-      delete: vi.fn().mockResolvedValue({ id: 'fe-1' }),
-      ...(overrides.fixedExpense as object),
+  return fakePrismaModels(
+    {
+      fixedExpense: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(0),
+        create: vi.fn().mockResolvedValue({ id: 'fe-1' }),
+        update: vi.fn().mockResolvedValue({ id: 'fe-1' }),
+        delete: vi.fn().mockResolvedValue({ id: 'fe-1' }),
+      },
     },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('FixedExpenseRepositoryImpl', () => {

@@ -1,8 +1,5 @@
 import { test, expect } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
+import { uniqueEmail } from './api-helpers';
 
 test.describe('Auth API', () => {
   test('registra un usuario nuevo y setea la cookie de sesión', async ({ request }) => {

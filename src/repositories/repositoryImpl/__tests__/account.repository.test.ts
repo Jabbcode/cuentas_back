@@ -2,23 +2,26 @@ import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { NotFoundError } from '../../../lib/errors.js';
 import { AccountRepositoryImpl } from '../account.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    account: {
-      findMany: vi.fn().mockResolvedValue([]),
-      findFirst: vi.fn().mockResolvedValue(null),
-      count: vi.fn().mockResolvedValue(0),
-      create: vi.fn().mockResolvedValue({ id: 'account-1' }),
-      update: vi.fn().mockResolvedValue({ id: 'account-1' }),
-      delete: vi.fn().mockResolvedValue({ id: 'account-1' }),
+  return fakePrismaModels(
+    {
+      account: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(0),
+        create: vi.fn().mockResolvedValue({ id: 'account-1' }),
+        update: vi.fn().mockResolvedValue({ id: 'account-1' }),
+        delete: vi.fn().mockResolvedValue({ id: 'account-1' }),
+      },
+      transfer: {
+        create: vi.fn().mockResolvedValue({ id: 'transfer-1' }),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     },
-    transfer: {
-      create: vi.fn().mockResolvedValue({ id: 'transfer-1' }),
-      findMany: vi.fn().mockResolvedValue([]),
-    },
-    ...overrides,
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('AccountRepositoryImpl', () => {

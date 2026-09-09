@@ -1,17 +1,5 @@
-import { test, expect, request as apiRequest, type APIRequestContext } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
-
-async function registerUser(request: APIRequestContext) {
-  const email = uniqueEmail();
-  const res = await request.post('/api/auth/register', {
-    data: { email, password: 'password123', name: 'E2E User' },
-  });
-  expect(res.status()).toBe(201);
-  return email;
-}
+import { test, expect, request as apiRequest } from '@playwright/test';
+import { registerUser } from './api-helpers';
 
 test.describe('Health check', () => {
   test('GET /api/health responde 200 sin autenticación', async ({ request }) => {

@@ -1,16 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { CreditCardPaymentRepositoryImpl } from '../credit-card-payment.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    creditCardPayment: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      findMany: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue({ id: 'payment-1' }),
-      ...(overrides.creditCardPayment as object),
+  return fakePrismaModels(
+    {
+      creditCardPayment: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({ id: 'payment-1' }),
+      },
     },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('CreditCardPaymentRepositoryImpl', () => {

@@ -1,20 +1,23 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { NotificationRepositoryImpl } from '../notification.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    notification: {
-      findMany: vi.fn().mockResolvedValue([]),
-      count: vi.fn().mockResolvedValue(0),
-      findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({ id: 'notif-1' }),
-      update: vi.fn().mockResolvedValue({ id: 'notif-1' }),
-      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-      delete: vi.fn().mockResolvedValue({ id: 'notif-1' }),
-      ...(overrides.notification as object),
+  return fakePrismaModels(
+    {
+      notification: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: 'notif-1' }),
+        update: vi.fn().mockResolvedValue({ id: 'notif-1' }),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        delete: vi.fn().mockResolvedValue({ id: 'notif-1' }),
+      },
     },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('NotificationRepositoryImpl', () => {

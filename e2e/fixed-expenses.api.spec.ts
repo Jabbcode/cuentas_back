@@ -1,26 +1,12 @@
 import { test, expect, APIRequestContext } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
+import { registerWithAccount as registerWithBankAccount, getCategoryByType } from './api-helpers';
 
 async function registerWithAccount(
   request: APIRequestContext
 ): Promise<{ accountId: string; categoryId: string }> {
-  const email = uniqueEmail();
-  await request.post('/api/auth/register', {
-    data: { email, password: 'password123', name: 'E2E User' },
-  });
-
-  const accountRes = await request.post('/api/accounts', {
-    data: { name: 'Cuenta E2E', type: 'bank', balance: 1000, currency: 'EUR' },
-  });
-  const account = await accountRes.json();
-
-  const categoriesRes = await request.get('/api/categories?type=expense');
-  const categories = await categoriesRes.json();
-
-  return { accountId: account.id, categoryId: categories[0].id };
+  const { accountId } = await registerWithBankAccount(request);
+  const category = await getCategoryByType(request, 'expense');
+  return { accountId, categoryId: category.id };
 }
 
 test.describe('Fixed Expenses API', () => {

@@ -1,19 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { RecurringDebtPaymentRepositoryImpl } from '../recurring-debt-payment.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    recurringDebtPayment: {
-      create: vi.fn().mockResolvedValue({ id: 'rdp-1' }),
-      findMany: vi.fn().mockResolvedValue([]),
-      findFirst: vi.fn().mockResolvedValue(null),
-      findUnique: vi.fn().mockResolvedValue(null),
-      update: vi.fn().mockResolvedValue({ id: 'rdp-1' }),
-      delete: vi.fn().mockResolvedValue({ id: 'rdp-1' }),
-      ...(overrides.recurringDebtPayment as object),
+  return fakePrismaModels(
+    {
+      recurringDebtPayment: {
+        create: vi.fn().mockResolvedValue({ id: 'rdp-1' }),
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(null),
+        findUnique: vi.fn().mockResolvedValue(null),
+        update: vi.fn().mockResolvedValue({ id: 'rdp-1' }),
+        delete: vi.fn().mockResolvedValue({ id: 'rdp-1' }),
+      },
     },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('RecurringDebtPaymentRepositoryImpl', () => {

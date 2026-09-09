@@ -1,23 +1,5 @@
-import { test, expect, APIRequestContext } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
-
-async function registerWithAccount(request: APIRequestContext): Promise<{ accountId: string }> {
-  const email = uniqueEmail();
-  await request.post('/api/auth/register', {
-    data: { email, password: 'password123', name: 'E2E User' },
-  });
-
-  const account = await (
-    await request.post('/api/accounts', {
-      data: { name: 'Cuenta E2E', type: 'bank', balance: 1000, currency: 'EUR' },
-    })
-  ).json();
-
-  return { accountId: account.id };
-}
+import { test, expect } from '@playwright/test';
+import { registerWithAccount } from './api-helpers';
 
 async function createDebt(request: APIRequestContext, totalAmount = 500) {
   const res = await request.post('/api/debts', {

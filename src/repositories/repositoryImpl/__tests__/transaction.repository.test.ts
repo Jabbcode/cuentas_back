@@ -1,23 +1,25 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { TransactionRepositoryImpl } from '../transaction.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    transaction: {
-      findMany: vi.fn().mockResolvedValue([]),
-      count: vi.fn().mockResolvedValue(0),
-      findFirst: vi.fn().mockResolvedValue(null),
-      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-      groupBy: vi.fn().mockResolvedValue([]),
-      aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }),
-      ...(overrides.transaction as object),
+  return fakePrismaModels(
+    {
+      transaction: {
+        findMany: vi.fn().mockResolvedValue([]),
+        count: vi.fn().mockResolvedValue(0),
+        findFirst: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+        groupBy: vi.fn().mockResolvedValue([]),
+        aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }),
+      },
+      receiptItem: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     },
-    receiptItem: {
-      findMany: vi.fn().mockResolvedValue([]),
-      ...(overrides.receiptItem as object),
-    },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('TransactionRepositoryImpl', () => {

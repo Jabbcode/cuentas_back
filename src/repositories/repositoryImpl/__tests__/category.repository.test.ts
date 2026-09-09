@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { CategoryRepositoryImpl } from '../category.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 const PUBLIC_SELECT = {
   id: true,
@@ -13,18 +14,20 @@ const PUBLIC_SELECT = {
 };
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    category: {
-      findMany: vi.fn().mockResolvedValue([]),
-      findFirst: vi.fn().mockResolvedValue(null),
-      count: vi.fn().mockResolvedValue(0),
-      create: vi.fn().mockResolvedValue({ id: 'category-1' }),
-      update: vi.fn().mockResolvedValue({ id: 'category-1' }),
-      delete: vi.fn().mockResolvedValue({ id: 'category-1' }),
-      upsert: vi.fn().mockResolvedValue({ id: 'category-1' }),
-      ...(overrides.category as object),
+  return fakePrismaModels(
+    {
+      category: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(0),
+        create: vi.fn().mockResolvedValue({ id: 'category-1' }),
+        update: vi.fn().mockResolvedValue({ id: 'category-1' }),
+        delete: vi.fn().mockResolvedValue({ id: 'category-1' }),
+        upsert: vi.fn().mockResolvedValue({ id: 'category-1' }),
+      },
     },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('CategoryRepositoryImpl', () => {

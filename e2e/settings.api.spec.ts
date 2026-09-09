@@ -1,20 +1,5 @@
-import { test, expect, type APIRequestContext } from '@playwright/test';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
-
-async function registerUser(
-  request: APIRequestContext,
-  overrides: { email?: string; password?: string; name?: string } = {}
-) {
-  const email = overrides.email ?? uniqueEmail();
-  const password = overrides.password ?? 'password123';
-  const name = overrides.name ?? 'E2E User';
-  const res = await request.post('/api/auth/register', { data: { email, password, name } });
-  expect(res.status()).toBe(201);
-  return { email, password, name };
-}
+import { test, expect } from '@playwright/test';
+import { registerUser } from './api-helpers';
 
 test.describe('Settings API', () => {
   test('getProfile devuelve el perfil sin exponer el password', async ({ request }) => {

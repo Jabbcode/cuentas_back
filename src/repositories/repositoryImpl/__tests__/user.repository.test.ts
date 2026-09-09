@@ -1,19 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { UserRepositoryImpl } from '../user.repository.js';
+import { fakePrismaModels } from './prisma-fakes.js';
 
 function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return {
-    user: {
-      findUnique: vi.fn().mockResolvedValue(null),
-      findFirst: vi.fn().mockResolvedValue(null),
-      findMany: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue({ id: 'user-1' }),
-      update: vi.fn().mockResolvedValue({ id: 'user-1' }),
-      delete: vi.fn().mockResolvedValue({ id: 'user-1' }),
-      ...(overrides.user as object),
+  return fakePrismaModels(
+    {
+      user: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({ id: 'user-1' }),
+        update: vi.fn().mockResolvedValue({ id: 'user-1' }),
+        delete: vi.fn().mockResolvedValue({ id: 'user-1' }),
+      },
     },
-  } as unknown as PrismaClient;
+    overrides
+  );
 }
 
 describe('UserRepositoryImpl', () => {

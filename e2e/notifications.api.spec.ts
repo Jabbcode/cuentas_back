@@ -1,25 +1,12 @@
-import { test, expect, request as apiRequest, type APIRequestContext } from '@playwright/test';
+import { test, expect, request as apiRequest } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
+import { registerUser } from './api-helpers';
 
 // Misma DB efímera que docker-compose.test.yml/.env.test — el proceso de Playwright
 // no carga .env.test (solo el webServer del backend lo hace), así que se apunta
 // directo a la URL conocida del contenedor de test.
 const TEST_DATABASE_URL =
   'postgresql://postgres:postgres@localhost:5433/cuentas_test?schema=public';
-
-function uniqueEmail(): string {
-  return `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.local`;
-}
-
-async function registerUser(request: APIRequestContext): Promise<{ id: string; email: string }> {
-  const email = uniqueEmail();
-  const res = await request.post('/api/auth/register', {
-    data: { email, password: 'password123', name: 'E2E User' },
-  });
-  expect(res.status()).toBe(201);
-  const body = await res.json();
-  return body.user;
-}
 
 test.describe('Notifications API', () => {
   test('usuario nuevo: lista vacía y contador de no leídas en cero', async ({ request }) => {
