@@ -1,28 +1,28 @@
 -- DropForeignKey
-ALTER TABLE "BankConnection" DROP CONSTRAINT "BankConnection_accountId_fkey";
+ALTER TABLE IF EXISTS "BankConnection" DROP CONSTRAINT IF EXISTS "BankConnection_accountId_fkey";
 
 -- DropForeignKey
-ALTER TABLE "BankConnection" DROP CONSTRAINT "BankConnection_userId_fkey";
+ALTER TABLE IF EXISTS "BankConnection" DROP CONSTRAINT IF EXISTS "BankConnection_userId_fkey";
 
 -- DropIndex
-DROP INDEX "Transaction_externalId_idx";
+DROP INDEX IF EXISTS "Transaction_externalId_idx";
 
 -- DropIndex
-DROP INDEX "Transaction_externalId_key";
+DROP INDEX IF EXISTS "Transaction_externalId_key";
 
 -- DropIndex
-DROP INDEX "Transaction_source_idx";
+DROP INDEX IF EXISTS "Transaction_source_idx";
 
 -- AlterTable
-ALTER TABLE "Transaction" DROP COLUMN "bankMetadata",
-DROP COLUMN "externalId",
-DROP COLUMN "source";
+ALTER TABLE "Transaction" DROP COLUMN IF EXISTS "bankMetadata",
+DROP COLUMN IF EXISTS "externalId",
+DROP COLUMN IF EXISTS "source";
 
 -- DropTable
-DROP TABLE "BankConnection";
+DROP TABLE IF EXISTS "BankConnection";
 
 -- DropTable
-DROP TABLE "OAuthState";
+DROP TABLE IF EXISTS "OAuthState";
 
 -- DropTable
-DROP TABLE "PendingBankAuth";
+DROP TABLE IF EXISTS "PendingBankAuth";
