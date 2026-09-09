@@ -50,6 +50,12 @@ Node.js + Express 4.21 + TypeScript 5.6 + Prisma 5.22 + PostgreSQL + Zod + JWT +
 | `data-processing-agent` | Agregaciones, dashboards, cálculos complejos |
 | `database-migration-agent` | Cambios en schema Prisma |
 
+## Verificación
+
+- Tests: `npm test`
+- Types: `npx tsc --noEmit`
+- E2E (manual, requiere Docker Desktop corriendo): `npm run test:e2e` — levanta Postgres efímero vía `docker-compose.test.yml`, aplica `prisma migrate deploy` contra `.env.test` y corre Playwright contra la API en `:3001`. No se ejecuta en el flujo normal de verificación.
+
 ## Estado actual
 
 Ver `.claude/project-state.md`
