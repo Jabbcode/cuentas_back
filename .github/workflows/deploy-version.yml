@@ -122,9 +122,30 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      - name: Rechazar PR de fork antes de resolver el código de la PR (SEC-1)
+        id: forkguard
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Repo público: una PR de un fork puede traer código no confiable. Se
+          # comprueba el origen ANTES de resolver el HEAD de la PR, de reapuntar
+          # el slot o de disparar cualquier deploy.
+          cross=$(gh pr view "$PR" --repo "$REPO" --json isCrossRepository -q .isCrossRepository)
+          echo "cross=$cross" >> "$GITHUB_OUTPUT"
+          if [ "$cross" = "true" ]; then
+            gh issue comment "$PR" --repo "$REPO" --body "⚠️ Los snapshots solo se admiten para PRs de ramas de este repositorio, no de forks (\`/deploy PRE\` bloqueado). No se ha desplegado ni tocado ningún servicio.
+
+          [Ver run]($RUN_URL)"
+          fi
+
       - name: Datos de la PR (snapshot)
         id: pr
-        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot'
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot' && steps.forkguard.outputs.cross != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -222,9 +243,12 @@ jobs:
         env:
           MODE: ${{ steps.parse.outputs.mode }}
           TAG_OK: ${{ steps.tag.outputs.ok }}
+          FORK_CROSS: ${{ steps.forkguard.outputs.cross }}
         run: |
           set -euo pipefail
           if [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ "$FORK_CROSS" = "true" ]; then
             echo "go=false" >> "$GITHUB_OUTPUT"
           else
             echo "go=true" >> "$GITHUB_OUTPUT"

@@ -121,7 +121,7 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Datos de la PR (slot)
+      - name: Datos de la PR y rechazo de forks (slot — SEC-1)
         id: pr
         if: steps.p.outputs.valid == 'true' && steps.p.outputs.mode == 'slot'
         env:
@@ -130,7 +130,12 @@ jobs:
           PR: ${{ github.event.issue.number }}
         run: |
           set -euo pipefail
-          echo "sha=$(gh pr view "$PR" --repo "$REPO" --json headRefOid -q .headRefOid)" >> "$GITHUB_OUTPUT"
+          # Repo público: una PR de un fork puede traer código no confiable. Se
+          # comprueba el origen ANTES de cualquier checkout del HEAD de la PR (que
+          # solo ocurre en los jobs migrate-* y solo si este job marca valid=true).
+          data=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,isCrossRepository)
+          echo "sha=$(printf '%s' "$data" | jq -r .headRefOid)" >> "$GITHUB_OUTPUT"
+          echo "cross=$(printf '%s' "$data" | jq -r .isCrossRepository)" >> "$GITHUB_OUTPUT"
 
       - name: Resolver validez efectiva
         id: g
@@ -139,11 +144,15 @@ jobs:
           P_REASON: ${{ steps.p.outputs.reason }}
           MODE: ${{ steps.p.outputs.mode }}
           TAG_OK: ${{ steps.t.outputs.ok }}
+          PR_CROSS: ${{ steps.pr.outputs.cross }}
         run: |
           set -euo pipefail
           if [ "$P_VALID" = "true" ] && [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=tag_missing" >> "$GITHUB_OUTPUT"
+          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "slot" ] && [ "$PR_CROSS" = "true" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "reason=fork_forbidden" >> "$GITHUB_OUTPUT"
           else
             echo "valid=$P_VALID" >> "$GITHUB_OUTPUT"
             echo "reason=$P_REASON" >> "$GITHUB_OUTPUT"
@@ -175,6 +184,8 @@ jobs:
               msg="❌ Falta el slot — usa \`/migrate PRE\` o \`/migrate PRE-TEST\`." ;;
             slot_invalid)
               msg="⚠️ Slot no reconocido. Slots válidos: \`PRE\`, \`PRE-TEST\`." ;;
+            fork_forbidden)
+              msg="⚠️ Migrar un slot solo se admite para PRs de ramas de este repositorio, no de forks (\`/migrate PRE\` bloqueado). No se ha migrado ninguna BD." ;;
             tag_missing)
               msg="❌ El tag \`db-v${DB_VERSION}\` no existe. Revísalo con \`gh release list\`." ;;
             *)
@@ -204,7 +215,9 @@ jobs:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      # Prisma no necesita lifecycle scripts (postinstall) para `migrate deploy`:
+      # se salta la ejecución de scripts de dependencias (SEC-2).
+      - run: npm ci --ignore-scripts
 
       - name: prisma migrate deploy (producción)
         id: migrate
@@ -259,7 +272,9 @@ jobs:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      # Prisma no necesita lifecycle scripts (postinstall) para `migrate deploy`:
+      # se salta la ejecución de scripts de dependencias (SEC-2).
+      - run: npm ci --ignore-scripts
 
       - name: prisma migrate deploy (slot PRE)
         id: migrate
@@ -312,7 +327,9 @@ jobs:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      # Prisma no necesita lifecycle scripts (postinstall) para `migrate deploy`:
+      # se salta la ejecución de scripts de dependencias (SEC-2).
+      - run: npm ci --ignore-scripts
 
       - name: prisma migrate deploy (slot PRE-TEST)
         id: migrate
