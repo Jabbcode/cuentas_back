@@ -77,11 +77,14 @@ jobs:
       - name: Determinar tipo de bump
         id: bump
         if: steps.codecheck.outputs.has_code_changes == 'true'
+        env:
+          # Nombres de label = datos del evento -> por env, nunca interpolado
+          # dentro de `run:` (un nombre de label podría inyectar shell) (SEC-4).
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
         run: |
-          labels='${{ toJson(github.event.pull_request.labels.*.name) }}'
-          if echo "$labels" | grep -q 'release-type/major'; then
+          if echo "$LABELS" | grep -q 'release-type/major'; then
             echo "type=major" >> "$GITHUB_OUTPUT"
-          elif echo "$labels" | grep -q 'release-type/minor'; then
+          elif echo "$LABELS" | grep -q 'release-type/minor'; then
             echo "type=minor" >> "$GITHUB_OUTPUT"
           else
             echo "type=patch" >> "$GITHUB_OUTPUT"
