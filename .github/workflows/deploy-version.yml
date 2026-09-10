@@ -33,6 +33,10 @@ env:
   # Polling del deploy (segundos). ~15 min de techo.
   DEPLOY_POLL_TIMEOUT: "900"
   DEPLOY_POLL_INTERVAL: "15"
+  # Regex estrictas de comando (S4): el valor validado es el único que se usa
+  # después. Nunca se interpola el cuerpo del comentario dentro de `run:`.
+  DEPLOY_PROD_RE: '^/deploy v[0-9]+\.[0-9]+\.[0-9]+$'
+  DEPLOY_SLOT_RE: '^/deploy (PRE|PRE-TEST)$'
 
 jobs:
   # --- Parseo, gate de dueño y rechazo de forks (sin secrets) ----------------
@@ -53,6 +57,8 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     outputs:
       valid: ${{ steps.g.outputs.valid }}
       reason: ${{ steps.g.outputs.reason }}
@@ -73,6 +79,8 @@ jobs:
           IS_PR: ${{ github.event.issue.pull_request != null }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          PROD_RE: ${{ env.DEPLOY_PROD_RE }}
+          SLOT_RE: ${{ env.DEPLOY_SLOT_RE }}
         run: |
           set -euo pipefail
 
@@ -97,12 +105,12 @@ jobs:
           fi
 
           if [ "$CTX" = "snapshot" ]; then
-            if printf '%s' "$CMD" | grep -qE '^/deploy (PRE|PRE-TEST)$'; then
+            if printf '%s' "$CMD" | grep -qE "$SLOT_RE"; then
               emit valid true
               emit slot "$(printf '%s' "$CMD" | awk '{print $2}')"
             elif printf '%s' "$CMD" | grep -qE '^/deploy (PRE|PRE-TEST) v[0-9]+\.[0-9]+\.[0-9]+$'; then
               emit valid false; emit reason version_not_allowed
-            elif printf '%s' "$CMD" | grep -qE '^/deploy v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            elif printf '%s' "$CMD" | grep -qE "$PROD_RE"; then
               emit valid false; emit reason version_not_allowed
             elif printf '%s' "$CMD" | grep -qE '^/deploy$'; then
               emit valid false; emit reason slot_required
@@ -110,7 +118,7 @@ jobs:
               emit valid false; emit reason slot_invalid
             fi
           else
-            if printf '%s' "$CMD" | grep -qE '^/deploy v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            if printf '%s' "$CMD" | grep -qE "$PROD_RE"; then
               emit valid true
               emit version "$(printf '%s' "$CMD" | awk '{print $2}' | sed 's/^v//')"
             elif printf '%s' "$CMD" | grep -qE '^/deploy$'; then
@@ -222,7 +230,6 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           REASON: ${{ steps.g.outputs.reason }}
           VERSION: ${{ steps.parse.outputs.version }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           case "$REASON" in
             version_required)

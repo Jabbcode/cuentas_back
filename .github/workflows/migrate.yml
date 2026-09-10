@@ -4,7 +4,7 @@ name: Migrate DB (manual)
 #   - Producción: issue con label `migrate` (o comentario `/migrate db-vX.Y.Z`) ->
 #     checkout del tag db-vX.Y.Z + `prisma migrate deploy` contra la BD del
 #     Environment `production`.
-#   - Slot: comentario `/migrate PRE` | `/migrate PRE-TEST` en una PR ->
+#   - Snapshot: comentario `/migrate PRE` | `/migrate PRE-TEST` en una PR ->
 #     checkout del HEAD de la PR + `prisma migrate deploy` contra la BD del
 #     Environment `pre` / `pre-test`.
 #
@@ -24,6 +24,12 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  # Regex estrictas de comando (S4): el valor validado es el único que se usa
+  # después. Nunca se interpola el cuerpo del comentario dentro de `run:`.
+  MIGRATE_PROD_RE: '^/migrate db-v[0-9]+\.[0-9]+\.[0-9]+$'
+  MIGRATE_SLOT_RE: '^/migrate (PRE|PRE-TEST)$'
+
 jobs:
   parse:
     # Gate de dueño en el `if` del JOB (S2). Este job no lee ningún secret de BD.
@@ -39,6 +45,8 @@ jobs:
         github.event.comment.user.login == github.repository_owner
       )
     runs-on: ubuntu-latest
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     outputs:
       valid: ${{ steps.g.outputs.valid }}
       reason: ${{ steps.g.outputs.reason }}
@@ -57,13 +65,15 @@ jobs:
           IS_PR: ${{ github.event.issue.pull_request != null }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          PROD_RE: ${{ env.MIGRATE_PROD_RE }}
+          SLOT_RE: ${{ env.MIGRATE_SLOT_RE }}
         run: |
           set -euo pipefail
 
           if [ "$EVENT_NAME" = "issues" ]; then
             TEXT="$ISSUE_BODY"; CTX=prod
           elif [ "$IS_PR" = "true" ]; then
-            TEXT="$COMMENT_BODY"; CTX=slot
+            TEXT="$COMMENT_BODY"; CTX=snapshot
           else
             TEXT="$COMMENT_BODY"; CTX=prod
           fi
@@ -79,11 +89,11 @@ jobs:
             emit valid false; emit reason malformed; exit 0
           fi
 
-          if [ "$CTX" = "slot" ]; then
-            if printf '%s' "$CMD" | grep -qE '^/migrate (PRE|PRE-TEST)$'; then
+          if [ "$CTX" = "snapshot" ]; then
+            if printf '%s' "$CMD" | grep -qE "$SLOT_RE"; then
               emit valid true
               emit slot "$(printf '%s' "$CMD" | awk '{print $2}')"
-            elif printf '%s' "$CMD" | grep -qE '^/migrate db-v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            elif printf '%s' "$CMD" | grep -qE "$PROD_RE"; then
               emit valid false; emit reason version_not_allowed
             elif printf '%s' "$CMD" | grep -qE '^/migrate$'; then
               emit valid false; emit reason slot_required
@@ -91,7 +101,7 @@ jobs:
               emit valid false; emit reason slot_invalid
             fi
           else
-            if printf '%s' "$CMD" | grep -qE '^/migrate db-v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            if printf '%s' "$CMD" | grep -qE "$PROD_RE"; then
               emit valid true
               emit db_version "$(printf '%s' "$CMD" | awk '{print $2}' | sed 's/^db-v//')"
             elif printf '%s' "$CMD" | grep -qE '^/migrate$'; then
@@ -121,9 +131,9 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Datos de la PR y rechazo de forks (slot — SEC-1)
+      - name: Datos de la PR y rechazo de forks (snapshot — SEC-1)
         id: pr
-        if: steps.p.outputs.valid == 'true' && steps.p.outputs.mode == 'slot'
+        if: steps.p.outputs.valid == 'true' && steps.p.outputs.mode == 'snapshot'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -150,7 +160,7 @@ jobs:
           if [ "$P_VALID" = "true" ] && [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=tag_missing" >> "$GITHUB_OUTPUT"
-          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "slot" ] && [ "$PR_CROSS" = "true" ]; then
+          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "snapshot" ] && [ "$PR_CROSS" = "true" ]; then
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=fork_forbidden" >> "$GITHUB_OUTPUT"
           else
@@ -173,7 +183,6 @@ jobs:
           ISSUE: ${{ github.event.issue.number }}
           REASON: ${{ steps.g.outputs.reason }}
           DB_VERSION: ${{ steps.p.outputs.db_version }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           case "$REASON" in
             version_required)
@@ -205,6 +214,8 @@ jobs:
     permissions:
       contents: read
       issues: write
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -235,7 +246,6 @@ jobs:
           ISSUE: ${{ needs.parse.outputs.issue }}
           DB_VERSION: ${{ needs.parse.outputs.db_version }}
           OUTCOME: ${{ steps.migrate.outcome }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$OUTCOME" = "success" ]; then
             gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD de **producción** (estado objetivo: tag \`db-v${DB_VERSION}\`).
@@ -252,7 +262,7 @@ jobs:
   #     `environment` literal fijo -> mantiene el aislamiento de S6) --------
   migrate-slot:
     needs: parse
-    if: needs.parse.outputs.valid == 'true' && needs.parse.outputs.mode == 'slot'
+    if: needs.parse.outputs.valid == 'true' && needs.parse.outputs.mode == 'snapshot'
     runs-on: ubuntu-latest
     environment: ${{ matrix.environment }}
     timeout-minutes: 15
@@ -260,6 +270,8 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     strategy:
       fail-fast: false
       matrix:
@@ -317,7 +329,6 @@ jobs:
           ISSUE: ${{ needs.parse.outputs.issue }}
           SLOT: ${{ matrix.slot }}
           OUTCOME: ${{ steps.migrate.outcome }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$OUTCOME" = "success" ]; then
             gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD del slot \`${SLOT}\` (HEAD de la PR).
