@@ -96,10 +96,18 @@ SEEN_PRS="$TMP_DIR/seen_prs"
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
 
-  # gh escribe un objeto de error JSON en stdout ante 4xx/5xx transitorios; si no
-  # es un array, trátalo como "sin PRs" en vez de romper el bucle jq de abajo.
-  prs_json=$(gh api "repos/${REPO}/commits/${sha}/pulls" 2>/dev/null || echo "[]")
-  jq -e 'type=="array"' <<<"$prs_json" >/dev/null 2>&1 || prs_json="[]"
+  # `gh` escribe el objeto de error JSON en stdout y sale != 0 ante 4xx/5xx.
+  # Capturamos el fallo SIN concatenar (nada de `|| echo`, que dejaría dos
+  # documentos JSON y engañaría al chequeo de abajo) y avisamos por stderr.
+  if ! prs_json=$(gh api "repos/${REPO}/commits/${sha}/pulls" 2>/dev/null); then
+    echo "warn: no se pudieron resolver las PRs de ${sha} (gh api falló); se ignora" >&2
+    prs_json="[]"
+  fi
+  # Defensa extra: si la respuesta no es un array JSON, tratarla como "sin PRs".
+  if ! jq -e 'type == "array"' <<<"$prs_json" >/dev/null 2>&1; then
+    echo "warn: respuesta inesperada de gh api para ${sha}; se ignora" >&2
+    prs_json="[]"
+  fi
 
   while IFS= read -r pr; do
     [[ -z "$pr" ]] && continue

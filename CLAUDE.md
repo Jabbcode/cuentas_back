@@ -80,8 +80,11 @@ Nada se despliega por push. Detalle completo en `.claude/project-state.md` → "
     RESEND_FROM_EMAIL="MisCuentas <noreply@miscuentas.app>"
     NODE_ENV=test
     DISABLE_RATE_LIMIT=true
+    CORS_ORIGIN="http://localhost:5173"
     ```
     `DISABLE_RATE_LIMIT` es un flag dedicado (no reutiliza `NODE_ENV`) para que la suite E2E no choque contra el rate limiter de `/api/auth/*` — ver `src/middlewares/rate-limit.middleware.ts`.
+    `CORS_ORIGIN` es obligatorio: el CORS es una lista exacta (`src/lib/cors-origin.ts`), sin
+    fallback a `localhost` — sin esta variable el navegador del E2E queda bloqueado.
 
 ## Estado actual
 
