@@ -144,8 +144,13 @@ jobs:
           # comprueba el origen ANTES de cualquier checkout del HEAD de la PR (que
           # solo ocurre en los jobs migrate-* y solo si este job marca valid=true).
           data=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,isCrossRepository)
-          echo "sha=$(printf '%s' "$data" | jq -r .headRefOid)" >> "$GITHUB_OUTPUT"
-          echo "cross=$(printf '%s' "$data" | jq -r .isCrossRepository)" >> "$GITHUB_OUTPUT"
+          cross=$(printf '%s' "$data" | jq -r .isCrossRepository)
+          echo "cross=$cross" >> "$GITHUB_OUTPUT"
+          # allowlist: solo se publica el SHA de la PR si el origen es
+          # exactamente "false" (no fork). Simetría con deploy-version.yml (M-2).
+          if [ "$cross" = "false" ]; then
+            echo "sha=$(printf '%s' "$data" | jq -r .headRefOid)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Resolver validez efectiva
         id: g
@@ -160,7 +165,8 @@ jobs:
           if [ "$P_VALID" = "true" ] && [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=tag_missing" >> "$GITHUB_OUTPUT"
-          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "snapshot" ] && [ "$PR_CROSS" = "true" ]; then
+          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "snapshot" ] && [ "$PR_CROSS" != "false" ]; then
+            # allowlist: cualquier valor que no sea exactamente "false" bloquea (M-1).
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=fork_forbidden" >> "$GITHUB_OUTPUT"
           else

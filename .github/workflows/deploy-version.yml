@@ -166,7 +166,7 @@ jobs:
 
       - name: Datos de la PR (snapshot)
         id: pr
-        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot' && steps.forkguard.outputs.cross != 'true'
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot' && steps.forkguard.outputs.cross == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -207,7 +207,9 @@ jobs:
           if [ "$P_VALID" = "true" ] && [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=tag_missing" >> "$GITHUB_OUTPUT"
-          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "snapshot" ] && [ "$FORK_CROSS" = "true" ]; then
+          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "snapshot" ] && [ "$FORK_CROSS" != "false" ]; then
+            # allowlist: solo se continúa si isCrossRepository es exactamente
+            # "false"; vacío / null / salida inesperada de gh → se bloquea (M-1).
             echo "valid=false" >> "$GITHUB_OUTPUT"
             echo "reason=fork_forbidden" >> "$GITHUB_OUTPUT"
           else
