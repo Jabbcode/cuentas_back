@@ -1,0 +1,342 @@
+name: Migrate DB (manual)
+
+# Aplica migraciones de Prisma de forma explícita. Dos modos:
+#   - Producción: issue con label `migrate` (o comentario `/migrate db-vX.Y.Z`) ->
+#     checkout del tag db-vX.Y.Z + `prisma migrate deploy` contra la BD del
+#     Environment `production`.
+#   - Slot: comentario `/migrate PRE` | `/migrate PRE-TEST` en una PR ->
+#     checkout del HEAD de la PR + `prisma migrate deploy` contra la BD del
+#     Environment `pre` / `pre-test`.
+#
+# Workflow SEPARADO de deploy-version.yml (criterio 11): redesplegar código
+# nunca migra. Jobs separados por Environment (S6): NUNCA un condicional dentro
+# de un job elige el secret — cada job fija su `environment:` literal y solo ve
+# el `DATABASE_URL` de ese entorno. Sin rollback automático (caso límite spec).
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  parse:
+    # Gate de dueño en el `if` del JOB (S2). Este job no lee ningún secret de BD.
+    if: >
+      (
+        github.event_name == 'issues' &&
+        contains(github.event.issue.labels.*.name, 'migrate') &&
+        github.event.issue.user.login == github.repository_owner
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        startsWith(github.event.comment.body, '/migrate') &&
+        github.event.comment.user.login == github.repository_owner
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.g.outputs.valid }}
+      reason: ${{ steps.g.outputs.reason }}
+      mode: ${{ steps.p.outputs.mode }}
+      slot: ${{ steps.p.outputs.slot }}
+      db_version: ${{ steps.p.outputs.db_version }}
+      tag_sha: ${{ steps.t.outputs.sha }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+      issue: ${{ github.event.issue.number }}
+    steps:
+      - name: Parsear comando
+        id: p
+        env:
+          # Texto no confiable SOLO por env, nunca interpolado en `run:` (S4).
+          EVENT_NAME: ${{ github.event_name }}
+          IS_PR: ${{ github.event.issue.pull_request != null }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "issues" ]; then
+            TEXT="$ISSUE_BODY"; CTX=prod
+          elif [ "$IS_PR" = "true" ]; then
+            TEXT="$COMMENT_BODY"; CTX=slot
+          else
+            TEXT="$COMMENT_BODY"; CTX=prod
+          fi
+
+          emit() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          CMD=$(printf '%s\n' "$TEXT" | tr -d '\r' | grep -m1 -E '^/migrate( .*)?$' || true)
+          CMD=$(printf '%s' "$CMD" | sed -E 's/[[:space:]]+$//')
+
+          emit mode "$CTX"
+
+          if [ -z "$CMD" ]; then
+            emit valid false; emit reason malformed; exit 0
+          fi
+
+          if [ "$CTX" = "slot" ]; then
+            if printf '%s' "$CMD" | grep -qE '^/migrate (PRE|PRE-TEST)$'; then
+              emit valid true
+              emit slot "$(printf '%s' "$CMD" | awk '{print $2}')"
+            elif printf '%s' "$CMD" | grep -qE '^/migrate db-v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              emit valid false; emit reason version_not_allowed
+            elif printf '%s' "$CMD" | grep -qE '^/migrate$'; then
+              emit valid false; emit reason slot_required
+            else
+              emit valid false; emit reason slot_invalid
+            fi
+          else
+            if printf '%s' "$CMD" | grep -qE '^/migrate db-v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              emit valid true
+              emit db_version "$(printf '%s' "$CMD" | awk '{print $2}' | sed 's/^db-v//')"
+            elif printf '%s' "$CMD" | grep -qE '^/migrate$'; then
+              emit valid false; emit reason version_required
+            else
+              emit valid false; emit reason malformed
+            fi
+          fi
+
+      - name: Validar tag db-v* y resolver SHA (producción)
+        id: t
+        if: steps.p.outputs.valid == 'true' && steps.p.outputs.mode == 'prod'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DB_VERSION: ${{ steps.p.outputs.db_version }}
+        run: |
+          set -euo pipefail
+          if ! ref=$(gh api "repos/$REPO/git/ref/tags/db-v$DB_VERSION" 2>/dev/null); then
+            echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          type=$(printf '%s' "$ref" | jq -r '.object.type')
+          sha=$(printf '%s' "$ref" | jq -r '.object.sha')
+          if [ "$type" = "tag" ]; then
+            sha=$(gh api "repos/$REPO/git/tags/$sha" --jq '.object.sha')
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Datos de la PR (slot)
+        id: pr
+        if: steps.p.outputs.valid == 'true' && steps.p.outputs.mode == 'slot'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          echo "sha=$(gh pr view "$PR" --repo "$REPO" --json headRefOid -q .headRefOid)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolver validez efectiva
+        id: g
+        env:
+          P_VALID: ${{ steps.p.outputs.valid }}
+          P_REASON: ${{ steps.p.outputs.reason }}
+          MODE: ${{ steps.p.outputs.mode }}
+          TAG_OK: ${{ steps.t.outputs.ok }}
+        run: |
+          set -euo pipefail
+          if [ "$P_VALID" = "true" ] && [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "reason=tag_missing" >> "$GITHUB_OUTPUT"
+          else
+            echo "valid=$P_VALID" >> "$GITHUB_OUTPUT"
+            echo "reason=$P_REASON" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reaccionar al comando
+        if: github.event_name == 'issue_comment' && steps.g.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content='+1'
+
+      - name: Comentar comando inválido
+        if: steps.g.outputs.valid == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          REASON: ${{ steps.g.outputs.reason }}
+          DB_VERSION: ${{ steps.p.outputs.db_version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case "$REASON" in
+            version_required)
+              msg="❌ Falta la versión de BD — usa \`/migrate db-vX.Y.Z\` en un issue con label \`migrate\`." ;;
+            version_not_allowed)
+              msg="❌ En una PR no se indica versión — usa \`/migrate PRE\` o \`/migrate PRE-TEST\` para migrar la BD del slot con el HEAD de la PR." ;;
+            slot_required)
+              msg="❌ Falta el slot — usa \`/migrate PRE\` o \`/migrate PRE-TEST\`." ;;
+            slot_invalid)
+              msg="⚠️ Slot no reconocido. Slots válidos: \`PRE\`, \`PRE-TEST\`." ;;
+            tag_missing)
+              msg="❌ El tag \`db-v${DB_VERSION}\` no existe. Revísalo con \`gh release list\`." ;;
+            *)
+              msg="⚠️ Comando no reconocido. Usa \`/migrate db-vX.Y.Z\` en un issue, o \`/migrate PRE\` / \`/migrate PRE-TEST\` en un comentario de PR." ;;
+          esac
+          gh issue comment "$ISSUE" --repo "$REPO" --body "$msg
+
+          [Ver run]($RUN_URL)"
+
+  # --- Producción -------------------------------------------------------------
+  migrate-prod:
+    needs: parse
+    if: needs.parse.outputs.valid == 'true' && needs.parse.outputs.mode == 'prod'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.parse.outputs.tag_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: prisma migrate deploy (producción)
+        id: migrate
+        env:
+          # DATABASE_URL SOLO aquí, en el env: de este step (S5). Resuelto por el
+          # Environment `production`: este job no puede ver la BD de otro entorno.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Comentar resultado
+        if: always() && steps.migrate.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          DB_VERSION: ${{ needs.parse.outputs.db_version }}
+          OUTCOME: ${{ steps.migrate.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then
+            gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD de **producción** (estado objetivo: tag \`db-v${DB_VERSION}\`).
+
+          [Ver run]($RUN_URL)"
+            gh issue close "$ISSUE" --repo "$REPO"
+          else
+            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ La migración de **producción** (\`db-v${DB_VERSION}\`) falló y puede haber quedado a medias. No hay rollback automático: resuélvelo migrando manualmente un tag \`db-v*\` anterior que ya estuviera aplicado. La salida cruda no se vuelca aquí — revísala en el run.
+
+          [Ver run]($RUN_URL)"
+          fi
+
+  # --- Slot PRE -------------------------------------------------------------
+  migrate-pre:
+    needs: parse
+    if: >
+      needs.parse.outputs.valid == 'true' &&
+      needs.parse.outputs.mode == 'slot' &&
+      needs.parse.outputs.slot == 'PRE'
+    runs-on: ubuntu-latest
+    environment: pre
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.parse.outputs.pr_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: prisma migrate deploy (slot PRE)
+        id: migrate
+        env:
+          # DATABASE_URL SOLO aquí. Resuelto por el Environment `pre`: este job
+          # NO referencia en ninguna línea el secret de producción (S6).
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Comentar resultado
+        if: always() && steps.migrate.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          OUTCOME: ${{ steps.migrate.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then
+            gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD del slot \`PRE\` (HEAD de la PR).
+
+          [Ver run]($RUN_URL)"
+          else
+            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ La migración del slot \`PRE\` falló y puede haber quedado a medias. No hay rollback automático: resuélvelo migrando manualmente un commit anterior que ya estuviera aplicado. La salida cruda no se vuelca aquí — revísala en el run.
+
+          [Ver run]($RUN_URL)"
+          fi
+
+  # --- Slot PRE-TEST -----------------------------------------------------------
+  migrate-pre-test:
+    needs: parse
+    if: >
+      needs.parse.outputs.valid == 'true' &&
+      needs.parse.outputs.mode == 'slot' &&
+      needs.parse.outputs.slot == 'PRE-TEST'
+    runs-on: ubuntu-latest
+    environment: pre-test
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.parse.outputs.pr_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: prisma migrate deploy (slot PRE-TEST)
+        id: migrate
+        env:
+          # DATABASE_URL SOLO aquí. Resuelto por el Environment `pre-test`: este
+          # job NO referencia en ninguna línea el secret de producción (S6).
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Comentar resultado
+        if: always() && steps.migrate.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          OUTCOME: ${{ steps.migrate.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then
+            gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD del slot \`PRE-TEST\` (HEAD de la PR).
+
+          [Ver run]($RUN_URL)"
+          else
+            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ La migración del slot \`PRE-TEST\` falló y puede haber quedado a medias. No hay rollback automático: resuélvelo migrando manualmente un commit anterior que ya estuviera aplicado. La salida cruda no se vuelca aquí — revísala en el run.
+
+          [Ver run]($RUN_URL)"
+          fi
