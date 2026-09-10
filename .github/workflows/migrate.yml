@@ -248,81 +248,49 @@ jobs:
           [Ver run]($RUN_URL)"
           fi
 
-  # --- Slot PRE -------------------------------------------------------------
-  migrate-pre:
+  # --- Slots PRE / PRE-TEST (matrix; cada leg es un job aislado con su
+  #     `environment` literal fijo -> mantiene el aislamiento de S6) --------
+  migrate-slot:
     needs: parse
-    if: >
-      needs.parse.outputs.valid == 'true' &&
-      needs.parse.outputs.mode == 'slot' &&
-      needs.parse.outputs.slot == 'PRE'
+    if: needs.parse.outputs.valid == 'true' && needs.parse.outputs.mode == 'slot'
     runs-on: ubuntu-latest
-    environment: pre
+    environment: ${{ matrix.environment }}
     timeout-minutes: 15
     permissions:
       contents: read
       issues: write
       pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slot: PRE
+            environment: pre
+          - slot: PRE-TEST
+            environment: pre-test
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.parse.outputs.pr_sha }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      # Prisma no necesita lifecycle scripts (postinstall) para `migrate deploy`:
-      # se salta la ejecución de scripts de dependencias (SEC-2).
-      - run: npm ci --ignore-scripts
-
-      - name: prisma migrate deploy (slot PRE)
-        id: migrate
+      - name: ¿Este leg del matrix es el slot pedido?
+        id: match
         env:
-          # DATABASE_URL SOLO aquí. Resuelto por el Environment `pre`: este job
-          # NO referencia en ninguna línea el secret de producción (S6).
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: npx prisma migrate deploy
-
-      - name: Comentar resultado
-        if: always() && steps.migrate.outcome != 'skipped'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          ISSUE: ${{ needs.parse.outputs.issue }}
-          OUTCOME: ${{ steps.migrate.outcome }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WANT: ${{ needs.parse.outputs.slot }}
+          HAVE: ${{ matrix.slot }}
         run: |
-          if [ "$OUTCOME" = "success" ]; then
-            gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD del slot \`PRE\` (HEAD de la PR).
-
-          [Ver run]($RUN_URL)"
+          set -euo pipefail
+          if [ "$WANT" = "$HAVE" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ La migración del slot \`PRE\` falló y puede haber quedado a medias. No hay rollback automático: resuélvelo migrando manualmente un commit anterior que ya estuviera aplicado. La salida cruda no se vuelca aquí — revísala en el run.
-
-          [Ver run]($RUN_URL)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # --- Slot PRE-TEST -----------------------------------------------------------
-  migrate-pre-test:
-    needs: parse
-    if: >
-      needs.parse.outputs.valid == 'true' &&
-      needs.parse.outputs.mode == 'slot' &&
-      needs.parse.outputs.slot == 'PRE-TEST'
-    runs-on: ubuntu-latest
-    environment: pre-test
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-    steps:
+      # El checkout del HEAD de la PR va DESPUÉS de validar el origen (SEC-1, en
+      # el job `parse`): este job solo arranca si `parse` marcó valid=true.
       - uses: actions/checkout@v4
+        if: steps.match.outputs.run == 'true'
         with:
           ref: ${{ needs.parse.outputs.pr_sha }}
 
       - uses: actions/setup-node@v4
+        if: steps.match.outputs.run == 'true'
         with:
           node-version: 20
           cache: npm
@@ -330,30 +298,33 @@ jobs:
       # Prisma no necesita lifecycle scripts (postinstall) para `migrate deploy`:
       # se salta la ejecución de scripts de dependencias (SEC-2).
       - run: npm ci --ignore-scripts
+        if: steps.match.outputs.run == 'true'
 
-      - name: prisma migrate deploy (slot PRE-TEST)
+      - name: prisma migrate deploy (slot ${{ matrix.slot }})
         id: migrate
+        if: steps.match.outputs.run == 'true'
         env:
-          # DATABASE_URL SOLO aquí. Resuelto por el Environment `pre-test`: este
-          # job NO referencia en ninguna línea el secret de producción (S6).
+          # DATABASE_URL SOLO aquí. Resuelto por el Environment `${{ matrix.environment }}`:
+          # este job NO referencia en ninguna línea el secret de producción (S6).
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: npx prisma migrate deploy
 
       - name: Comentar resultado
-        if: always() && steps.migrate.outcome != 'skipped'
+        if: always() && steps.match.outputs.run == 'true' && steps.migrate.outcome != 'skipped'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ needs.parse.outputs.issue }}
+          SLOT: ${{ matrix.slot }}
           OUTCOME: ${{ steps.migrate.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$OUTCOME" = "success" ]; then
-            gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD del slot \`PRE-TEST\` (HEAD de la PR).
+            gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Migraciones aplicadas a la BD del slot \`${SLOT}\` (HEAD de la PR).
 
           [Ver run]($RUN_URL)"
           else
-            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ La migración del slot \`PRE-TEST\` falló y puede haber quedado a medias. No hay rollback automático: resuélvelo migrando manualmente un commit anterior que ya estuviera aplicado. La salida cruda no se vuelca aquí — revísala en el run.
+            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ La migración del slot \`${SLOT}\` falló y puede haber quedado a medias. No hay rollback automático: resuélvelo migrando manualmente un commit anterior que ya estuviera aplicado. La salida cruda no se vuelca aquí — revísala en el run.
 
           [Ver run]($RUN_URL)"
           fi
