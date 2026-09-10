@@ -96,53 +96,63 @@ SEEN_PRS="$TMP_DIR/seen_prs"
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
 
-  prs_json=$(gh api "repos/${REPO}/commits/${sha}/pulls" 2>/dev/null || echo "[]")
   # gh escribe un objeto de error JSON en stdout ante 4xx/5xx transitorios; si no
   # es un array, trátalo como "sin PRs" en vez de romper el bucle jq de abajo.
+  prs_json=$(gh api "repos/${REPO}/commits/${sha}/pulls" 2>/dev/null || echo "[]")
   jq -e 'type=="array"' <<<"$prs_json" >/dev/null 2>&1 || prs_json="[]"
 
   while IFS= read -r pr; do
     [[ -z "$pr" ]] && continue
 
-    number=$(jq -r '.number' <<<"$pr")
+    number=$(jq -r '.number // empty' <<<"$pr")
+    # Sin número usable no hay entrada de changelog posible; y evita usar un valor
+    # no numérico como clave de deduplicación o de orden.
+    [[ "$number" =~ ^[0-9]+$ ]] || continue
     grep -qx "$number" "$SEEN_PRS" && continue
     echo "$number" >>"$SEEN_PRS"
 
-    title=$(jq -r '.title' <<<"$pr")
-    url=$(jq -r '.html_url' <<<"$pr")
-    head_ref=$(jq -r '.head.ref' <<<"$pr")
+    title=$(jq -r '.title // ""' <<<"$pr")
+    url=$(jq -r '.html_url // ""' <<<"$pr")
+    head_ref=$(jq -r '.head.ref // ""' <<<"$pr")
+    [[ "$head_ref" == "null" ]] && head_ref=""
 
     if [[ -n "$ONLY_PATHS" ]]; then
-      touches_path=$(
+      # Traer primero todos los ficheros y luego filtrar: evita que `grep -q`
+      # cierre el pipe de `--paginate` a media descarga (SIGPIPE + pipefail).
+      pr_files=$(
         gh api "repos/${REPO}/pulls/${number}/files" --paginate --jq '.[].filename' 2>/dev/null \
-          | grep -Eq "$ONLY_PATHS" && echo 1 || echo 0
+          || true
       )
-      [[ "$touches_path" -eq 0 ]] && continue
+      grep -Eq "$ONLY_PATHS" <<<"$pr_files" || continue
     fi
 
     branch_prefix="${head_ref%%/*}"
     category=$(category_for_prefix "$(tr '[:upper:]' '[:lower:]' <<<"$branch_prefix")")
 
-    display_title="$title"
     if [[ -z "$category" ]]; then
       title_prefix=$(sed -nE 's/^([A-Za-z]+)(\([^)]*\))?!?:[[:space:]]*(.*)$/\1/p' <<<"$title")
       category=$(category_for_prefix "$(tr '[:upper:]' '[:lower:]' <<<"$title_prefix")")
     fi
+    [[ -z "$category" ]] && category="OTROS"
+
     # Si el título viene con prefijo estilo commit convencional, se muestra sin
     # él — la sección ya indica la categoría, mantenerlo sería redundante.
+    display_title="$title"
     stripped_title=$(sed -nE 's/^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]*(.*)$/\2/p' <<<"$title")
     [[ -n "$stripped_title" ]] && display_title="$stripped_title"
 
-    [[ -z "$category" ]] && category="OTROS"
-
-    echo "* [#${number}](${url}) ${display_title}" >>"$TMP_DIR/$category"
+    # printf (no echo): un título que empiece por '-' o traiga barras invertidas
+    # no debe interpretarse como flags ni como escapes. Se antepone el número
+    # tabulado para ordenar por PR sin que un '#' en el título rompa la clave.
+    printf '%s\t* [#%s](%s) %s\n' "$number" "$number" "$url" "$display_title" \
+      >>"$TMP_DIR/$category"
   done < <(jq -c '.[]' <<<"$prs_json")
 done < <(git log "${FROM_REF}..${TO_REF}" --pretty=%H)
 
 for section in "${SECTIONS[@]}"; do
   if [[ -s "$TMP_DIR/$section" ]]; then
     echo "### $section"
-    sort -t'#' -k2 -n "$TMP_DIR/$section"
+    sort -n "$TMP_DIR/$section" | cut -f2-
     echo
   fi
 done
