@@ -17,6 +17,7 @@ import receiptsRoutes from './routes/receipts.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import monitoringRoutes from './routes/monitoring.routes.js';
+import versionRoutes from './routes/version.routes.js';
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use('/api/recurring-debt-payments', recurringDebtPaymentsRoutes);
 app.use('/api/receipts', receiptsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/version', versionRoutes);
 
 app.use('/api/monitoring', monitoringRoutes);
 
