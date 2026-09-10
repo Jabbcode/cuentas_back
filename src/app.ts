@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { errorMiddleware } from './middlewares/error.middleware.js';
+import { corsOrigin } from './lib/cors-origin.js';
 
 import authRoutes from './routes/auth.routes.js';
 import accountsRoutes from './routes/accounts.routes.js';
@@ -24,11 +25,8 @@ const app = express();
 app.set('trust proxy', 1); // Render — necesario para IPs reales en rate limit
 
 // Middlewares
-const allowedOrigin =
-  process.env.NODE_ENV === 'production' ? process.env.CORS_ORIGIN : 'http://localhost:5173';
-
 app.use(helmet());
-app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json());
 
