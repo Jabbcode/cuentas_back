@@ -55,12 +55,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          files=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" --jq '.files[].filename')
-          if echo "$files" | grep -qE "$CODE_PATHS_REGEX"; then
-            echo "has_code_changes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_code_changes=false" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          rc=0
+          bash .github/scripts/changed-paths.sh "$BASE_SHA" "$HEAD_SHA" "$CODE_PATHS_REGEX" || rc=$?
+          case "$rc" in
+            0) echo "has_code_changes=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "has_code_changes=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "changed-paths.sh falló (rc=$rc)"; exit "$rc" ;;
+          esac
 
       - name: Calcular siguiente versión
         id: version
@@ -68,14 +70,10 @@ jobs:
         env:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
         run: |
+          set -euo pipefail
           current=$(node -p "require('./package.json').version")
-          IFS='.' read -r major minor patch <<< "$current"
-          case "$BUMP_TYPE" in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            patch) patch=$((patch + 1)) ;;
-          esac
-          echo "new=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+          new=$(bash .github/scripts/bump-version.sh "$current" "$BUMP_TYPE")
+          echo "new=$new" >> "$GITHUB_OUTPUT"
           echo "previous=$current" >> "$GITHUB_OUTPUT"
 
       - name: Construir comentario de vista previa
