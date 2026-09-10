@@ -97,6 +97,9 @@ while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
 
   prs_json=$(gh api "repos/${REPO}/commits/${sha}/pulls" 2>/dev/null || echo "[]")
+  # gh escribe un objeto de error JSON en stdout ante 4xx/5xx transitorios; si no
+  # es un array, trátalo como "sin PRs" en vez de romper el bucle jq de abajo.
+  jq -e 'type=="array"' <<<"$prs_json" >/dev/null 2>&1 || prs_json="[]"
 
   while IFS= read -r pr; do
     [[ -z "$pr" ]] && continue
