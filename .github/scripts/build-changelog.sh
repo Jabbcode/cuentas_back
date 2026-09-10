@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# build-changelog.sh — genera un CHANGELOG agrupado por prefijo de rama para un
+# rango de commits (normalmente entre dos tags publicados).
+#
+# Uso:
+#   build-changelog.sh <from-ref> <to-ref> [--only-paths '<regex-extended>']
+#
+# <from-ref>/<to-ref>: cualquier ref de git válido (tag, SHA, rama). El rango
+# se resuelve como `git log <from-ref>..<to-ref>`.
+#
+# Categorización: por cada commit del rango se resuelven las PRs asociadas vía
+# `gh api repos/{owner}/{repo}/commits/{sha}/pulls` (funciona con merge commits
+# y con squash-merges). La categoría sale del prefijo de `head.ref` (la rama de
+# la PR) antes de la primera "/"; si el prefijo no es reconocido, se usa el
+# prefijo estilo commit convencional del título de la PR (`feat:`, `fix:`…); si
+# tampoco, cae en OTROS.
+#
+# --only-paths: si se pasa, solo se incluyen PRs cuyo diff toca al menos un
+# fichero cuya ruta matchea la regex dada (ERE, la misma sintaxis de `grep -E`).
+# Pensado para reutilizarse filtrando por 'prisma/' en el changelog de BD.
+#
+# Requiere: gh (autenticado) y jq. Sin dependencias nuevas — ambos ya vienen
+# preinstalados en ubuntu-latest.
+#
+# Salida: Markdown por stdout, una sección "### CATEGORIA" por cada categoría
+# con al menos una entrada, cada entrada como "* [#N](url) título".
+
+set -euo pipefail
+
+usage() {
+  echo "Uso: $0 <from-ref> <to-ref> [--only-paths '<regex-extended>']" >&2
+  exit 1
+}
+
+FROM_REF=""
+TO_REF=""
+ONLY_PATHS=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only-paths)
+      [[ $# -lt 2 || -z "$2" ]] && usage
+      ONLY_PATHS="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      ;;
+    *)
+      if [[ -z "$FROM_REF" ]]; then
+        FROM_REF="$1"
+      elif [[ -z "$TO_REF" ]]; then
+        TO_REF="$1"
+      else
+        usage
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ -z "$FROM_REF" || -z "$TO_REF" ]] && usage
+
+command -v gh >/dev/null || { echo "Falta 'gh' en el PATH" >&2; exit 1; }
+command -v jq >/dev/null || { echo "Falta 'jq' en el PATH" >&2; exit 1; }
+
+REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+
+# Orden fijo de las secciones en la salida.
+SECTIONS=(FEAT FIXES HOTFIX SECURITY REFACTOR PERF DB OTROS)
+
+# Prefijo de rama/título (ya en minúsculas) -> sección del changelog.
+category_for_prefix() {
+  case "$1" in
+    feature | feat) echo "FEAT" ;;
+    fix) echo "FIXES" ;;
+    hotfix) echo "HOTFIX" ;;
+    security) echo "SECURITY" ;;
+    refactor) echo "REFACTOR" ;;
+    perf) echo "PERF" ;;
+    db) echo "DB" ;;
+    docs | chore | style | test) echo "OTROS" ;;
+    *) echo "" ;;
+  esac
+}
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+for section in "${SECTIONS[@]}"; do
+  : >"$TMP_DIR/$section"
+done
+SEEN_PRS="$TMP_DIR/seen_prs"
+: >"$SEEN_PRS"
+
+while IFS= read -r sha; do
+  [[ -z "$sha" ]] && continue
+
+  prs_json=$(gh api "repos/${REPO}/commits/${sha}/pulls" 2>/dev/null || echo "[]")
+
+  while IFS= read -r pr; do
+    [[ -z "$pr" ]] && continue
+
+    number=$(jq -r '.number' <<<"$pr")
+    grep -qx "$number" "$SEEN_PRS" && continue
+    echo "$number" >>"$SEEN_PRS"
+
+    title=$(jq -r '.title' <<<"$pr")
+    url=$(jq -r '.html_url' <<<"$pr")
+    head_ref=$(jq -r '.head.ref' <<<"$pr")
+
+    if [[ -n "$ONLY_PATHS" ]]; then
+      touches_path=$(
+        gh api "repos/${REPO}/pulls/${number}/files" --paginate --jq '.[].filename' 2>/dev/null \
+          | grep -Eq "$ONLY_PATHS" && echo 1 || echo 0
+      )
+      [[ "$touches_path" -eq 0 ]] && continue
+    fi
+
+    branch_prefix="${head_ref%%/*}"
+    category=$(category_for_prefix "$(tr '[:upper:]' '[:lower:]' <<<"$branch_prefix")")
+
+    display_title="$title"
+    if [[ -z "$category" ]]; then
+      title_prefix=$(sed -nE 's/^([A-Za-z]+)(\([^)]*\))?!?:[[:space:]]*(.*)$/\1/p' <<<"$title")
+      category=$(category_for_prefix "$(tr '[:upper:]' '[:lower:]' <<<"$title_prefix")")
+    fi
+    # Si el título viene con prefijo estilo commit convencional, se muestra sin
+    # él — la sección ya indica la categoría, mantenerlo sería redundante.
+    stripped_title=$(sed -nE 's/^[A-Za-z]+(\([^)]*\))?!?:[[:space:]]*(.*)$/\2/p' <<<"$title")
+    [[ -n "$stripped_title" ]] && display_title="$stripped_title"
+
+    [[ -z "$category" ]] && category="OTROS"
+
+    echo "* [#${number}](${url}) ${display_title}" >>"$TMP_DIR/$category"
+  done < <(jq -c '.[]' <<<"$prs_json")
+done < <(git log "${FROM_REF}..${TO_REF}" --pretty=%H)
+
+for section in "${SECTIONS[@]}"; do
+  if [[ -s "$TMP_DIR/$section" ]]; then
+    echo "### $section"
+    sort -t'#' -k2 -n "$TMP_DIR/$section"
+    echo
+  fi
+done
