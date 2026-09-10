@@ -148,62 +148,81 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
 
 ## 🌐 Despliegue
 
-### Producción
-- **Backend:** Render — https://cuentas-back-fgep.onrender.com
-- **Frontend:** Vercel — https://cuentas-front-amber.vercel.app (rama `main`)
-- **CORS_ORIGIN:** https://cuentas-front-amber.vercel.app (sin trailing slash)
+**Nada se despliega por push.** `autoDeploy: false` en los 3 servicios de Render;
+publicar es siempre una acción deliberada vía comando en un issue/PR de GitHub
+(ver `.github/workflows/`: `release.yml`, `db-release.yml`, `deploy-version.yml`,
+`migrate.yml`). Reemplaza al staging automático atado a `develop` de 2026-07-23.
 
-### Staging / pre-producción (2026-07-23) — validado end-to-end
-Entorno completo backend+frontend para probar cambios con datos desechables antes de
-promoverlos a producción. Los 3 componentes viven en la rama `develop` de cada repo.
+### Entornos
 
-**Neon (BD):** proyecto único con 2 ramas — `produccion` (`DATABASE_URL` en `.env`) y
-`develop` (staging, datos desechables). `develop` tenía drift de un experimento
-abandonado (`feature/banking-sync-truelayer`, bloqueado — ver "Pendiente") que dejó
-migraciones huérfanas; se reseteó desde `produccion` ("Reset from parent" en Neon) y
-quedó sincronizada con las 14 migraciones actuales.
-- `.env.pre` (gitignored, no versionado): mismas variables que `.env` pero
-  `DATABASE_URL` apunta a la rama `develop` de Neon, `PORT=4001`.
-- Scripts npm: `dev:pre`, `db:migrate:pre`, `db:studio:pre` (usan `dotenv-cli` para
-  cargar `.env.pre`).
+| Entorno | Servicio Render | URL | BD (rama Neon) |
+|---------|-----------------|-----|----------------|
+| Producción | `cuentas_back` (`srv-d6ujmaruibrs73a912b0`) | https://cuentas-back-fgep.onrender.com | `produccion` |
+| Slot PRE | `cuentas-back-pre` (`srv-d9h03hg4n6ts739up2lg`, ex `cuentas-back-staging`) | https://cuentas-back-staging.onrender.com | rama Neon `PRE` |
+| Slot PRE-TEST | `cuentas-back-pre-test` (`srv-dahakfbl550s73e9h9u0`) | https://cuentas-back-pre-test.onrender.com | rama Neon `PRE-TEST` |
 
-**Render (backend):** servicio `cuentas-back-staging` —
-https://cuentas-back-staging.onrender.com — definido vía Blueprint (`render.yaml` en
-la raíz del repo, rama `develop`, plan free). Dos fixes necesarios tras la creación:
-- `buildCommand` debía forzar `npm install --include=dev` — con `NODE_ENV=production`,
-  Render omite `devDependencies` (`typescript` y todos los `@types/*`), rompiendo
-  `tsc` con cientos de falsos positivos.
-- `"prepare": "husky"` → `"husky || true"` en `package.json` — el script fallaba con
-  exit 127 al no encontrar el binario de `husky` (devDependency) en el install de
-  producción, tumbando el build completo.
-- `CORS_ORIGIN` = `https://cuentas-front-git-develop-jabbcodes-projects.vercel.app`
-  (alias estable de la rama `develop` en Vercel).
-- Secrets (`DATABASE_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `CORS_ORIGIN`)
-  completados manualmente en el dashboard de Render (`sync: false` en el Blueprint).
+- `develop` **no se despliega** — es solo la rama de integración antes de `main`.
+- Renombrar un servicio Render **no cambia su `.onrender.com`**: `cuentas-back-pre`
+  conserva la URL `cuentas-back-staging.onrender.com`.
+- Los 2 slots son fijos y compartidos: un snapshot de PR los **redespliega**
+  (`PATCH branch` + `POST deploys` vía API de Render), nunca se crean ni se destruyen.
+  Cold start ~30-60 s en free tras 15 min sin tráfico.
+- `render.yaml` describe los 2 slots (Blueprint). Producción se creó a mano, fuera
+  del Blueprint.
+- La rama Neon `develop` (staging viejo) quedó huérfana — borrable a mano. `.env.pre`
+  local sigue apuntando a ella; reapúntalo a la rama `PRE` si lo usas para dev.
 
-**Vercel (frontend, repo `cuentas_front`):** el proyecto tenía `vercel.json` con
-`ignoreCommand`/`git.deploymentEnabled` configurados para deployar solo `main` —
-cancelaba automáticamente todo build de `develop`. Se amplió a `main` + `develop`.
-`VITE_API_URL` configurado en Vercel, scoped a `Preview` + rama `develop`, apuntando
-al backend de staging (`.../api`) — coexiste con el `VITE_API_URL` genérico de
-Production/Preview/Development sin conflicto (el scoped a rama tiene prioridad).
-Preview: `cuentas-front-git-develop-jabbcodes-projects.vercel.app`.
+### Versionado
 
-**Validación end-to-end (2026-07-23):** `/api/health` en staging → 200; preflight CORS
-desde el origen real de Vercel → `Access-Control-Allow-Origin` correcto (no `*`);
-`POST /auth/register` → cookie `HttpOnly; Secure; SameSite=None`; `GET /auth/me` con
-esa cookie → 200. Usuarios de prueba (`staging-test-*@example.com`) creados y
-eliminados tras la verificación.
+- **Código:** semver en `package.json`, tags `vX.Y.Z`, `CHANGELOG.md`. Se publica con
+  label `release-type/patch|minor|major` en la PR `develop → main`. Publicar ≠
+  desplegar: el tag no llega a producción hasta un `/deploy vX.Y.Z` explícito.
+- **Base de datos:** versionado propio e independiente — tags `db-vX.Y.Z`,
+  `CHANGELOG-DB.md`, label `db-release-type/patch|minor|major` en la misma PR
+  `develop → main`. Un PR puede llevar una label, ambas o ninguna.
+- `GET /api/version` → `{ version, environment }`. `APP_VERSION` la escribe el workflow
+  de deploy en el servicio Render; en los slots muestra `X.(Y+1).0-SNAPSHOT`
+  (solo orientativo).
 
-PRs: `cuentas_back` #56 (entorno `.env.pre`), #57 (`render.yaml`), #58 (fix husky),
-#59 (fix build `--include=dev`) — todas mergeadas a `develop`. `cuentas_front` #64
-(fix `vercel.json`) — mergeada a `develop`.
+### CORS
+
+`CORS_ORIGIN` es lista exacta separada por comas (`src/lib/cors-origin.ts`), sin regex
+ni comodines. Cada slot acepta su alias fijo de frontend:
+`cuentas-back-pre` → `https://cuentas-front-pre.vercel.app`;
+`cuentas-back-pre-test` → `https://cuentas-front-pre-test.vercel.app`.
+
+### Comandos (issues / comentarios de PR de GitHub — solo el dueño del repo)
+
+| Dónde | Comando | Efecto |
+|-------|---------|--------|
+| Issue con label `deploy` | `/deploy vX.Y.Z` | Despliega ese tag a producción |
+| Comentario en una PR | `/deploy PRE` \| `/deploy PRE-TEST` | Redespliega el HEAD de la PR sobre ese slot (snapshot) |
+| Issue con label `migrate` | `/migrate db-vX.Y.Z` | `prisma migrate deploy` de ese tag contra la BD de producción |
+| Comentario en una PR | `/migrate PRE` \| `/migrate PRE-TEST` | `prisma migrate deploy` del HEAD de la PR contra la BD de ese slot |
+
+Redesplegar el código de un slot **no** aplica migraciones — `/migrate` es siempre
+aparte. Los workflows de `issue_comment` corren desde la **rama por defecto** (`main`):
+no operativos hasta que estos ficheros lleguen a `main`.
+
+### GitHub — secrets y variables
+
+- Repo secret: `RENDER_API_KEY`. Environments `production` / `pre` / `pre-test`, cada
+  uno con su `DATABASE_URL`.
+- Repo variables: `RENDER_SERVICE_ID_PROD` / `_PRE` / `_PRE_TEST`, `URL_PRE`,
+  `URL_PRE_TEST`.
 
 ## 📊 Cambios Recientes
-- **Entorno de staging/pre-producción (PRs #56–#59, #64 — 2026-07-23):** Neon `develop`
-  (reset de drift), `cuentas-back-staging` en Render (Blueprint + fixes de build),
-  preview de Vercel para `develop` habilitado, `VITE_API_URL` scoped. Validado
-  end-to-end (health, CORS, cookie de auth cross-origin). Ver sección "Despliegue".
+- **Gestión de versión + despliegues por comando (2026-09-10):** se apaga el
+  auto-deploy en Render y Vercel. `cuentas-back-staging` pasa a ser el slot fijo
+  `cuentas-back-pre` (misma URL); nuevo slot `cuentas-back-pre-test`. Versionado de
+  código (`vX.Y.Z`) y de BD (`db-vX.Y.Z`) por label en la PR `develop → main`; deploy
+  y migración a producción/slots por comando `/deploy` `/migrate` en GitHub. Endpoint
+  `GET /api/version`. **Sustituye al staging automático atado a `develop` de más
+  abajo.** Spec: `~/vault/workspaces/cuentas-app/specs/release-deploy-automation`.
+- **Entorno de staging/pre-producción (PRs #56–#59, #64 — 2026-07-23) — superado por
+  lo anterior:** Neon `develop` (reset de drift), `cuentas-back-staging` en Render
+  (Blueprint + fixes de build), preview de Vercel para `develop` habilitado,
+  `VITE_API_URL` scoped. Validado end-to-end en su día.
 - **Cleanup de arquitectura (PRs #45–#51 — 2026-07-21):** 6 hallazgos cerrados (imports
   circulares, detección de conflicto por tipo, dashboard con agregación en DB, capas
   Prisma en notificaciones/cron, N+1 del cron mensual, `systemKey` estable para
