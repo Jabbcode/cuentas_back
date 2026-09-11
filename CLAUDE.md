@@ -53,7 +53,7 @@ Nada se despliega por push. Detalle completo en `.claude/project-state.md` → "
 
 - Publicar versión de código: label `release-type/patch|minor|major` en la PR `develop → main` (≠ desplegar).
 - Publicar versión de BD: label `db-release-type/patch|minor|major` en esa misma PR (independiente del código).
-- Los workflows de `issue_comment` viven en la rama por defecto (`main`) — solo son operativos ahí.
+- Los workflows de `issue_comment` viven en la rama por defecto del repo, `develop` — solo son operativos ahí.
 
 ## Agents disponibles
 

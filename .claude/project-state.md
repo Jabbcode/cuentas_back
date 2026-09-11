@@ -201,8 +201,9 @@ ni comodines. Cada slot acepta su alias fijo de frontend:
 | Comentario en una PR | `/migrate PRE` \| `/migrate PRE-TEST` | `prisma migrate deploy` del HEAD de la PR contra la BD de ese slot |
 
 Redesplegar el código de un slot **no** aplica migraciones — `/migrate` es siempre
-aparte. Los workflows de `issue_comment` corren desde la **rama por defecto** (`main`):
-no operativos hasta que estos ficheros lleguen a `main`.
+aparte. Los workflows de `issue_comment` corren desde la **rama por defecto** del
+repo, que es `develop` (verificado vía API, no `main` como se asumió al principio):
+no operativos hasta que estos ficheros lleguen a `develop`.
 
 ### GitHub — secrets y variables
 
