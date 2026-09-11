@@ -1,0 +1,513 @@
+name: Deploy Version (manual)
+
+# Despliega en Render de forma explícita. Dos modos:
+#   - Producción: issue con label `deploy` (o comentario `/deploy vX.Y.Z`) ->
+#     valida el tag, escribe APP_VERSION y despliega ese commit en el servicio
+#     de producción.
+#   - Snapshot:   comentario `/deploy PRE` | `/deploy PRE-TEST` en una PR ->
+#     reapunta el slot a la rama de la PR y despliega su HEAD.
+# NUNCA crea ni destruye servicios (nada de POST/DELETE /v1/services).
+# NO aplica migraciones (eso es /migrate, otro workflow — criterio 11).
+#
+# Estructura (SEC-3): un job `parse` sin secrets (gate de dueño + parseo +
+# rechazo de forks) y DOS jobs de despliegue separados por destino, cada uno
+# con acceso SOLO a las variables/entorno de ese destino:
+#   - deploy-prod     -> environment: production, vars.RENDER_SERVICE_ID_PROD
+#   - deploy-snapshot -> vars.RENDER_SERVICE_ID_PRE / _PRE_TEST según el slot
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  # API de Render y datos fijos de infra (constantes, no entrada de usuario).
+  RENDER_API: https://api.render.com/v1
+  PROD_URL: https://cuentas-back-fgep.onrender.com
+  # Polling del deploy (segundos). ~15 min de techo.
+  DEPLOY_POLL_TIMEOUT: "900"
+  DEPLOY_POLL_INTERVAL: "15"
+  # Regex estrictas de comando (S4): el valor validado es el único que se usa
+  # después. Nunca se interpola el cuerpo del comentario dentro de `run:`.
+  DEPLOY_PROD_RE: '^/deploy v[0-9]+\.[0-9]+\.[0-9]+$'
+  DEPLOY_SLOT_RE: '^/deploy (PRE|PRE-TEST)$'
+
+jobs:
+  # --- Parseo, gate de dueño y rechazo de forks (sin secrets) ----------------
+  parse:
+    # Gate de dueño en el `if` del JOB: un no-dueño no llega a ningún step ni a
+    # ningún job que lea secrets (S2). Labels/prefijos literales aquí (env no
+    # disponible en el if de job).
+    if: >
+      (
+        github.event_name == 'issues' &&
+        contains(github.event.issue.labels.*.name, 'deploy') &&
+        github.event.issue.user.login == github.repository_owner
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        startsWith(github.event.comment.body, '/deploy') &&
+        github.event.comment.user.login == github.repository_owner
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    outputs:
+      valid: ${{ steps.g.outputs.valid }}
+      reason: ${{ steps.g.outputs.reason }}
+      mode: ${{ steps.parse.outputs.mode }}
+      slot: ${{ steps.parse.outputs.slot }}
+      version: ${{ steps.parse.outputs.version }}
+      tag_sha: ${{ steps.tag.outputs.sha }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+      pr_branch: ${{ steps.pr.outputs.branch }}
+      snap_version: ${{ steps.snap.outputs.version }}
+      issue: ${{ github.event.issue.number }}
+    steps:
+      - name: Parsear comando
+        id: parse
+        env:
+          # Texto no confiable SOLO por env, nunca interpolado en `run:` (S4).
+          EVENT_NAME: ${{ github.event_name }}
+          IS_PR: ${{ github.event.issue.pull_request != null }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PROD_RE: ${{ env.DEPLOY_PROD_RE }}
+          SLOT_RE: ${{ env.DEPLOY_SLOT_RE }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "issues" ]; then
+            TEXT="$ISSUE_BODY"; CTX=prod
+          elif [ "$IS_PR" = "true" ]; then
+            TEXT="$COMMENT_BODY"; CTX=snapshot
+          else
+            TEXT="$COMMENT_BODY"; CTX=prod
+          fi
+
+          emit() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          # Primera línea que empieza por /deploy (sin CR ni espacios finales).
+          CMD=$(printf '%s\n' "$TEXT" | tr -d '\r' | grep -m1 -E '^/deploy( .*)?$' || true)
+          CMD=$(printf '%s' "$CMD" | sed -E 's/[[:space:]]+$//')
+
+          emit mode "$CTX"
+
+          if [ -z "$CMD" ]; then
+            emit valid false; emit reason malformed; exit 0
+          fi
+
+          if [ "$CTX" = "snapshot" ]; then
+            if printf '%s' "$CMD" | grep -qE "$SLOT_RE"; then
+              emit valid true
+              emit slot "$(printf '%s' "$CMD" | awk '{print $2}')"
+            elif printf '%s' "$CMD" | grep -qE '^/deploy (PRE|PRE-TEST) v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              emit valid false; emit reason version_not_allowed
+            elif printf '%s' "$CMD" | grep -qE "$PROD_RE"; then
+              emit valid false; emit reason version_not_allowed
+            elif printf '%s' "$CMD" | grep -qE '^/deploy$'; then
+              emit valid false; emit reason slot_required
+            else
+              emit valid false; emit reason slot_invalid
+            fi
+          else
+            if printf '%s' "$CMD" | grep -qE "$PROD_RE"; then
+              emit valid true
+              emit version "$(printf '%s' "$CMD" | awk '{print $2}' | sed 's/^v//')"
+            elif printf '%s' "$CMD" | grep -qE '^/deploy$'; then
+              emit valid false; emit reason version_required
+            else
+              emit valid false; emit reason malformed
+            fi
+          fi
+
+      - name: Validar tag y resolver SHA (producción)
+        id: tag
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'prod'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! ref=$(gh api "repos/$REPO/git/ref/tags/v$VERSION" 2>/dev/null); then
+            echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          type=$(printf '%s' "$ref" | jq -r '.object.type')
+          sha=$(printf '%s' "$ref" | jq -r '.object.sha')
+          # Tag anotado: dereferenciar a su commit.
+          if [ "$type" = "tag" ]; then
+            sha=$(gh api "repos/$REPO/git/tags/$sha" --jq '.object.sha')
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Comprobar origen de la PR (fork) antes de resolver su código (SEC-1)
+        id: forkguard
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          # Repo público: una PR de un fork puede traer código no confiable. Se
+          # comprueba el origen ANTES de resolver el HEAD de la PR y antes de que
+          # arranque cualquier job de despliegue.
+          cross=$(gh pr view "$PR" --repo "$REPO" --json isCrossRepository -q .isCrossRepository)
+          echo "cross=$cross" >> "$GITHUB_OUTPUT"
+
+      - name: Datos de la PR (snapshot)
+        id: pr
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot' && steps.forkguard.outputs.cross == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          data=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,headRefName)
+          echo "sha=$(printf '%s' "$data" | jq -r .headRefOid)" >> "$GITHUB_OUTPUT"
+          echo "branch=$(printf '%s' "$data" | jq -r .headRefName)" >> "$GITHUB_OUTPUT"
+
+      - name: Calcular versión indicativa -SNAPSHOT
+        id: snap
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.mode == 'snapshot' && steps.forkguard.outputs.cross != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          last=$(gh api "repos/$REPO/tags" --paginate --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ -z "$last" ]; then
+            echo "version=0.1.0-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          else
+            v="${last#v}"; IFS='.' read -r MA MI _ <<< "$v"
+            echo "version=${MA}.$((MI + 1)).0-SNAPSHOT" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolver validez efectiva
+        id: g
+        env:
+          P_VALID: ${{ steps.parse.outputs.valid }}
+          P_REASON: ${{ steps.parse.outputs.reason }}
+          MODE: ${{ steps.parse.outputs.mode }}
+          TAG_OK: ${{ steps.tag.outputs.ok }}
+          FORK_CROSS: ${{ steps.forkguard.outputs.cross }}
+        run: |
+          set -euo pipefail
+          if [ "$P_VALID" = "true" ] && [ "$MODE" = "prod" ] && [ "$TAG_OK" != "true" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "reason=tag_missing" >> "$GITHUB_OUTPUT"
+          elif [ "$P_VALID" = "true" ] && [ "$MODE" = "snapshot" ] && [ "$FORK_CROSS" != "false" ]; then
+            # allowlist: solo se continúa si isCrossRepository es exactamente
+            # "false"; vacío / null / salida inesperada de gh → se bloquea (M-1).
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "reason=fork_forbidden" >> "$GITHUB_OUTPUT"
+          else
+            echo "valid=$P_VALID" >> "$GITHUB_OUTPUT"
+            echo "reason=$P_REASON" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reaccionar al comando
+        if: github.event_name == 'issue_comment' && steps.g.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content='+1'
+
+      - name: Comentar comando inválido
+        if: steps.g.outputs.valid == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          REASON: ${{ steps.g.outputs.reason }}
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          case "$REASON" in
+            version_required)
+              msg="❌ En un issue de producción hace falta la versión — usa \`/deploy vX.Y.Z\` (ej. \`/deploy v1.3.7\`)." ;;
+            version_not_allowed)
+              msg="❌ En una PR no se admite versión — usa \`/deploy PRE\` o \`/deploy PRE-TEST\` para desplegar el HEAD de la PR sobre un slot." ;;
+            slot_required)
+              msg="❌ Falta indicar el slot — usa \`/deploy PRE\` o \`/deploy PRE-TEST\`." ;;
+            slot_invalid)
+              msg="⚠️ Slot no reconocido. Slots válidos: \`PRE\`, \`PRE-TEST\` (\`/deploy PRE\` | \`/deploy PRE-TEST\`)." ;;
+            fork_forbidden)
+              msg="⚠️ Los snapshots solo se admiten para PRs de ramas de este repositorio, no de forks (\`/deploy PRE\` bloqueado). No se ha desplegado ni tocado ningún servicio." ;;
+            tag_missing)
+              msg="❌ El tag \`v${VERSION}\` no existe. Revísalo con \`gh release list\`." ;;
+            *)
+              msg="⚠️ No se detectó un comando válido. Usa \`/deploy vX.Y.Z\` en un issue con label \`deploy\`, o \`/deploy PRE\` / \`/deploy PRE-TEST\` en un comentario de PR." ;;
+          esac
+          gh issue comment "$ISSUE" --repo "$REPO" --body "$msg
+
+          [Ver run]($RUN_URL)"
+
+  # --- Despliegue a producción ---------------------------------------------
+  deploy-prod:
+    needs: parse
+    if: needs.parse.outputs.valid == 'true' && needs.parse.outputs.mode == 'prod'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    env:
+      SERVICE_ID: ${{ vars.RENDER_SERVICE_ID_PROD }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Validar configuración del servicio de producción
+        id: cfg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ID:-}" ]; then
+            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ No se puede desplegar a producción: la variable de repo \`RENDER_SERVICE_ID_PROD\` está vacía o sin configurar. No se ha llamado a la API de Render.
+
+          [Ver run]($RUN_URL)"
+            echo "commented=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Desplegar en Render (APP_VERSION por clave + deploy + polling)
+        id: deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          APP_VERSION: ${{ needs.parse.outputs.version }}
+          COMMIT_SHA: ${{ needs.parse.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+
+          # 1) APP_VERSION vía endpoint POR CLAVE. NUNCA el bulk PUT /env-vars:
+          #    reemplaza la lista completa y borraría las otras env vars (R4).
+          ev_body=$(jq -nc --arg v "$APP_VERSION" '{value: $v}')
+          code=$(curl -sS -o /tmp/ev.json -w '%{http_code}' -X PUT \
+            "$RENDER_API/services/$SERVICE_ID/env-vars/APP_VERSION" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$ev_body")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "PUT env-vars/APP_VERSION devolvió HTTP $code"; exit 1
+          fi
+
+          # 2) Disparar el deploy del commit exacto.
+          dep_body=$(jq -nc --arg c "$COMMIT_SHA" '{commitId: $c}')
+          code=$(curl -sS -o /tmp/dep.json -w '%{http_code}' -X POST \
+            "$RENDER_API/services/$SERVICE_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$dep_body")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "POST /deploys devolvió HTTP $code"; exit 1
+          fi
+          deploy_id=$(jq -r '.id // .deploy.id // empty' /tmp/dep.json)
+          if [ -z "$deploy_id" ]; then
+            echo "La respuesta de /deploys no trae id"; exit 1
+          fi
+
+          # 3) Polling hasta estado terminal o timeout.
+          elapsed=0
+          while [ "$elapsed" -lt "$DEPLOY_POLL_TIMEOUT" ]; do
+            status=$(curl -sS "$RENDER_API/services/$SERVICE_ID/deploys/$deploy_id" \
+              -H "Authorization: Bearer $RENDER_API_KEY" | jq -r '.status // empty')
+            case "$status" in
+              live)
+                echo "Deploy $deploy_id -> live"; exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed|deactivated)
+                echo "Deploy $deploy_id terminó en estado: $status"; exit 1 ;;
+            esac
+            sleep "$DEPLOY_POLL_INTERVAL"
+            elapsed=$((elapsed + DEPLOY_POLL_INTERVAL))
+          done
+          echo "Timeout ($DEPLOY_POLL_TIMEOUT s) esperando el deploy $deploy_id"; exit 1
+
+      - name: Comentar resultado (producción)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          VERSION: ${{ needs.parse.outputs.version }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Desplegado \`v${VERSION}\` a producción: ${PROD_URL}
+
+          [Ver run]($RUN_URL)"
+          gh issue close "$ISSUE" --repo "$REPO"
+
+      - name: Comentar fallo (producción)
+        if: failure() && steps.cfg.outputs.commented != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$REPO" --body "❌ Falló el deploy a producción. Sin rollback automático: vuelve a desplegar un tag/commit anterior que ya funcionara. Los detalles están en el run (no se vuelcan aquí).
+
+          [Ver run]($RUN_URL)"
+
+  # --- Despliegue de snapshot a un slot ----------------------------------
+  deploy-snapshot:
+    needs: parse
+    if: needs.parse.outputs.valid == 'true' && needs.parse.outputs.mode == 'snapshot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Resolver slot destino
+        id: slot
+        env:
+          SLOT: ${{ needs.parse.outputs.slot }}
+          ID_PRE: ${{ vars.RENDER_SERVICE_ID_PRE }}
+          ID_PRE_TEST: ${{ vars.RENDER_SERVICE_ID_PRE_TEST }}
+          URL_PRE: ${{ vars.URL_PRE }}
+          URL_PRE_TEST: ${{ vars.URL_PRE_TEST }}
+        run: |
+          set -euo pipefail
+          if [ "$SLOT" = "PRE" ]; then
+            echo "service_id=$ID_PRE" >> "$GITHUB_OUTPUT"
+            echo "slot_url=$URL_PRE" >> "$GITHUB_OUTPUT"
+          else
+            echo "service_id=$ID_PRE_TEST" >> "$GITHUB_OUTPUT"
+            echo "slot_url=$URL_PRE_TEST" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validar configuración del slot
+        id: cfg
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          SLOT: ${{ needs.parse.outputs.slot }}
+          SERVICE_ID: ${{ steps.slot.outputs.service_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ID:-}" ]; then
+            key="RENDER_SERVICE_ID_${SLOT//-/_}"
+            gh issue comment "$ISSUE" --repo "$REPO" --body "❌ No se puede desplegar el slot \`${SLOT}\`: la variable de repo \`${key}\` está vacía o sin configurar. No se ha llamado a la API de Render.
+
+          [Ver run]($RUN_URL)"
+            echo "commented=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Reapuntar el slot a la rama de la PR (antes del deploy — R6)
+        env:
+          # RENDER_API_KEY es secret de repo -> GitHub lo enmascara solo.
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ steps.slot.outputs.service_id }}
+          BRANCH: ${{ needs.parse.outputs.pr_branch }}
+        run: |
+          set -euo pipefail
+          body=$(jq -nc --arg b "$BRANCH" '{branch: $b}')
+          code=$(curl -sS -o /tmp/patch.json -w '%{http_code}' -X PATCH \
+            "$RENDER_API/services/$SERVICE_ID" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$body")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "PATCH branch del slot devolvió HTTP $code"; exit 1
+          fi
+
+      - name: Desplegar en Render (APP_VERSION por clave + deploy + polling)
+        id: deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ steps.slot.outputs.service_id }}
+          APP_VERSION: ${{ needs.parse.outputs.snap_version }}
+          COMMIT_SHA: ${{ needs.parse.outputs.pr_sha }}
+        run: |
+          set -euo pipefail
+
+          # 1) APP_VERSION vía endpoint POR CLAVE. NUNCA el bulk PUT /env-vars:
+          #    reemplaza la lista completa y borraría las otras env vars (R4).
+          ev_body=$(jq -nc --arg v "$APP_VERSION" '{value: $v}')
+          code=$(curl -sS -o /tmp/ev.json -w '%{http_code}' -X PUT \
+            "$RENDER_API/services/$SERVICE_ID/env-vars/APP_VERSION" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$ev_body")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "PUT env-vars/APP_VERSION devolvió HTTP $code"; exit 1
+          fi
+
+          # 2) Disparar el deploy del commit exacto.
+          dep_body=$(jq -nc --arg c "$COMMIT_SHA" '{commitId: $c}')
+          code=$(curl -sS -o /tmp/dep.json -w '%{http_code}' -X POST \
+            "$RENDER_API/services/$SERVICE_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$dep_body")
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "POST /deploys devolvió HTTP $code"; exit 1
+          fi
+          deploy_id=$(jq -r '.id // .deploy.id // empty' /tmp/dep.json)
+          if [ -z "$deploy_id" ]; then
+            echo "La respuesta de /deploys no trae id"; exit 1
+          fi
+
+          # 3) Polling hasta estado terminal o timeout.
+          elapsed=0
+          while [ "$elapsed" -lt "$DEPLOY_POLL_TIMEOUT" ]; do
+            status=$(curl -sS "$RENDER_API/services/$SERVICE_ID/deploys/$deploy_id" \
+              -H "Authorization: Bearer $RENDER_API_KEY" | jq -r '.status // empty')
+            case "$status" in
+              live)
+                echo "Deploy $deploy_id -> live"; exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed|deactivated)
+                echo "Deploy $deploy_id terminó en estado: $status"; exit 1 ;;
+            esac
+            sleep "$DEPLOY_POLL_INTERVAL"
+            elapsed=$((elapsed + DEPLOY_POLL_INTERVAL))
+          done
+          echo "Timeout ($DEPLOY_POLL_TIMEOUT s) esperando el deploy $deploy_id"; exit 1
+
+      - name: Comentar resultado (snapshot)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          SLOT: ${{ needs.parse.outputs.slot }}
+          SLOT_URL: ${{ steps.slot.outputs.slot_url }}
+          SNAP_VERSION: ${{ needs.parse.outputs.snap_version }}
+          BRANCH: ${{ needs.parse.outputs.pr_branch }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$REPO" --body "✅ Snapshot desplegado sobre el slot \`${SLOT}\`.
+
+          - URL: ${SLOT_URL}
+          - Versión indicativa: \`${SNAP_VERSION}\`
+          - El slot \`${SLOT}\` sirve ahora la rama \`${BRANCH}\` (PR #${ISSUE}).
+          - ⚠️ Plan free: la primera petición tras el deploy puede tardar 30-60 s (cold start).
+
+          [Ver run]($RUN_URL)"
+
+      - name: Comentar fallo (snapshot)
+        if: failure() && steps.cfg.outputs.commented != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ needs.parse.outputs.issue }}
+          SLOT: ${{ needs.parse.outputs.slot }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$REPO" --body "❌ Falló el deploy del snapshot sobre el slot \`${SLOT}\`. Sin rollback automático: vuelve a lanzar el comando o despliega un commit anterior. Los detalles están en el run (no se vuelcan aquí).
+
+          [Ver run]($RUN_URL)"

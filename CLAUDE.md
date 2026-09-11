@@ -40,6 +40,21 @@ Claude:  → LISTO — pide revisión, no auto-valida
 
 Node.js + Express 4.21 + TypeScript 5.6 + Prisma 5.22 + PostgreSQL + Zod + JWT + Resend
 
+## Despliegue y versión
+
+Nada se despliega por push. Detalle completo en `.claude/project-state.md` → "🌐 Despliegue".
+
+| Dónde (GitHub, solo el dueño del repo) | Comando | Efecto |
+|---|---|---|
+| Issue con label `deploy` | `/deploy vX.Y.Z` | Despliega ese tag a producción |
+| Comentario en una PR | `/deploy PRE` \| `/deploy PRE-TEST` | Redespliega el HEAD de la PR sobre ese slot (snapshot) |
+| Issue con label `migrate` | `/migrate db-vX.Y.Z` | `prisma migrate deploy` de ese tag contra la BD de producción |
+| Comentario en una PR | `/migrate PRE` \| `/migrate PRE-TEST` | `prisma migrate deploy` del HEAD de la PR contra la BD de ese slot |
+
+- Publicar versión de código: label `release-type/patch|minor|major` en la PR `develop → main` (≠ desplegar).
+- Publicar versión de BD: label `db-release-type/patch|minor|major` en esa misma PR (independiente del código).
+- Los workflows de `issue_comment` viven en la rama por defecto del repo, `develop` — solo son operativos ahí.
+
 ## Agents disponibles
 
 | Agent | Cuándo usarlo |
@@ -65,8 +80,11 @@ Node.js + Express 4.21 + TypeScript 5.6 + Prisma 5.22 + PostgreSQL + Zod + JWT +
     RESEND_FROM_EMAIL="MisCuentas <noreply@miscuentas.app>"
     NODE_ENV=test
     DISABLE_RATE_LIMIT=true
+    CORS_ORIGIN="http://localhost:5173"
     ```
     `DISABLE_RATE_LIMIT` es un flag dedicado (no reutiliza `NODE_ENV`) para que la suite E2E no choque contra el rate limiter de `/api/auth/*` — ver `src/middlewares/rate-limit.middleware.ts`.
+    `CORS_ORIGIN` es obligatorio: el CORS es una lista exacta (`src/lib/cors-origin.ts`), sin
+    fallback a `localhost` — sin esta variable el navegador del E2E queda bloqueado.
 
 ## Estado actual
 
