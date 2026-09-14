@@ -225,6 +225,7 @@ export class DebtsServiceImpl implements DebtsService {
   }
 
   async payDebt(debtId: string, userId: string, data: PayDebtInput): Promise<PayDebtResult> {
+    let result;
     try {
       const debt = await this.debtRepo.findByIdAndUser(debtId, userId);
       if (!debt) throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
@@ -238,7 +239,7 @@ export class DebtsServiceImpl implements DebtsService {
         debt.interestRate ? Number(debt.interestRate) : null,
         debt.interestType
       );
-      const result = await this.prisma.$transaction(async (tx) => {
+      result = await this.prisma.$transaction(async (tx) => {
         const debtPaymentDefaults = SYSTEM_CATEGORY_DEFAULTS[CATEGORY_SYSTEM_KEYS.DEBT_PAYMENT];
         const cat = await tx.category.upsert({
           where: {
@@ -292,8 +293,6 @@ export class DebtsServiceImpl implements DebtsService {
         });
         return { debt: updatedDebt, payment, transaction };
       });
-      await this.handleRecurringPaymentSideEffects(debt.id, userId, data.accountId, data.amount);
-      return result as unknown as PayDebtResult;
     } catch (error) {
       return logger.fail(
         error,
@@ -302,6 +301,11 @@ export class DebtsServiceImpl implements DebtsService {
         userId
       );
     }
+
+    // Fuera del try: si falla, handleRecurringPaymentSideEffects ya loguea su
+    // propio fallo — evita duplicar el log del mismo error dos veces.
+    await this.handleRecurringPaymentSideEffects(debtId, userId, data.accountId, data.amount);
+    return result as unknown as PayDebtResult;
   }
 
   async getDebtsSummary(userId: string): Promise<DebtsSummary> {

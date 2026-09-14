@@ -325,18 +325,25 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
 
           createdByUser[fe.userId] = (createdByUser[fe.userId] ?? 0) + 1;
         } catch (err) {
-          logger.error(
-            err,
-            'No se pudo autogenerar la transaccion del gasto fijo {} del usuario {}',
-            fe.id,
-            fe.userId
-          );
-          // Errores de negocio tipados (ej. límite de tarjeta) se reportan al usuario via
-          // notificación en vez de fallar en silencio; errores inesperados solo se loguean.
+          // Errores de negocio tipados (ej. límite de tarjeta) son esperados y se
+          // reportan al usuario via notificación — no ameritan nivel error con stack.
           if (err instanceof AppError) {
+            logger.warn(
+              'No se pudo autogenerar la transaccion del gasto fijo {} del usuario {}: {}',
+              fe.id,
+              fe.userId,
+              err.message
+            );
             const failures = failedByUser[fe.userId] ?? [];
             failures.push({ fixedExpenseName: fe.name, message: err.message });
             failedByUser[fe.userId] = failures;
+          } else {
+            logger.error(
+              err,
+              'No se pudo autogenerar la transaccion del gasto fijo {} del usuario {}',
+              fe.id,
+              fe.userId
+            );
           }
         }
       }
@@ -382,13 +389,12 @@ export class FixedExpensesServiceImpl implements FixedExpensesService {
   }
 
   async getFixedExpensesSummary(userId: string): Promise<FixedExpensesSummary> {
+    // Fuera del try: cada sync ya loguea su propio fallo — evita duplicar el
+    // log del mismo error dos veces.
+    await this.syncCreditCardFixedExpenses(userId);
+    await this.syncRecurringDebtPaymentFixedExpenses(userId);
+
     try {
-      // Sync credit card fixed expenses before getting summary
-      await this.syncCreditCardFixedExpenses(userId);
-
-      // Sync recurring debt payment fixed expenses
-      await this.syncRecurringDebtPaymentFixedExpenses(userId);
-
       const now = new Date();
       const { start: startOfMonth, end: endOfMonth } = getMonthRange(
         now.getFullYear(),
