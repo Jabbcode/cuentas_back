@@ -187,6 +187,11 @@ export class ReceiptsServiceImpl implements ReceiptsService {
       const ocrText = await this.extractTextFromImage(imageBuffer);
 
       if (!ocrText || ocrText.trim().length < 10) {
+        logger.warn(
+          'Recibo ilegible: usuario {} — OCR extrajo {} caracteres (minimo 10)',
+          userId,
+          ocrText?.trim().length ?? 0
+        );
         throw new ValidationError(RECEIPT_MESSAGES.UNREADABLE_TEXT);
       }
 
@@ -238,6 +243,10 @@ export class ReceiptsServiceImpl implements ReceiptsService {
       const rawText = await this.extractTextFromImage(imageBuffer);
 
       if (!rawText || rawText.trim().length < 10) {
+        logger.warn(
+          'Recibo ilegible (OCR-only) — extrajo {} caracteres (minimo 10)',
+          rawText?.trim().length ?? 0
+        );
         throw new ValidationError(RECEIPT_MESSAGES.UNREADABLE_TEXT);
       }
 

@@ -41,6 +41,11 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
       const debt = await this.debtsService.getDebtById(data.debtId, userId);
 
       if (debt.status === DEBT_STATUS.PAID) {
+        logger.warn(
+          'Configuracion de pago recurrente rechazada: deuda {} ya tiene status {}',
+          data.debtId,
+          debt.status
+        );
         throw new ConflictError(RECURRING_DEBT_PAYMENT_MESSAGES.CANNOT_CONFIGURE_ON_PAID_DEBT);
       }
 
