@@ -142,8 +142,15 @@ export class AccountsServiceImpl implements AccountsService {
 
       if (!fromAccount) throw new NotFoundError(ACCOUNT_MESSAGES.ORIGIN_NOT_FOUND);
       if (!toAccount) throw new NotFoundError(ACCOUNT_MESSAGES.DESTINATION_NOT_FOUND);
-      if (Number(fromAccount.balance) < amount)
+      if (Number(fromAccount.balance) < amount) {
+        logger.warn(
+          'Transferencia rechazada: cuenta {} balance={} monto={}',
+          fromAccountId,
+          fromAccount.balance,
+          amount
+        );
         throw new ValidationError(ACCOUNT_MESSAGES.INSUFFICIENT_BALANCE_ORIGIN);
+      }
 
       return await this.prisma.$transaction(async (tx) => {
         await tx.account.update({
