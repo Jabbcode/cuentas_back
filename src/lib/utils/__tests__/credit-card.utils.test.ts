@@ -4,6 +4,7 @@ import {
   getPaymentDueDate,
   getDaysBetween,
   normalizeToUTC,
+  buildClosedPeriodBounds,
 } from '../credit-card.utils.js';
 
 describe('getCutoffDates', () => {
@@ -72,5 +73,37 @@ describe('normalizeToUTC', () => {
     expect(result.getUTCDate()).toBe(10);
     expect(result.getUTCHours()).toBe(0);
     expect(result.getUTCMinutes()).toBe(0);
+  });
+});
+
+describe('buildClosedPeriodBounds', () => {
+  it('cutoffDay=15, 12 meses: cruza el año sin desbordar y queda ascendente', () => {
+    const lastCutoff = new Date(2026, 0, 15); // 15-ene-2026
+    const periods = buildClosedPeriodBounds(lastCutoff, 12);
+
+    expect(periods).toHaveLength(12);
+    expect(periods[0]!.startDate).toEqual(new Date(2025, 0, 15));
+    expect(periods[0]!.endDate).toEqual(new Date(2025, 1, 14));
+    // último elemento = período cerrado más reciente, justo antes de lastCutoff
+    expect(periods[11]!.startDate).toEqual(new Date(2025, 11, 15));
+    expect(periods[11]!.endDate).toEqual(new Date(2026, 0, 14));
+
+    for (let i = 1; i < periods.length; i++) {
+      expect(periods[i]!.startDate.getTime()).toBeGreaterThan(periods[i - 1]!.startDate.getTime());
+    }
+  });
+
+  it('cutoffDay=31: febrero clamea a su último día sin desbordar a marzo', () => {
+    const lastCutoff = new Date(2026, 2, 31); // 31-mar-2026
+    const periods = buildClosedPeriodBounds(lastCutoff, 1);
+
+    expect(periods).toHaveLength(1);
+    expect(periods[0]!.startDate).toEqual(new Date(2026, 1, 28)); // 2026 no es bisiesto
+    expect(periods[0]!.endDate).toEqual(new Date(2026, 2, 30));
+  });
+
+  it('monthsBack=3 devuelve exactamente 3 elementos', () => {
+    const lastCutoff = new Date(2026, 5, 10);
+    expect(buildClosedPeriodBounds(lastCutoff, 3)).toHaveLength(3);
   });
 });
