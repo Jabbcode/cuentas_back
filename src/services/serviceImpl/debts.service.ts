@@ -231,8 +231,15 @@ export class DebtsServiceImpl implements DebtsService {
       if (!debt) throw new NotFoundError(DEBT_MESSAGES.NOT_FOUND);
       if (debt.status === DEBT_STATUS.PAID) throw new ConflictError(DEBT_MESSAGES.ALREADY_PAID);
       const account = await this.accountsService.getAccountById(data.accountId, userId);
-      if (Number(account.balance) < data.amount)
+      if (Number(account.balance) < data.amount) {
+        logger.warn(
+          'Pago de deuda rechazado: cuenta {} balance={} monto={}',
+          data.accountId,
+          account.balance,
+          data.amount
+        );
         throw new ValidationError(DEBT_MESSAGES.INSUFFICIENT_BALANCE);
+      }
       const { principal, interest, newRemainingAmount } = calculateDebtPaymentBreakdown(
         Number(debt.remainingAmount),
         data.amount,
