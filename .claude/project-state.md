@@ -158,12 +158,15 @@ publicar es siempre una acción deliberada vía comando en un issue/PR de GitHub
 | Entorno | Servicio Render | URL | BD (rama Neon) |
 |---------|-----------------|-----|----------------|
 | Producción | `cuentas_back` (`srv-d6ujmaruibrs73a912b0`) | https://cuentas-back-fgep.onrender.com | `produccion` |
-| Slot PRE | `cuentas-back-pre` (`srv-d9h03hg4n6ts739up2lg`, ex `cuentas-back-staging`) | https://cuentas-back-staging.onrender.com | rama Neon `PRE` |
+| Slot PRE | `cuentas-back-pre` (`srv-dai7imrm8hqs73f5a7ug`) | https://cuentas-back-pre.onrender.com | rama Neon `PRE` |
 | Slot PRE-TEST | `cuentas-back-pre-test` (`srv-dahakfbl550s73e9h9u0`) | https://cuentas-back-pre-test.onrender.com | rama Neon `PRE-TEST` |
 
 - `develop` **no se despliega** — es solo la rama de integración antes de `main`.
-- Renombrar un servicio Render **no cambia su `.onrender.com`**: `cuentas-back-pre`
-  conserva la URL `cuentas-back-staging.onrender.com`.
+- Historial de `cuentas-back-pre` (2026-09-11): se creó primero renombrando el
+  viejo `cuentas-back-staging` (renombrar no cambia el `.onrender.com`, quedó con
+  la URL vieja) y luego se recreó desde cero con el nombre correcto desde el
+  principio para que la URL fuera limpia — decisión explícita del usuario, único
+  caso donde se recrea un servicio (el resto del flujo sigue prohibiéndolo).
 - Los 2 slots son fijos y compartidos: un snapshot de PR los **redespliega**
   (`PATCH branch` + `POST deploys` vía API de Render), nunca se crean ni se destruyen.
   Cold start ~30-60 s en free tras 15 min sin tráfico.

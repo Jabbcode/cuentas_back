@@ -1,11 +1,26 @@
 import { groupByCategory } from '../../lib/utils/projection.utils.js';
+import { createLogger } from '../../lib/logger.js';
 import type { FixedExpensesService } from '../interfaces/fixed-expenses.service.port.js';
 import type { ProjectionService, ProjectionData } from '../interfaces/projection.service.port.js';
+
+const logger = createLogger('PROJECTION');
 
 export class ProjectionServiceImpl implements ProjectionService {
   constructor(private fixedExpensesService: FixedExpensesService) {}
 
   async getNextMonthProjection(userId: string): Promise<ProjectionData> {
+    try {
+      return await this.buildNextMonthProjection(userId);
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo calcular la proyeccion del proximo mes del usuario {}',
+        userId
+      );
+    }
+  }
+
+  private async buildNextMonthProjection(userId: string): Promise<ProjectionData> {
     const now = new Date();
     const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const year = nextMonth.getFullYear();
