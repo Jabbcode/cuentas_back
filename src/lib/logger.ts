@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { AppError } from './errors.js';
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
@@ -19,15 +20,29 @@ export function createLogger(moduleName: string) {
     return `[${moduleName}]: ${template.replace(/\{\}/g, () => String(values.shift() ?? '{}'))}`;
   }
 
-  return {
-    info: (template: string, ...args: unknown[]): void => {
-      child.info(interpolate(template, args));
-    },
-    warn: (template: string, ...args: unknown[]): void => {
-      child.warn(interpolate(template, args));
-    },
-    error: (err: unknown, template: string, ...args: unknown[]): void => {
-      child.error({ err }, interpolate(template, args));
-    },
+  const info = (template: string, ...args: unknown[]): void => {
+    child.info(interpolate(template, args));
   };
+  const warn = (template: string, ...args: unknown[]): void => {
+    child.warn(interpolate(template, args));
+  };
+  const error = (err: unknown, template: string, ...args: unknown[]): void => {
+    child.error({ err }, interpolate(template, args));
+  };
+
+  /**
+   * Loguea el fallo de una operacion y relanza el error tal cual llego,
+   * sin modificarlo. Nivel warn (sin stack) para AppError esperado por el
+   * negocio, error (con stack) para cualquier otro fallo no controlado.
+   */
+  function fail(err: unknown, template: string, ...args: unknown[]): never {
+    if (err instanceof AppError) {
+      warn(template, ...args);
+    } else {
+      error(err, template, ...args);
+    }
+    throw err;
+  }
+
+  return { info, warn, error, fail };
 }

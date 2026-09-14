@@ -8,7 +8,7 @@ import {
   assertCreditCardLimit,
   CreditCardBalanceInfo,
 } from '../../lib/utils/credit-card-limit.utils.js';
-import { AppError, NotFoundError } from '../../lib/errors.js';
+import { NotFoundError } from '../../lib/errors.js';
 import { createLogger } from '../../lib/logger.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 import type { TransactionType } from '../../lib/constants/shared.constants.js';
@@ -40,19 +40,6 @@ const RECEIPT_TRANSACTION_INCLUDE = {
 } as const;
 
 const logger = createLogger('TRANSACTIONS');
-
-/**
- * Loguea el fallo (warn si es un AppError esperado por el negocio, error con
- * stack si es inesperado) y relanza el error original sin modificarlo.
- */
-function logFailure(error: unknown, template: string, ...args: unknown[]): never {
-  if (error instanceof AppError) {
-    logger.warn(template, ...args);
-  } else {
-    logger.error(error, template, ...args);
-  }
-  throw error;
-}
 
 export class TransactionsServiceImpl implements TransactionsService {
   constructor(
@@ -183,7 +170,7 @@ export class TransactionsServiceImpl implements TransactionsService {
 
       return { transactions, total, limit, offset };
     } catch (error) {
-      logFailure(error, 'No se pudieron obtener las transacciones del usuario {}', userId);
+      return logger.fail(error, 'No se pudieron obtener las transacciones del usuario {}', userId);
     }
   }
 
@@ -201,7 +188,7 @@ export class TransactionsServiceImpl implements TransactionsService {
 
       return transaction;
     } catch (error) {
-      logFailure(error, 'No se pudo obtener la transaccion {} del usuario {}', id, userId);
+      return logger.fail(error, 'No se pudo obtener la transaccion {} del usuario {}', id, userId);
     }
   }
 
@@ -266,7 +253,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         return transaction;
       });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudo crear la transaccion del usuario {} en la cuenta {}',
         userId,
@@ -348,7 +335,12 @@ export class TransactionsServiceImpl implements TransactionsService {
         return updated;
       });
     } catch (error) {
-      logFailure(error, 'No se pudo actualizar la transaccion {} del usuario {}', id, userId);
+      return logger.fail(
+        error,
+        'No se pudo actualizar la transaccion {} del usuario {}',
+        id,
+        userId
+      );
     }
   }
 
@@ -370,7 +362,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         );
       });
     } catch (error) {
-      logFailure(error, 'No se pudo eliminar la transaccion {} del usuario {}', id, userId);
+      return logger.fail(error, 'No se pudo eliminar la transaccion {} del usuario {}', id, userId);
     }
   }
 
@@ -433,7 +425,11 @@ export class TransactionsServiceImpl implements TransactionsService {
         })
         .sort((a, b) => b.expenseTotal - a.expenseTotal);
     } catch (error) {
-      logFailure(error, 'No se pudo obtener el resumen de transacciones del usuario {}', userId);
+      return logger.fail(
+        error,
+        'No se pudo obtener el resumen de transacciones del usuario {}',
+        userId
+      );
     }
   }
 
@@ -443,7 +439,7 @@ export class TransactionsServiceImpl implements TransactionsService {
     try {
       return await this.transactionRepo.findReceiptItems(transactionId);
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener los items de recibo de la transaccion {} del usuario {}',
         transactionId,
@@ -456,7 +452,11 @@ export class TransactionsServiceImpl implements TransactionsService {
     try {
       return await this.transactionRepo.count({ categoryId });
     } catch (error) {
-      logFailure(error, 'No se pudo contar las transacciones de la categoria {}', categoryId);
+      return logger.fail(
+        error,
+        'No se pudo contar las transacciones de la categoria {}',
+        categoryId
+      );
     }
   }
 
@@ -473,7 +473,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener los gastos mensuales de la categoria {} del usuario {}',
         categoryId,
@@ -498,7 +498,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         { include: CARD_STATEMENT_TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
       );
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener las transacciones del estado de cuenta del usuario {}',
         userId
@@ -516,7 +516,11 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(error, 'No se pudo verificar el pago del gasto fijo {} en el mes', fixedExpenseId);
+      return logger.fail(
+        error,
+        'No se pudo verificar el pago del gasto fijo {} en el mes',
+        fixedExpenseId
+      );
     }
   }
 
@@ -528,7 +532,7 @@ export class TransactionsServiceImpl implements TransactionsService {
     try {
       return await this.transactionRepo.updateMany({ fixedExpenseId, userId }, data);
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudo resincronizar las transacciones del gasto fijo {} del usuario {}',
         fixedExpenseId,
@@ -549,7 +553,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudo calcular el total mensual de tipo {} del usuario {}',
         type,
@@ -570,7 +574,11 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(error, 'No se pudo calcular el total de gastos variables del usuario {}', userId);
+      return logger.fail(
+        error,
+        'No se pudo calcular el total de gastos variables del usuario {}',
+        userId
+      );
     }
   }
 
@@ -586,7 +594,11 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(error, 'No se pudo obtener el desglose por categoria del usuario {}', userId);
+      return logger.fail(
+        error,
+        'No se pudo obtener el desglose por categoria del usuario {}',
+        userId
+      );
     }
   }
 
@@ -594,7 +606,7 @@ export class TransactionsServiceImpl implements TransactionsService {
     try {
       return await this.transactionRepo.findMany({ userId, date: { gte: since } });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener las transacciones del usuario {} desde la fecha indicada',
         userId
@@ -617,7 +629,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         take
       );
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener las categorias con mayor gasto del usuario {}',
         userId
@@ -632,7 +644,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener los totales por tipo para {} usuarios',
         userIds.length
@@ -651,7 +663,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         date: { gte: range.gte, lt: range.lt },
       });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudieron obtener los gastos por usuario y categoria para {} usuarios',
         userIds.length
@@ -663,7 +675,7 @@ export class TransactionsServiceImpl implements TransactionsService {
     try {
       return await this.transactionRepo.countByUser(userId);
     } catch (error) {
-      logFailure(error, 'No se pudo contar las transacciones del usuario {}', userId);
+      return logger.fail(error, 'No se pudo contar las transacciones del usuario {}', userId);
     }
   }
 
@@ -671,7 +683,7 @@ export class TransactionsServiceImpl implements TransactionsService {
     try {
       return await this.transactionRepo.findFirstByUser(userId, { date: 'asc' });
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudo obtener la fecha de la primera transaccion del usuario {}',
         userId
@@ -686,7 +698,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         RECEIPT_TRANSACTION_INCLUDE
       )) as TxWithAccountCategory | null;
     } catch (error) {
-      logFailure(
+      return logger.fail(
         error,
         'No se pudo buscar la transaccion por hash de imagen del usuario {}',
         userId
@@ -708,7 +720,11 @@ export class TransactionsServiceImpl implements TransactionsService {
         { include: RECEIPT_TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
       )) as unknown as TxWithAccountCategory[];
     } catch (error) {
-      logFailure(error, 'No se pudieron buscar transacciones similares del usuario {}', userId);
+      return logger.fail(
+        error,
+        'No se pudieron buscar transacciones similares del usuario {}',
+        userId
+      );
     }
   }
 }
