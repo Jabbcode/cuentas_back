@@ -1,3 +1,4 @@
+import type { Request, Response } from 'express';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -28,10 +29,27 @@ app.set('trust proxy', 1); // Render — necesario para IPs reales en rate limit
 
 // Middlewares
 app.use(
-  pinoHttp({
+  pinoHttp<Request, Response>({
     logger,
     redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'],
     autoLogging: { ignore: (req) => req.url === '/api/health' },
+    // Sin esto, pino-http loguea req/res completos (todos los headers, CSP,
+    // CORS, etc.) en cada linea — ilegible en el visor de texto plano de Render.
+    // req.originalUrl (no req.url): Express reescribe req.url al entrar a un
+    // router anidado (app.use('/api/version', router) con router.get('/', ...)
+    // deja req.url en '/'); originalUrl conserva la ruta completa.
+    // wrapSerializers:false — por defecto pino-http pasa a los serializers el
+    // objeto YA serializado internamente (con `url`, no `originalUrl`); sin
+    // esto req.originalUrl llega undefined dentro del serializer.
+    wrapSerializers: false,
+    serializers: {
+      req: (req: Request) => ({ method: req.method, url: req.originalUrl }),
+      res: (res: Response) => ({ statusCode: res.statusCode }),
+    },
+    customSuccessMessage: (req: Request, res: Response) =>
+      `[HTTP]: ${req.method} ${req.originalUrl} -> ${res.statusCode}`,
+    customErrorMessage: (req: Request, res: Response) =>
+      `[HTTP]: ${req.method} ${req.originalUrl} -> ${res.statusCode}`,
   })
 );
 app.use(helmet());
