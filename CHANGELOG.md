@@ -5,6 +5,17 @@ Todos los cambios notables de este proyecto se documentan en este fichero.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-14
+
+### FEAT
+* [#73](https://github.com/Jabbcode/cuentas_back/pull/73) logging estructurado con pino + fix de silencio de errores en prod
+
+### OTROS
+* [#72](https://github.com/Jabbcode/cuentas_back/pull/72) Sync release 1.1.0 to develop
+* [#74](https://github.com/Jabbcode/cuentas_back/pull/74) Release 1.1.1
+
+
+
 ## [1.1.0] - 2026-09-14
 
 ### FEAT
@@ -86,4 +97,5 @@ y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Comparaciones completas
 
+- [v1.1.0...v1.1.1](https://github.com/Jabbcode/cuentas_back/compare/v1.1.0...v1.1.1)
 - [v1.0.0...v1.1.0](https://github.com/Jabbcode/cuentas_back/compare/v1.0.0...v1.1.0)
