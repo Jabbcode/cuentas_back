@@ -216,7 +216,11 @@ export class CreditCardsServiceImpl implements CreditCardsService {
   /**
    * Get credit card statement with current and closed periods
    */
-  async getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement> {
+  async getCreditCardStatement(
+    accountId: string,
+    userId: string,
+    monthsBack: number = OVERDUE_LOOKBACK_MONTHS_DEFAULT
+  ): Promise<CreditCardStatement> {
     try {
       const account = await this.accountsService.findAccountById(accountId, userId);
 
@@ -230,18 +234,17 @@ export class CreditCardsServiceImpl implements CreditCardsService {
 
       const today = new Date();
       const { lastCutoff } = getCutoffDates(account.cutoffDay);
-      const previousCutoff = new Date(lastCutoff);
-      previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+      const oldestPeriodStart = buildClosedPeriodBounds(lastCutoff, monthsBack)[0]!.startDate;
 
       const [transactions, payments] = await Promise.all([
         this.transactionsService.findCardStatementTransactions(userId, [accountId], {
-          gte: previousCutoff,
+          gte: oldestPeriodStart,
           lte: today,
         }),
         this.creditCardPaymentRepo.findMany({ accountId }),
       ]);
 
-      return buildStatement(account, transactions, payments, today);
+      return buildStatement(account, transactions, payments, today, monthsBack);
     } catch (error) {
       return logger.fail(
         error,
@@ -255,7 +258,10 @@ export class CreditCardsServiceImpl implements CreditCardsService {
   /**
    * Get summary of all credit cards for dashboard
    */
-  async getCreditCardsSummary(userId: string): Promise<CreditCardsSummary> {
+  async getCreditCardsSummary(
+    userId: string,
+    monthsBack: number = OVERDUE_LOOKBACK_MONTHS_DEFAULT
+  ): Promise<CreditCardsSummary> {
     try {
       const creditCards = await this.accountsService.getCreditCards(userId);
       const eligibleCards = creditCards.filter((card) => card.cutoffDay && card.paymentDueDay);
@@ -267,17 +273,17 @@ export class CreditCardsServiceImpl implements CreditCardsService {
       const today = new Date();
       const cardIds = eligibleCards.map((card) => card.id);
 
-      const previousCutoffs = eligibleCards.map((card) => {
+      const oldestPeriodStarts = eligibleCards.map((card) => {
         const { lastCutoff } = getCutoffDates(card.cutoffDay!);
-        const previousCutoff = new Date(lastCutoff);
-        previousCutoff.setMonth(previousCutoff.getMonth() - 1);
-        return previousCutoff;
+        return buildClosedPeriodBounds(lastCutoff, monthsBack)[0]!.startDate;
       });
-      const minPreviousCutoff = new Date(Math.min(...previousCutoffs.map((d) => d.getTime())));
+      const minOldestPeriodStart = new Date(
+        Math.min(...oldestPeriodStarts.map((d) => d.getTime()))
+      );
 
       const [allTransactions, allPayments] = await Promise.all([
         this.transactionsService.findCardStatementTransactions(userId, cardIds, {
-          gte: minPreviousCutoff,
+          gte: minOldestPeriodStart,
           lte: today,
         }),
         this.creditCardPaymentRepo.findMany({ accountId: { in: cardIds } }),
@@ -302,7 +308,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
           card,
           transactionsByAccount.get(card.id) ?? [],
           paymentsByAccount.get(card.id) ?? [],
-          today
+          today,
+          monthsBack
         )
       );
 

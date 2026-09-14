@@ -230,6 +230,22 @@ describe('CreditCardsServiceImpl', () => {
         expect.objectContaining({ gte: expect.any(Date), lte: expect.any(Date) })
       );
     });
+
+    it('monthsBack=12 amplía el gte de la consulta respecto al default (6)', async () => {
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      await service.getCreditCardStatement('card-1', 'user-1');
+      const gteDefault = mockedFindCardStatementTransactions.mock.calls[0]![2].gte as Date;
+
+      vi.clearAllMocks();
+      mockedFindCardStatementTransactions.mockResolvedValue([]);
+      await service.getCreditCardStatement('card-1', 'user-1', 12);
+      const gte12Months = mockedFindCardStatementTransactions.mock.calls[0]![2].gte as Date;
+
+      expect(gte12Months.getTime()).toBeLessThan(gteDefault.getTime());
+    });
   });
 
   describe('getCreditCardsSummary', () => {

@@ -58,8 +58,12 @@ export interface PayCreditCardStatementInput {
 }
 
 export interface CreditCardsService {
-  getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement>;
-  getCreditCardsSummary(userId: string): Promise<CreditCardsSummary>;
+  getCreditCardStatement(
+    accountId: string,
+    userId: string,
+    monthsBack?: number
+  ): Promise<CreditCardStatement>;
+  getCreditCardsSummary(userId: string, monthsBack?: number): Promise<CreditCardsSummary>;
   payCreditCardStatement(
     accountId: string,
     userId: string,
