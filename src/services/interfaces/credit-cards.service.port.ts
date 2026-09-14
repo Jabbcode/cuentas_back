@@ -7,6 +7,15 @@ export interface CreditCardPeriod {
   transactions: Transaction[];
 }
 
+export interface CreditCardOverduePeriod {
+  startDate: Date;
+  endDate: Date;
+  balance: number;
+  transactionCount: number;
+  paymentDueDate: Date;
+  daysOverdue: number;
+}
+
 export interface CreditCardStatement {
   account: Account;
   currentPeriod: CreditCardPeriod & {
@@ -17,6 +26,8 @@ export interface CreditCardStatement {
     paymentDueDate: Date;
     daysUntilDue: number;
   };
+  /** Períodos cerrados anteriores al closedPeriod, sin pagar, dentro de la ventana `monthsBack`. Ordenados ascendente (más atrasado primero). */
+  overduePeriods: CreditCardOverduePeriod[];
   creditLimit: number;
   available: number;
   usagePercentage: number;

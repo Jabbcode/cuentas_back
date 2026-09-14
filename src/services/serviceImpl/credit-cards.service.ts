@@ -6,12 +6,16 @@ import {
   getPaymentDueDate,
   getDaysBetween,
   normalizeToUTC,
+  buildClosedPeriodBounds,
 } from '../../lib/utils/credit-card.utils.js';
 import type { CreditCardPaymentRepository } from '../../repositories/interfaces/credit-card-payment.repository.port.js';
 import type { FixedExpenseRepository } from '../../repositories/interfaces/fixed-expense.repository.port.js';
 import { getMonthRange } from '../../lib/utils/date.utils.js';
 import { CATEGORY_SYSTEM_KEYS } from '../../lib/constants/category-system-keys.js';
-import { CREDIT_CARD_MESSAGES } from '../../lib/constants/credit-card.constants.js';
+import {
+  CREDIT_CARD_MESSAGES,
+  OVERDUE_LOOKBACK_MONTHS_DEFAULT,
+} from '../../lib/constants/credit-card.constants.js';
 import { ACCOUNT_TYPES } from '../../lib/constants/account.constants.js';
 import { TRANSACTION_TYPE } from '../../lib/constants/shared.constants.js';
 import type { TransactionsService } from '../interfaces/transactions.service.port.js';
@@ -20,6 +24,7 @@ import type { CategoriesService } from '../interfaces/categories.service.port.js
 import type {
   CreditCardsService,
   CreditCardStatement,
+  CreditCardOverduePeriod,
   CreditCardsSummary,
   PayCreditCardStatementInput,
 } from '../interfaces/credit-cards.service.port.js';
@@ -36,7 +41,8 @@ export function buildStatement(
   account: Account,
   transactions: Transaction[],
   payments: CreditCardPayment[],
-  today: Date
+  today: Date,
+  monthsBack: number = OVERDUE_LOOKBACK_MONTHS_DEFAULT
 ): CreditCardStatement {
   if (!account.cutoffDay || !account.paymentDueDay) {
     throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
@@ -44,9 +50,12 @@ export function buildStatement(
 
   const { lastCutoff, nextCutoff } = getCutoffDates(account.cutoffDay);
 
-  // Calculate previous cutoff for closed period
-  const previousCutoff = new Date(lastCutoff);
-  previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+  // Fronteras de los últimos `monthsBack` períodos cerrados, ascendente; el último
+  // elemento es el período cerrado más reciente (closedPeriod de hoy).
+  const periodBounds = buildClosedPeriodBounds(lastCutoff, monthsBack);
+  const closedBounds = periodBounds[periodBounds.length - 1]!;
+  const previousCutoff = closedBounds.startDate;
+  const closedPeriodEnd = closedBounds.endDate;
 
   // Normalize dates to UTC midnight for consistent comparisons
   const previousCutoffUTC = normalizeToUTC(previousCutoff);
@@ -64,10 +73,6 @@ export function buildStatement(
   const currentBalance = currentPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
   const closedBalance = closedPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
 
-  // Calculate period end dates (one day before the next cutoff)
-  const closedPeriodEnd = new Date(lastCutoff);
-  closedPeriodEnd.setDate(closedPeriodEnd.getDate() - 1);
-
   // Normalize to UTC midnight for consistent comparisons
   const closedPeriodEndUTC = normalizeToUTC(closedPeriodEnd);
 
@@ -82,6 +87,43 @@ export function buildStatement(
   const paymentDueDate = getPaymentDueDate(lastCutoff, account.paymentDueDay);
   const daysUntilDue = getDaysBetween(today, paymentDueDate);
   const daysUntilCutoff = getDaysBetween(today, nextCutoff);
+
+  // Períodos cerrados anteriores al closedPeriod (candidatos: todos menos el último,
+  // que es closedBounds). Se descartan los ya pagados (mismo match UTC-normalizado
+  // que closedPeriodPayment) y los de balance 0.
+  const isPeriodPaid = (startDate: Date, endDate: Date): boolean => {
+    const startUTC = normalizeToUTC(startDate);
+    const endUTC = normalizeToUTC(endDate);
+    return payments.some(
+      (p) =>
+        p.periodStart.getTime() === startUTC.getTime() && p.periodEnd.getTime() === endUTC.getTime()
+    );
+  };
+
+  const overduePeriods: CreditCardOverduePeriod[] = periodBounds
+    .slice(0, -1)
+    .filter(({ startDate, endDate }) => !isPeriodPaid(startDate, endDate))
+    .map(({ startDate, endDate }) => {
+      // Cutoff que cierra este período (el que abre el siguiente): un día después de endDate.
+      const periodCutoff = new Date(endDate);
+      periodCutoff.setDate(periodCutoff.getDate() + 1);
+
+      const periodTransactions = transactions.filter(
+        (tx) => tx.date >= startDate && tx.date < periodCutoff
+      );
+      const balance = periodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
+      const overduePaymentDueDate = getPaymentDueDate(periodCutoff, account.paymentDueDay!);
+
+      return {
+        startDate,
+        endDate,
+        balance,
+        transactionCount: periodTransactions.length,
+        paymentDueDate: overduePaymentDueDate,
+        daysOverdue: getDaysBetween(overduePaymentDueDate, today),
+      };
+    })
+    .filter((period) => period.balance !== 0);
 
   // Calculate period end dates (one day before the next cutoff)
   const currentPeriodEnd = new Date(nextCutoff);
@@ -150,6 +192,7 @@ export function buildStatement(
       paymentDueDate,
       daysUntilDue,
     },
+    overduePeriods,
     creditLimit,
     available,
     usagePercentage,
