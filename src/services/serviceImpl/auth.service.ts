@@ -11,6 +11,13 @@ import { JWT_EXPIRES_IN, AUTH_MESSAGES } from '../../lib/constants/auth.constant
 const SALT_ROUNDS = 10;
 const logger = createLogger('AUTH');
 
+/** Nunca loguear el email crudo: facilita enumeracion de cuentas desde los logs. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
 export class AuthServiceImpl implements AuthService {
   constructor(private userRepo: UserRepository) {}
 
@@ -46,7 +53,11 @@ export class AuthServiceImpl implements AuthService {
         token,
       };
     } catch (error) {
-      return logger.fail(error, 'No se pudo registrar el usuario con email {}', data.email);
+      return logger.fail(
+        error,
+        'No se pudo registrar el usuario con email {}',
+        maskEmail(data.email)
+      );
     }
   }
 
@@ -77,7 +88,11 @@ export class AuthServiceImpl implements AuthService {
         token,
       };
     } catch (error) {
-      return logger.fail(error, 'No se pudo iniciar sesion para el email {}', data.email);
+      return logger.fail(
+        error,
+        'No se pudo iniciar sesion para el email {}',
+        maskEmail(data.email)
+      );
     }
   }
 

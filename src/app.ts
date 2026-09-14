@@ -30,7 +30,7 @@ app.set('trust proxy', 1); // Render — necesario para IPs reales en rate limit
 app.use(
   pinoHttp({
     logger,
-    redact: ['req.headers.cookie', 'req.headers.authorization'],
+    redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'],
     autoLogging: { ignore: (req) => req.url === '/api/health' },
   })
 );
