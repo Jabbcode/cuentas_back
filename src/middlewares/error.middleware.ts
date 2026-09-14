@@ -20,9 +20,24 @@ export function errorMiddleware(err: Error, req: Request, res: Response, _next: 
 
   if (err instanceof AppError) {
     if (isExpectedAppError(err)) {
-      logger.warn('{} {} -> {} ({})', req.method, req.originalUrl, err.statusCode, err.code);
+      logger.warn(
+        '{} {} -> {} ({}): {}',
+        req.method,
+        req.originalUrl,
+        err.statusCode,
+        err.code,
+        err.message
+      );
     } else {
-      logger.error(err, '{} {} -> {} ({})', req.method, req.originalUrl, err.statusCode, err.code);
+      logger.error(
+        err,
+        '{} {} -> {} ({}): {}',
+        req.method,
+        req.originalUrl,
+        err.statusCode,
+        err.code,
+        err.message
+      );
     }
     res.status(err.statusCode).json({
       error: err.message,

@@ -133,11 +133,12 @@ describe('errorMiddleware — contrato de error consumible por el frontend (BE-T
       errorMiddleware(new ConflictError('conflicto'), req as never, fakeResponse(), vi.fn());
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
-        '{} {} -> {} ({})',
+        '{} {} -> {} ({}): {}',
         'POST',
         '/api/debts',
         409,
-        'CONFLICT'
+        'CONFLICT',
+        'conflicto'
       );
       expect(mockLogger.error).not.toHaveBeenCalled();
     });
@@ -164,11 +165,12 @@ describe('errorMiddleware — contrato de error consumible por el frontend (BE-T
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         err,
-        '{} {} -> {} ({})',
+        '{} {} -> {} ({}): {}',
         'POST',
         '/api/receipts',
         500,
-        'INTEGRATION_ERROR'
+        'INTEGRATION_ERROR',
+        'Fallo de integracion OCR'
       );
       expect(mockLogger.warn).not.toHaveBeenCalled();
     });
