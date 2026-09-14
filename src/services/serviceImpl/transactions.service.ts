@@ -8,7 +8,8 @@ import {
   assertCreditCardLimit,
   CreditCardBalanceInfo,
 } from '../../lib/utils/credit-card-limit.utils.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { AppError, NotFoundError } from '../../lib/errors.js';
+import { createLogger } from '../../lib/logger.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 import type { TransactionType } from '../../lib/constants/shared.constants.js';
 import { TRANSACTION_MESSAGES } from '../../lib/constants/transaction.constants.js';
@@ -37,6 +38,21 @@ const RECEIPT_TRANSACTION_INCLUDE = {
   account: { select: { id: true, name: true } },
   category: { select: { id: true, name: true } },
 } as const;
+
+const logger = createLogger('TRANSACTIONS');
+
+/**
+ * Loguea el fallo (warn si es un AppError esperado por el negocio, error con
+ * stack si es inesperado) y relanza el error original sin modificarlo.
+ */
+function logFailure(error: unknown, template: string, ...args: unknown[]): never {
+  if (error instanceof AppError) {
+    logger.warn(template, ...args);
+  } else {
+    logger.error(error, template, ...args);
+  }
+  throw error;
+}
 
 export class TransactionsServiceImpl implements TransactionsService {
   constructor(
@@ -149,95 +165,114 @@ export class TransactionsServiceImpl implements TransactionsService {
       };
     }
 
-    const [transactions, total] = await Promise.all([
-      this.transactionRepo.findMany(where, {
-        include: {
-          account: { select: { id: true, name: true, color: true } },
-          category: { select: { id: true, name: true, icon: true, color: true } },
-          fixedExpense: { select: { id: true, name: true } },
-          _count: { select: { receiptItems: true } },
-        },
-        orderBy: { date: 'desc' },
-        take: limit,
-        skip: offset,
-      }),
-      this.transactionRepo.count(where),
-    ]);
+    try {
+      const [transactions, total] = await Promise.all([
+        this.transactionRepo.findMany(where, {
+          include: {
+            account: { select: { id: true, name: true, color: true } },
+            category: { select: { id: true, name: true, icon: true, color: true } },
+            fixedExpense: { select: { id: true, name: true } },
+            _count: { select: { receiptItems: true } },
+          },
+          orderBy: { date: 'desc' },
+          take: limit,
+          skip: offset,
+        }),
+        this.transactionRepo.count(where),
+      ]);
 
-    return { transactions, total, limit, offset };
+      return { transactions, total, limit, offset };
+    } catch (error) {
+      logFailure(error, 'No se pudieron obtener las transacciones del usuario {}', userId);
+    }
   }
 
   async getTransactionById(id: string, userId: string): Promise<Transaction> {
-    const transaction = await this.transactionRepo.findByIdAndUser(id, userId, {
-      account: { select: { id: true, name: true, color: true } },
-      category: { select: { id: true, name: true, icon: true, color: true } },
-      receiptItems: true,
-    });
+    try {
+      const transaction = await this.transactionRepo.findByIdAndUser(id, userId, {
+        account: { select: { id: true, name: true, color: true } },
+        category: { select: { id: true, name: true, icon: true, color: true } },
+        receiptItems: true,
+      });
 
-    if (!transaction) {
-      throw new NotFoundError(TRANSACTION_MESSAGES.NOT_FOUND);
+      if (!transaction) {
+        throw new NotFoundError(TRANSACTION_MESSAGES.NOT_FOUND);
+      }
+
+      return transaction;
+    } catch (error) {
+      logFailure(error, 'No se pudo obtener la transaccion {} del usuario {}', id, userId);
     }
-
-    return transaction;
   }
 
   async createTransaction(data: CreateTransactionInput, userId: string): Promise<Transaction> {
-    return this.prisma.$transaction(async (tx) => {
-      await this.assertOwnership(
-        userId,
-        {
-          accountId: data.accountId,
-          categoryId: data.categoryId,
-          fixedExpenseId: data.fixedExpenseId,
-        },
-        tx
-      );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await this.assertOwnership(
+          userId,
+          {
+            accountId: data.accountId,
+            categoryId: data.categoryId,
+            fixedExpenseId: data.fixedExpenseId,
+          },
+          tx
+        );
 
-      const account = await this.lockAccountForBalanceUpdate(tx, data.accountId, userId);
-      if (!account) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+        const account = await this.lockAccountForBalanceUpdate(tx, data.accountId, userId);
+        if (!account) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
 
-      assertCreditCardLimit(account, data.amount, data.type);
+        assertCreditCardLimit(account, data.amount, data.type);
 
-      const transaction = await tx.transaction.create({
-        data: {
-          amount: data.amount,
-          type: data.type,
-          description: data.description,
-          date: data.date ? new Date(data.date) : new Date(),
-          account: { connect: { id: data.accountId } },
-          category: { connect: { id: data.categoryId } },
-          fixedExpense: data.fixedExpenseId ? { connect: { id: data.fixedExpenseId } } : undefined,
-          isAutoGenerated: data.isAutoGenerated ?? false,
-          imageHash: data.imageHash,
-          user: { connect: { id: userId } },
-          receiptItems: data.receiptItems
-            ? {
-                create: data.receiptItems.map((item) => ({
-                  name: item.name,
-                  quantity: item.quantity,
-                  unitPrice: item.unitPrice,
-                  totalPrice: item.totalPrice,
-                })),
-              }
-            : undefined,
-        },
-        include: {
-          account: { select: { id: true, name: true, color: true } },
-          category: { select: { id: true, name: true, icon: true, color: true } },
-          receiptItems: true,
-        },
+        const transaction = await tx.transaction.create({
+          data: {
+            amount: data.amount,
+            type: data.type,
+            description: data.description,
+            date: data.date ? new Date(data.date) : new Date(),
+            account: { connect: { id: data.accountId } },
+            category: { connect: { id: data.categoryId } },
+            fixedExpense: data.fixedExpenseId
+              ? { connect: { id: data.fixedExpenseId } }
+              : undefined,
+            isAutoGenerated: data.isAutoGenerated ?? false,
+            imageHash: data.imageHash,
+            user: { connect: { id: userId } },
+            receiptItems: data.receiptItems
+              ? {
+                  create: data.receiptItems.map((item) => ({
+                    name: item.name,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    totalPrice: item.totalPrice,
+                  })),
+                }
+              : undefined,
+          },
+          include: {
+            account: { select: { id: true, name: true, color: true } },
+            category: { select: { id: true, name: true, icon: true, color: true } },
+            receiptItems: true,
+          },
+        });
+
+        await this.accountsService.updateAccountBalance(
+          data.accountId,
+          userId,
+          data.amount,
+          data.type,
+          tx
+        );
+
+        return transaction;
       });
-
-      await this.accountsService.updateAccountBalance(
-        data.accountId,
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudo crear la transaccion del usuario {} en la cuenta {}',
         userId,
-        data.amount,
-        data.type,
-        tx
+        data.accountId
       );
-
-      return transaction;
-    });
+    }
   }
 
   async updateTransaction(
@@ -262,73 +297,81 @@ export class TransactionsServiceImpl implements TransactionsService {
     const resultingType = (data.type ?? existing.type) as TransactionType;
     const resultingAmount = data.amount ?? Number(existing.amount);
 
-    return this.prisma.$transaction(async (tx) => {
-      await this.assertOwnership(
-        userId,
-        {
-          accountId: data.accountId,
-          categoryId: data.categoryId,
-          fixedExpenseId: data.fixedExpenseId,
-        },
-        tx
-      );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await this.assertOwnership(
+          userId,
+          {
+            accountId: data.accountId,
+            categoryId: data.categoryId,
+            fixedExpenseId: data.fixedExpenseId,
+          },
+          tx
+        );
 
-      await this.accountsService.updateAccountBalance(
-        existing.accountId,
-        userId,
-        Number(existing.amount),
-        existing.type === TRANSACTION_TYPE.INCOME
-          ? TRANSACTION_TYPE.EXPENSE
-          : TRANSACTION_TYPE.INCOME,
-        tx
-      );
+        await this.accountsService.updateAccountBalance(
+          existing.accountId,
+          userId,
+          Number(existing.amount),
+          existing.type === TRANSACTION_TYPE.INCOME
+            ? TRANSACTION_TYPE.EXPENSE
+            : TRANSACTION_TYPE.INCOME,
+          tx
+        );
 
-      const resultingAccount = await this.lockAccountForBalanceUpdate(
-        tx,
-        resultingAccountId,
-        userId
-      );
-      if (!resultingAccount) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+        const resultingAccount = await this.lockAccountForBalanceUpdate(
+          tx,
+          resultingAccountId,
+          userId
+        );
+        if (!resultingAccount) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
 
-      assertCreditCardLimit(resultingAccount, resultingAmount, resultingType);
+        assertCreditCardLimit(resultingAccount, resultingAmount, resultingType);
 
-      const updated = await tx.transaction.update({
-        where: { id },
-        data: updateData,
-        include: {
-          account: { select: { id: true, name: true, color: true } },
-          category: { select: { id: true, name: true, icon: true, color: true } },
-        },
+        const updated = await tx.transaction.update({
+          where: { id },
+          data: updateData,
+          include: {
+            account: { select: { id: true, name: true, color: true } },
+            category: { select: { id: true, name: true, icon: true, color: true } },
+          },
+        });
+
+        await this.accountsService.updateAccountBalance(
+          updated.accountId,
+          userId,
+          Number(updated.amount),
+          updated.type as TransactionType,
+          tx
+        );
+
+        return updated;
       });
-
-      await this.accountsService.updateAccountBalance(
-        updated.accountId,
-        userId,
-        Number(updated.amount),
-        updated.type as TransactionType,
-        tx
-      );
-
-      return updated;
-    });
+    } catch (error) {
+      logFailure(error, 'No se pudo actualizar la transaccion {} del usuario {}', id, userId);
+    }
   }
 
   async deleteTransaction(id: string, userId: string): Promise<void> {
     const transaction = await this.getTransactionById(id, userId);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.transaction.delete({ where: { id } });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.transaction.delete({ where: { id } });
 
-      await this.accountsService.updateAccountBalance(
-        transaction.accountId,
-        userId,
-        Number(transaction.amount),
-        transaction.type === TRANSACTION_TYPE.INCOME
-          ? TRANSACTION_TYPE.EXPENSE
-          : TRANSACTION_TYPE.INCOME,
-        tx
-      );
-    });
+        await this.accountsService.updateAccountBalance(
+          transaction.accountId,
+          userId,
+          Number(transaction.amount),
+          transaction.type === TRANSACTION_TYPE.INCOME
+            ? TRANSACTION_TYPE.EXPENSE
+            : TRANSACTION_TYPE.INCOME,
+          tx
+        );
+      });
+    } catch (error) {
+      logFailure(error, 'No se pudo eliminar la transaccion {} del usuario {}', id, userId);
+    }
   }
 
   async getTransactionSummary(
@@ -347,56 +390,74 @@ export class TransactionsServiceImpl implements TransactionsService {
     if (accountId) where.accountId = accountId;
     if (type) where.type = type;
 
-    const rows = await this.transactionRepo.groupByCategory(where);
+    try {
+      const rows = await this.transactionRepo.groupByCategory(where);
 
-    const categoryMap = new Map<
-      string,
-      { expenseTotal: number; incomeTotal: number; count: number }
-    >();
+      const categoryMap = new Map<
+        string,
+        { expenseTotal: number; incomeTotal: number; count: number }
+      >();
 
-    for (const row of rows) {
-      if (!row.categoryId) continue;
-      const entry = categoryMap.get(row.categoryId) ?? {
-        expenseTotal: 0,
-        incomeTotal: 0,
-        count: 0,
-      };
-      entry.count += row._count._all;
-      if (row.type === TRANSACTION_TYPE.EXPENSE) entry.expenseTotal += Number(row._sum.amount ?? 0);
-      else entry.incomeTotal += Number(row._sum.amount ?? 0);
-      categoryMap.set(row.categoryId, entry);
-    }
-
-    const categoryIds = Array.from(categoryMap.keys());
-    if (categoryIds.length === 0) return [];
-
-    const cats = await this.categoryRepo.findMany(
-      { id: { in: categoryIds } },
-      { id: true, name: true, icon: true, color: true }
-    );
-
-    return (cats as unknown as CategorySummaryItem['category'][])
-      .map((cat) => {
-        const data = categoryMap.get(cat.id) ?? { expenseTotal: 0, incomeTotal: 0, count: 0 };
-        return {
-          category: cat,
-          expenseTotal: data.expenseTotal,
-          incomeTotal: data.incomeTotal,
-          count: data.count,
-          netTotal: data.incomeTotal - data.expenseTotal,
+      for (const row of rows) {
+        if (!row.categoryId) continue;
+        const entry = categoryMap.get(row.categoryId) ?? {
+          expenseTotal: 0,
+          incomeTotal: 0,
+          count: 0,
         };
-      })
-      .sort((a, b) => b.expenseTotal - a.expenseTotal);
+        entry.count += row._count._all;
+        if (row.type === TRANSACTION_TYPE.EXPENSE)
+          entry.expenseTotal += Number(row._sum.amount ?? 0);
+        else entry.incomeTotal += Number(row._sum.amount ?? 0);
+        categoryMap.set(row.categoryId, entry);
+      }
+
+      const categoryIds = Array.from(categoryMap.keys());
+      if (categoryIds.length === 0) return [];
+
+      const cats = await this.categoryRepo.findMany(
+        { id: { in: categoryIds } },
+        { id: true, name: true, icon: true, color: true }
+      );
+
+      return (cats as unknown as CategorySummaryItem['category'][])
+        .map((cat) => {
+          const data = categoryMap.get(cat.id) ?? { expenseTotal: 0, incomeTotal: 0, count: 0 };
+          return {
+            category: cat,
+            expenseTotal: data.expenseTotal,
+            incomeTotal: data.incomeTotal,
+            count: data.count,
+            netTotal: data.incomeTotal - data.expenseTotal,
+          };
+        })
+        .sort((a, b) => b.expenseTotal - a.expenseTotal);
+    } catch (error) {
+      logFailure(error, 'No se pudo obtener el resumen de transacciones del usuario {}', userId);
+    }
   }
 
   async getReceiptItems(transactionId: string, userId: string): Promise<ReceiptItem[]> {
     await this.getTransactionById(transactionId, userId);
 
-    return this.transactionRepo.findReceiptItems(transactionId);
+    try {
+      return await this.transactionRepo.findReceiptItems(transactionId);
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener los items de recibo de la transaccion {} del usuario {}',
+        transactionId,
+        userId
+      );
+    }
   }
 
   async countByCategory(categoryId: string): Promise<number> {
-    return this.transactionRepo.count({ categoryId });
+    try {
+      return await this.transactionRepo.count({ categoryId });
+    } catch (error) {
+      logFailure(error, 'No se pudo contar las transacciones de la categoria {}', categoryId);
+    }
   }
 
   async findMonthlyCategoryExpenses(
@@ -404,12 +465,21 @@ export class TransactionsServiceImpl implements TransactionsService {
     categoryId: string,
     range: DateRangeGteLt
   ): Promise<Transaction[]> {
-    return this.transactionRepo.findMany({
-      categoryId,
-      userId,
-      type: TRANSACTION_TYPE.EXPENSE,
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.findMany({
+        categoryId,
+        userId,
+        type: TRANSACTION_TYPE.EXPENSE,
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener los gastos mensuales de la categoria {} del usuario {}',
+        categoryId,
+        userId
+      );
+    }
   }
 
   async findCardStatementTransactions(
@@ -417,25 +487,37 @@ export class TransactionsServiceImpl implements TransactionsService {
     accountIds: string[],
     range: DateRangeGteLte
   ): Promise<Transaction[]> {
-    return this.transactionRepo.findMany(
-      {
-        accountId: { in: accountIds },
-        userId,
-        type: TRANSACTION_TYPE.EXPENSE,
-        date: { gte: range.gte, lte: range.lte },
-      },
-      { include: CARD_STATEMENT_TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
-    );
+    try {
+      return await this.transactionRepo.findMany(
+        {
+          accountId: { in: accountIds },
+          userId,
+          type: TRANSACTION_TYPE.EXPENSE,
+          date: { gte: range.gte, lte: range.lte },
+        },
+        { include: CARD_STATEMENT_TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
+      );
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener las transacciones del estado de cuenta del usuario {}',
+        userId
+      );
+    }
   }
 
   async findFixedExpensePaymentInMonth(
     fixedExpenseId: string,
     range: DateRangeGteLt
   ): Promise<Transaction | null> {
-    return this.transactionRepo.findFirst({
-      fixedExpenseId,
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.findFirst({
+        fixedExpenseId,
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(error, 'No se pudo verificar el pago del gasto fijo {} en el mes', fixedExpenseId);
+    }
   }
 
   async resyncTransactionsForFixedExpense(
@@ -443,7 +525,16 @@ export class TransactionsServiceImpl implements TransactionsService {
     fixedExpenseId: string,
     data: Prisma.TransactionUpdateManyMutationInput
   ): Promise<Prisma.BatchPayload> {
-    return this.transactionRepo.updateMany({ fixedExpenseId, userId }, data);
+    try {
+      return await this.transactionRepo.updateMany({ fixedExpenseId, userId }, data);
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudo resincronizar las transacciones del gasto fijo {} del usuario {}',
+        fixedExpenseId,
+        userId
+      );
+    }
   }
 
   async getMonthlyTotalByType(
@@ -451,23 +542,36 @@ export class TransactionsServiceImpl implements TransactionsService {
     type: TransactionType,
     range: DateRangeGteLt
   ): Promise<{ _sum: { amount: Prisma.Decimal | null } }> {
-    return this.transactionRepo.aggregate({
-      userId,
-      type,
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.aggregate({
+        userId,
+        type,
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudo calcular el total mensual de tipo {} del usuario {}',
+        type,
+        userId
+      );
+    }
   }
 
   async getVariableExpenseTotal(
     userId: string,
     range: DateRangeGteLt
   ): Promise<{ _sum: { amount: Prisma.Decimal | null } }> {
-    return this.transactionRepo.aggregate({
-      userId,
-      type: TRANSACTION_TYPE.EXPENSE,
-      fixedExpenseId: null,
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.aggregate({
+        userId,
+        type: TRANSACTION_TYPE.EXPENSE,
+        fixedExpenseId: null,
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(error, 'No se pudo calcular el total de gastos variables del usuario {}', userId);
+    }
   }
 
   async getCategoryBreakdown(
@@ -475,15 +579,27 @@ export class TransactionsServiceImpl implements TransactionsService {
     range: DateRangeGteLt,
     type?: TransactionType
   ): Promise<GroupByCategoryRow[]> {
-    return this.transactionRepo.groupByCategory({
-      userId,
-      ...(type !== undefined && { type }),
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.groupByCategory({
+        userId,
+        ...(type !== undefined && { type }),
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(error, 'No se pudo obtener el desglose por categoria del usuario {}', userId);
+    }
   }
 
   async findTransactionsSince(userId: string, since: Date): Promise<Transaction[]> {
-    return this.transactionRepo.findMany({ userId, date: { gte: since } });
+    try {
+      return await this.transactionRepo.findMany({ userId, date: { gte: since } });
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener las transacciones del usuario {} desde la fecha indicada',
+        userId
+      );
+    }
   }
 
   async getTopExpenseCategories(
@@ -491,60 +607,108 @@ export class TransactionsServiceImpl implements TransactionsService {
     range: DateRangeGteLt,
     take?: number
   ): Promise<GroupExpenseRow[]> {
-    return this.transactionRepo.groupExpensesByCategory(
-      {
-        userId,
-        type: TRANSACTION_TYPE.EXPENSE,
-        date: { gte: range.gte, lt: range.lt },
-      },
-      take
-    );
+    try {
+      return await this.transactionRepo.groupExpensesByCategory(
+        {
+          userId,
+          type: TRANSACTION_TYPE.EXPENSE,
+          date: { gte: range.gte, lt: range.lt },
+        },
+        take
+      );
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener las categorias con mayor gasto del usuario {}',
+        userId
+      );
+    }
   }
 
   async getUserTotalsByType(userIds: string[], range: DateRangeGteLt): Promise<GroupTotalsRow[]> {
-    return this.transactionRepo.groupTotalsByUser({
-      userId: { in: userIds },
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.groupTotalsByUser({
+        userId: { in: userIds },
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener los totales por tipo para {} usuarios',
+        userIds.length
+      );
+    }
   }
 
   async getExpensesByUserAndCategory(
     userIds: string[],
     range: DateRangeGteLt
   ): Promise<GroupUserCategoryRow[]> {
-    return this.transactionRepo.groupExpensesByUserAndCategory({
-      userId: { in: userIds },
-      type: TRANSACTION_TYPE.EXPENSE,
-      date: { gte: range.gte, lt: range.lt },
-    });
+    try {
+      return await this.transactionRepo.groupExpensesByUserAndCategory({
+        userId: { in: userIds },
+        type: TRANSACTION_TYPE.EXPENSE,
+        date: { gte: range.gte, lt: range.lt },
+      });
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudieron obtener los gastos por usuario y categoria para {} usuarios',
+        userIds.length
+      );
+    }
   }
 
   async countByUser(userId: string): Promise<number> {
-    return this.transactionRepo.countByUser(userId);
+    try {
+      return await this.transactionRepo.countByUser(userId);
+    } catch (error) {
+      logFailure(error, 'No se pudo contar las transacciones del usuario {}', userId);
+    }
   }
 
   async getFirstTransactionDate(userId: string): Promise<{ date: Date } | null> {
-    return this.transactionRepo.findFirstByUser(userId, { date: 'asc' });
+    try {
+      return await this.transactionRepo.findFirstByUser(userId, { date: 'asc' });
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudo obtener la fecha de la primera transaccion del usuario {}',
+        userId
+      );
+    }
   }
 
   async findByImageHash(userId: string, imageHash: string): Promise<TxWithAccountCategory | null> {
-    return this.transactionRepo.findFirst(
-      { userId, imageHash },
-      RECEIPT_TRANSACTION_INCLUDE
-    ) as Promise<TxWithAccountCategory | null>;
+    try {
+      return (await this.transactionRepo.findFirst(
+        { userId, imageHash },
+        RECEIPT_TRANSACTION_INCLUDE
+      )) as TxWithAccountCategory | null;
+    } catch (error) {
+      logFailure(
+        error,
+        'No se pudo buscar la transaccion por hash de imagen del usuario {}',
+        userId
+      );
+    }
   }
 
   async findSimilarByAmountAndDate(
     userId: string,
     window: SimilarTransactionWindow
   ): Promise<TxWithAccountCategory[]> {
-    return this.transactionRepo.findMany(
-      {
-        userId,
-        amount: { gte: window.amountGte, lte: window.amountLte },
-        date: { gte: window.dateGte, lte: window.dateLte },
-      },
-      { include: RECEIPT_TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
-    ) as unknown as Promise<TxWithAccountCategory[]>;
+    try {
+      return (await this.transactionRepo.findMany(
+        {
+          userId,
+          amount: { gte: window.amountGte, lte: window.amountLte },
+          date: { gte: window.dateGte, lte: window.dateLte },
+        },
+        { include: RECEIPT_TRANSACTION_INCLUDE, orderBy: { date: 'desc' } }
+      )) as unknown as TxWithAccountCategory[];
+    } catch (error) {
+      logFailure(error, 'No se pudieron buscar transacciones similares del usuario {}', userId);
+    }
   }
 }
