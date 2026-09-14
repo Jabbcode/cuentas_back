@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { buildReceiptAnalysisPrompt } from '../../prompts/receipt-analysis.prompt.js';
 import type { ScanReceiptResponse, DuplicateCheckResponse } from '../../schemas/receipt.schema.js';
 import { AppError, ValidationError } from '../../lib/errors.js';
+import { createLogger } from '../../lib/logger.js';
 import { RECEIPT_MESSAGES } from '../../lib/constants/receipt.constants.js';
 import type {
   TransactionsService,
@@ -15,6 +16,8 @@ import type { ReceiptsService } from '../interfaces/receipts.service.port.js';
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
+
+const logger = createLogger('RECEIPTS');
 
 export class ReceiptsServiceImpl implements ReceiptsService {
   constructor(private transactionsService: TransactionsService) {}
@@ -88,6 +91,7 @@ export class ReceiptsServiceImpl implements ReceiptsService {
 
       return result.data.text;
     } catch (error) {
+      logger.error(error, 'No se pudo extraer texto por OCR de la imagen del recibo');
       throw new AppError(RECEIPT_MESSAGES.OCR_ERROR, 500, 'INTEGRATION_ERROR');
     }
   }
@@ -147,6 +151,7 @@ export class ReceiptsServiceImpl implements ReceiptsService {
       };
     } catch (error) {
       if (error instanceof AppError) throw error;
+      logger.error(error, 'No se pudo procesar el recibo con IA');
       throw new AppError(RECEIPT_MESSAGES.AI_PROCESSING_ERROR, 500, 'INTEGRATION_ERROR');
     }
   }
@@ -155,82 +160,90 @@ export class ReceiptsServiceImpl implements ReceiptsService {
    * Main function: Scan receipt and extract structured data with duplicate detection
    */
   async scanReceipt(imageBuffer: Buffer, userId: string): Promise<DuplicateCheckResponse> {
-    // Step 1: Calculate image hash
-    const imageHash = this.calculateImageHash(imageBuffer);
+    try {
+      // Step 1: Calculate image hash
+      const imageHash = this.calculateImageHash(imageBuffer);
 
-    // Step 2: Check for exact duplicate (same image)
-    const exactDuplicate = await this.checkExactDuplicate(imageHash, userId);
+      // Step 2: Check for exact duplicate (same image)
+      const exactDuplicate = await this.checkExactDuplicate(imageHash, userId);
 
-    if (exactDuplicate) {
+      if (exactDuplicate) {
+        return {
+          duplicate: true,
+          matchType: 'exact',
+          existingTransaction: {
+            id: exactDuplicate.id,
+            amount: Number(exactDuplicate.amount),
+            description: exactDuplicate.description,
+            date: exactDuplicate.date.toISOString(),
+            createdAt: exactDuplicate.createdAt.toISOString(),
+            account: exactDuplicate.account,
+            category: exactDuplicate.category,
+          },
+        };
+      }
+
+      // Step 3: Extract text with OCR
+      const ocrText = await this.extractTextFromImage(imageBuffer);
+
+      if (!ocrText || ocrText.trim().length < 10) {
+        throw new ValidationError(RECEIPT_MESSAGES.UNREADABLE_TEXT);
+      }
+
+      // Step 4: Process with Claude
+      const structuredData = await this.processReceiptWithClaude(ocrText);
+      structuredData.imageHash = imageHash; // Add hash to structured data
+
+      // Step 5: Check for similar transactions
+      const similarTransaction = await this.checkSimilarTransactions(
+        structuredData.amount,
+        structuredData.date,
+        structuredData.description,
+        userId
+      );
+
+      if (similarTransaction) {
+        return {
+          duplicate: true,
+          matchType: 'similar',
+          existingTransaction: {
+            id: similarTransaction.id,
+            amount: Number(similarTransaction.amount),
+            description: similarTransaction.description,
+            date: similarTransaction.date.toISOString(),
+            createdAt: similarTransaction.createdAt.toISOString(),
+            account: similarTransaction.account,
+            category: similarTransaction.category,
+          },
+          scannedData: structuredData,
+        };
+      }
+
+      // Step 6: No duplicates found
       return {
-        duplicate: true,
-        matchType: 'exact',
-        existingTransaction: {
-          id: exactDuplicate.id,
-          amount: Number(exactDuplicate.amount),
-          description: exactDuplicate.description,
-          date: exactDuplicate.date.toISOString(),
-          createdAt: exactDuplicate.createdAt.toISOString(),
-          account: exactDuplicate.account,
-          category: exactDuplicate.category,
-        },
-      };
-    }
-
-    // Step 3: Extract text with OCR
-    const ocrText = await this.extractTextFromImage(imageBuffer);
-
-    if (!ocrText || ocrText.trim().length < 10) {
-      throw new ValidationError(RECEIPT_MESSAGES.UNREADABLE_TEXT);
-    }
-
-    // Step 4: Process with Claude
-    const structuredData = await this.processReceiptWithClaude(ocrText);
-    structuredData.imageHash = imageHash; // Add hash to structured data
-
-    // Step 5: Check for similar transactions
-    const similarTransaction = await this.checkSimilarTransactions(
-      structuredData.amount,
-      structuredData.date,
-      structuredData.description,
-      userId
-    );
-
-    if (similarTransaction) {
-      return {
-        duplicate: true,
-        matchType: 'similar',
-        existingTransaction: {
-          id: similarTransaction.id,
-          amount: Number(similarTransaction.amount),
-          description: similarTransaction.description,
-          date: similarTransaction.date.toISOString(),
-          createdAt: similarTransaction.createdAt.toISOString(),
-          account: similarTransaction.account,
-          category: similarTransaction.category,
-        },
+        duplicate: false,
+        matchType: 'none',
         scannedData: structuredData,
       };
+    } catch (error) {
+      return logger.fail(error, 'No se pudo escanear el recibo del usuario {}', userId);
     }
-
-    // Step 6: No duplicates found
-    return {
-      duplicate: false,
-      matchType: 'none',
-      scannedData: structuredData,
-    };
   }
 
   /**
    * OCR-only function: Extract text without AI processing (FREE)
    */
   async ocrOnly(imageBuffer: Buffer): Promise<{ rawText: string }> {
-    const rawText = await this.extractTextFromImage(imageBuffer);
+    try {
+      const rawText = await this.extractTextFromImage(imageBuffer);
 
-    if (!rawText || rawText.trim().length < 10) {
-      throw new ValidationError(RECEIPT_MESSAGES.UNREADABLE_TEXT);
+      if (!rawText || rawText.trim().length < 10) {
+        throw new ValidationError(RECEIPT_MESSAGES.UNREADABLE_TEXT);
+      }
+
+      return { rawText };
+    } catch (error) {
+      return logger.fail(error, 'No se pudo procesar el OCR del recibo');
     }
-
-    return { rawText };
   }
 }

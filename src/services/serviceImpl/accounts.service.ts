@@ -5,11 +5,14 @@ import {
   TransferInput,
 } from '../../schemas/account.schema.js';
 import { NotFoundError, ValidationError } from '../../lib/errors.js';
+import { createLogger } from '../../lib/logger.js';
 import type { AccountRepository } from '../../repositories/interfaces/account.repository.port.js';
 import type { AccountsService, TransferWithAccounts } from '../interfaces/accounts.service.port.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 import type { TransactionType } from '../../lib/constants/shared.constants.js';
 import { ACCOUNT_MESSAGES } from '../../lib/constants/account.constants.js';
+
+const logger = createLogger('ACCOUNTS');
 
 export class AccountsServiceImpl implements AccountsService {
   constructor(
@@ -18,104 +21,168 @@ export class AccountsServiceImpl implements AccountsService {
   ) {}
 
   async getAccounts(userId: string): Promise<Account[]> {
-    return this.accountRepo.findAllByUser(userId);
+    try {
+      return await this.accountRepo.findAllByUser(userId);
+    } catch (error) {
+      return logger.fail(error, 'No se pudieron obtener las cuentas del usuario {}', userId);
+    }
   }
 
   async getAccountById(id: string, userId: string): Promise<Account> {
-    const account = await this.accountRepo.findByIdAndUser(id, userId);
+    try {
+      const account = await this.accountRepo.findByIdAndUser(id, userId);
 
-    if (!account) {
-      throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+      if (!account) {
+        throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+      }
+
+      return account;
+    } catch (error) {
+      return logger.fail(error, 'No se pudo obtener la cuenta {} del usuario {}', id, userId);
     }
-
-    return account;
   }
 
   async findAccountById(id: string, userId: string): Promise<Account | null> {
-    return this.accountRepo.findByIdAndUser(id, userId);
+    try {
+      return await this.accountRepo.findByIdAndUser(id, userId);
+    } catch (error) {
+      return logger.fail(error, 'No se pudo buscar la cuenta {} del usuario {}', id, userId);
+    }
   }
 
   async getCreditCards(userId: string): Promise<Account[]> {
-    return this.accountRepo.findCreditCardsByUser(userId);
+    try {
+      return await this.accountRepo.findCreditCardsByUser(userId);
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudieron obtener las tarjetas de credito del usuario {}',
+        userId
+      );
+    }
   }
 
   async getConfiguredCreditCards(userId: string): Promise<Account[]> {
-    return this.accountRepo.findCreditCardsByUser(userId, {
-      paymentAccountId: { not: null },
-      cutoffDay: { not: null },
-      paymentDueDay: { not: null },
-    });
+    try {
+      return await this.accountRepo.findCreditCardsByUser(userId, {
+        paymentAccountId: { not: null },
+        cutoffDay: { not: null },
+        paymentDueDay: { not: null },
+      });
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudieron obtener las tarjetas de credito configuradas del usuario {}',
+        userId
+      );
+    }
   }
 
   async countByUser(userId: string): Promise<number> {
-    return this.accountRepo.countByUser(userId);
+    try {
+      return await this.accountRepo.countByUser(userId);
+    } catch (error) {
+      return logger.fail(error, 'No se pudo contar las cuentas del usuario {}', userId);
+    }
   }
 
   async createAccount(data: CreateAccountInput, userId: string): Promise<Account> {
-    const { paymentAccountId, ...rest } = data;
-    return this.accountRepo.create({
-      ...rest,
-      user: { connect: { id: userId } },
-      ...(paymentAccountId && { paymentAccount: { connect: { id: paymentAccountId } } }),
-    });
+    try {
+      const { paymentAccountId, ...rest } = data;
+      return await this.accountRepo.create({
+        ...rest,
+        user: { connect: { id: userId } },
+        ...(paymentAccountId && { paymentAccount: { connect: { id: paymentAccountId } } }),
+      });
+    } catch (error) {
+      return logger.fail(error, 'No se pudo crear la cuenta del usuario {}', userId);
+    }
   }
 
   async updateAccount(id: string, data: UpdateAccountInput, userId: string): Promise<Account> {
     await this.getAccountById(id, userId);
 
-    const { paymentAccountId, ...rest } = data;
-    return this.accountRepo.update(id, userId, {
-      ...rest,
-      ...(paymentAccountId !== undefined && {
-        paymentAccount: paymentAccountId
-          ? { connect: { id: paymentAccountId } }
-          : { disconnect: true },
-      }),
-    });
+    try {
+      const { paymentAccountId, ...rest } = data;
+      return await this.accountRepo.update(id, userId, {
+        ...rest,
+        ...(paymentAccountId !== undefined && {
+          paymentAccount: paymentAccountId
+            ? { connect: { id: paymentAccountId } }
+            : { disconnect: true },
+        }),
+      });
+    } catch (error) {
+      return logger.fail(error, 'No se pudo actualizar la cuenta {} del usuario {}', id, userId);
+    }
   }
 
   async deleteAccount(id: string, userId: string): Promise<Account> {
     await this.getAccountById(id, userId);
 
-    return this.accountRepo.remove(id, userId);
+    try {
+      return await this.accountRepo.remove(id, userId);
+    } catch (error) {
+      return logger.fail(error, 'No se pudo eliminar la cuenta {} del usuario {}', id, userId);
+    }
   }
 
   async transferFunds(data: TransferInput, userId: string): Promise<TransferWithAccounts> {
     const { fromAccountId, toAccountId, amount, note } = data;
 
-    if (fromAccountId === toAccountId) {
-      throw new ValidationError(ACCOUNT_MESSAGES.SAME_ORIGIN_DESTINATION);
+    try {
+      if (fromAccountId === toAccountId) {
+        throw new ValidationError(ACCOUNT_MESSAGES.SAME_ORIGIN_DESTINATION);
+      }
+
+      const [fromAccount, toAccount] = await Promise.all([
+        this.accountRepo.findByIdAndUser(fromAccountId, userId),
+        this.accountRepo.findByIdAndUser(toAccountId, userId),
+      ]);
+
+      if (!fromAccount) throw new NotFoundError(ACCOUNT_MESSAGES.ORIGIN_NOT_FOUND);
+      if (!toAccount) throw new NotFoundError(ACCOUNT_MESSAGES.DESTINATION_NOT_FOUND);
+      if (Number(fromAccount.balance) < amount)
+        throw new ValidationError(ACCOUNT_MESSAGES.INSUFFICIENT_BALANCE_ORIGIN);
+
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.account.update({
+          where: { id: fromAccountId },
+          data: { balance: { decrement: amount } },
+        });
+        await tx.account.update({
+          where: { id: toAccountId },
+          data: { balance: { increment: amount } },
+        });
+        return tx.transfer.create({
+          data: { fromAccountId, toAccountId, amount, note, userId },
+          include: { fromAccount: true, toAccount: true },
+        });
+      });
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo transferir del usuario {} desde la cuenta {} hacia la cuenta {}',
+        userId,
+        fromAccountId,
+        toAccountId
+      );
     }
-
-    const [fromAccount, toAccount] = await Promise.all([
-      this.accountRepo.findByIdAndUser(fromAccountId, userId),
-      this.accountRepo.findByIdAndUser(toAccountId, userId),
-    ]);
-
-    if (!fromAccount) throw new NotFoundError(ACCOUNT_MESSAGES.ORIGIN_NOT_FOUND);
-    if (!toAccount) throw new NotFoundError(ACCOUNT_MESSAGES.DESTINATION_NOT_FOUND);
-    if (Number(fromAccount.balance) < amount)
-      throw new ValidationError(ACCOUNT_MESSAGES.INSUFFICIENT_BALANCE_ORIGIN);
-
-    return this.prisma.$transaction(async (tx) => {
-      await tx.account.update({
-        where: { id: fromAccountId },
-        data: { balance: { decrement: amount } },
-      });
-      await tx.account.update({
-        where: { id: toAccountId },
-        data: { balance: { increment: amount } },
-      });
-      return tx.transfer.create({
-        data: { fromAccountId, toAccountId, amount, note, userId },
-        include: { fromAccount: true, toAccount: true },
-      });
-    });
   }
 
   async getTransfersByAccount(accountId: string, userId: string): Promise<TransferWithAccounts[]> {
     await this.getAccountById(accountId, userId);
-    return this.accountRepo.findTransfersByAccount(accountId, userId);
+
+    try {
+      return await this.accountRepo.findTransfersByAccount(accountId, userId);
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudieron obtener las transferencias de la cuenta {} del usuario {}',
+        accountId,
+        userId
+      );
+    }
   }
 
   async updateAccountBalance(
@@ -125,15 +192,24 @@ export class AccountsServiceImpl implements AccountsService {
     type: TransactionType,
     tx: Prisma.TransactionClient = this.prisma
   ): Promise<void> {
-    const result = await tx.account.updateMany({
-      where: { id: accountId, userId },
-      data: {
-        balance: type === TRANSACTION_TYPE.INCOME ? { increment: amount } : { decrement: amount },
-      },
-    });
+    try {
+      const result = await tx.account.updateMany({
+        where: { id: accountId, userId },
+        data: {
+          balance: type === TRANSACTION_TYPE.INCOME ? { increment: amount } : { decrement: amount },
+        },
+      });
 
-    if (result.count === 0) {
-      throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+      if (result.count === 0) {
+        throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+      }
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo actualizar el balance de la cuenta {} del usuario {}',
+        accountId,
+        userId
+      );
     }
   }
 }

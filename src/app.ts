@@ -2,8 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import pinoHttp from 'pino-http';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { corsOrigin } from './lib/cors-origin.js';
+import { logger } from './lib/logger.js';
 
 import authRoutes from './routes/auth.routes.js';
 import accountsRoutes from './routes/accounts.routes.js';
@@ -25,6 +27,13 @@ const app = express();
 app.set('trust proxy', 1); // Render — necesario para IPs reales en rate limit
 
 // Middlewares
+app.use(
+  pinoHttp({
+    logger,
+    redact: ['req.headers.cookie', 'req.headers.authorization', 'res.headers["set-cookie"]'],
+    autoLogging: { ignore: (req) => req.url === '/api/health' },
+  })
+);
 app.use(helmet());
 app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(cookieParser());

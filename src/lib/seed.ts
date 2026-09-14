@@ -1,4 +1,7 @@
 import { prisma } from './prisma.js';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('SEED');
 
 const defaultCategories = {
   expense: [
@@ -40,5 +43,5 @@ export async function seedCategories(userId: string) {
     skipDuplicates: true,
   });
 
-  console.log(`Created ${categories.length} default categories for user ${userId}`);
+  logger.info('Se crearon {} categorias por defecto para el usuario {}', categories.length, userId);
 }

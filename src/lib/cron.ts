@@ -3,6 +3,9 @@ import { prisma } from './prisma.js';
 import { notificationsService, fixedExpensesService, usersService } from '../bootstrap.js';
 import { sendMonthlySummaryEmail } from './email/index.js';
 import { getMonthRange } from './utils/date.utils.js';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('CRON');
 
 function startCronJobs() {
   // Daily at 7 AM: auto-generate transactions for fixed expenses with autoGenerate=true
@@ -33,7 +36,7 @@ function startCronJobs() {
       }
     } catch (err) {
       // Cron errors must not crash the server
-      console.error('[cron:auto-generate]', err instanceof Error ? err.message : err);
+      logger.error(err, 'No se pudo autogenerar transacciones de gastos fijos');
     }
   });
 
@@ -78,15 +81,11 @@ function startCronJobs() {
             { debtId: debt.id, dueDate: debt.dueDate }
           );
         } catch (err) {
-          console.error(
-            '[cron:debt-due]',
-            `debt=${debt.id}`,
-            err instanceof Error ? err.message : err
-          );
+          logger.error(err, 'No se pudo notificar el vencimiento de la deuda {}', debt.id);
         }
       }
     } catch (err) {
-      console.error('[cron:debt-due]', err instanceof Error ? err.message : err);
+      logger.error(err, 'No se pudo procesar el aviso de deudas por vencer');
     }
   });
 
@@ -95,7 +94,7 @@ function startCronJobs() {
     try {
       await sendMonthlySummaries();
     } catch (err) {
-      console.error('[cron:monthly-email]', err instanceof Error ? err.message : err);
+      logger.error(err, 'No se pudo procesar el envio de resumenes mensuales');
     }
   });
 }
@@ -149,7 +148,7 @@ async function sendMonthlySummaries(): Promise<void> {
       });
     } catch (err) {
       // Email send failure must not crash the cron
-      console.error('[cron:monthly-email]', err instanceof Error ? err.message : err);
+      logger.error(err, 'No se pudo enviar el resumen mensual al usuario {}', user.id);
     }
   }
 }
