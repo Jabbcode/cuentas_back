@@ -1,8 +1,17 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Response } from 'express';
 import { z } from 'zod';
-import { errorMiddleware } from '../error.middleware.js';
 import { ConflictError, ValidationError } from '../../lib/errors.js';
+
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('../../lib/logger.js', () => ({
+  createLogger: () => mockLogger,
+}));
+
+const { errorMiddleware } = await import('../error.middleware.js');
 
 function fakeResponse(): Response {
   const res: Partial<Response> = {};
@@ -87,33 +96,60 @@ describe('errorMiddleware — contrato de error consumible por el frontend (BE-T
     }
   });
 
-  describe('log de errores fuera de production', () => {
-    afterEach(() => {
-      vi.restoreAllMocks();
+  describe('logging estructurado — siempre se loguea, sin importar NODE_ENV', () => {
+    beforeEach(() => {
+      mockLogger.info.mockClear();
+      mockLogger.warn.mockClear();
+      mockLogger.error.mockClear();
     });
 
-    it('loguea el error cuando NODE_ENV no es production', () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'test';
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      try {
-        errorMiddleware(new Error('boom'), {} as never, fakeResponse(), vi.fn());
-        expect(spy).toHaveBeenCalledWith('Error:', expect.any(Error));
-      } finally {
-        process.env.NODE_ENV = originalEnv;
-      }
-    });
-
-    it('no loguea el error en production', () => {
+    it('loguea con nivel error un error no controlado, incluso en production', () => {
       const originalEnv = process.env.NODE_ENV;
       process.env.NODE_ENV = 'production';
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       try {
-        errorMiddleware(new Error('boom'), {} as never, fakeResponse(), vi.fn());
-        expect(spy).not.toHaveBeenCalled();
+        const err = new Error('boom');
+        const req = { method: 'GET', originalUrl: '/api/accounts' };
+
+        errorMiddleware(err, req as never, fakeResponse(), vi.fn());
+
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          err,
+          'Error no controlado en {} {}',
+          'GET',
+          '/api/accounts'
+        );
       } finally {
         process.env.NODE_ENV = originalEnv;
       }
+    });
+
+    it('loguea con nivel warn (no error) un AppError esperado', () => {
+      const req = { method: 'POST', originalUrl: '/api/debts' };
+
+      errorMiddleware(new ConflictError('conflicto'), req as never, fakeResponse(), vi.fn());
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        '{} {} -> {} ({})',
+        'POST',
+        '/api/debts',
+        409,
+        'CONFLICT'
+      );
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('loguea con nivel warn (no error) un ZodError', () => {
+      const req = { method: 'POST', originalUrl: '/api/accounts' };
+      const result = z.object({ name: z.string() }).safeParse({});
+
+      errorMiddleware(result.error!, req as never, fakeResponse(), vi.fn());
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Validación fallida en {} {}',
+        'POST',
+        '/api/accounts'
+      );
+      expect(mockLogger.error).not.toHaveBeenCalled();
     });
   });
 });
