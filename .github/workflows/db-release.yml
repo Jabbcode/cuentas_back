@@ -1,0 +1,223 @@
+name: DB Release
+
+# Publica una versión de BASE DE DATOS (tag db-vX.Y.Z + GitHub Release propio +
+# entrada en CHANGELOG-DB.md). Línea de versión independiente de la del código:
+# NO toca package.json ni crea tags vX.Y.Z, y NO aplica ninguna migración
+# (eso es el comando /migrate, otro workflow).
+# Se dispara al mergear un PR develop -> main (o hotfix/* -> main) que lleve una
+# label db-release-type/patch | db-release-type/minor | db-release-type/major.
+# Es independiente de release-type/*: un PR puede llevar una, ambas o ninguna.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Comparte grupo con release.yml: ambos pueden comitear/pushear a main en el
+# mismo merge y deben serializarse.
+concurrency:
+  group: publish-to-main
+  cancel-in-progress: false
+
+env:
+  # Rutas cuyo cambio constituye una migración de BD versionable (ERE, sintaxis
+  # de `grep -E`). Se reutiliza como filtro --only-paths de build-changelog.sh.
+  DB_PATHS_REGEX: 'prisma/migrations|prisma/schema\.prisma'
+
+jobs:
+  db-release:
+    # Labels reconocidas (literales; env no está disponible en el if de job):
+    #   db-release-type/patch | db-release-type/minor | db-release-type/major
+    if: >
+      github.event.pull_request.merged == true &&
+      (
+        github.event.pull_request.head.ref == 'develop' ||
+        startsWith(github.event.pull_request.head.ref, 'hotfix/')
+      ) &&
+      (
+        contains(github.event.pull_request.labels.*.name, 'db-release-type/patch') ||
+        contains(github.event.pull_request.labels.*.name, 'db-release-type/minor') ||
+        contains(github.event.pull_request.labels.*.name, 'db-release-type/major')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comprobar si hay cambios de BD
+        id: dbcheck
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          rc=0
+          bash .github/scripts/changed-paths.sh "$BASE_SHA" "$HEAD_SHA" "$DB_PATHS_REGEX" || rc=$?
+          case "$rc" in
+            0) echo "has_db_changes=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "has_db_changes=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "changed-paths.sh falló (rc=$rc)"; exit "$rc" ;;
+          esac
+
+      - name: Avisar que no hubo cambios de BD
+        if: steps.dbcheck.outputs.has_db_changes == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR_NUMBER" \
+            --body "⚠️ Este PR lleva label \`db-release-type/*\` pero no toca \`prisma/migrations/\` ni \`prisma/schema.prisma\` — no se generó ninguna versión de BD."
+
+      - name: Determinar tipo de bump
+        id: bump
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          # Nombres de label = datos del evento -> por env, nunca interpolado
+          # dentro de `run:` (un nombre de label podría inyectar shell) (SEC-4).
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          if echo "$LABELS" | grep -q 'db-release-type/major'; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q 'db-release-type/minor'; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Calcular nueva versión de BD
+        id: version
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          # Versión actual de BD = último tag db-v* (sin fichero de versión).
+          current_tag=$(git tag --list 'db-v*' | sort -V | tail -1)
+          if [ -z "$current_tag" ]; then
+            current="0.0.0"
+            has_previous=false
+          else
+            current="${current_tag#db-v}"
+            has_previous=true
+          fi
+          new=$(bash .github/scripts/bump-version.sh "$current" "$BUMP_TYPE")
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "previous=$current" >> "$GITHUB_OUTPUT"
+          echo "has_previous=$has_previous" >> "$GITHUB_OUTPUT"
+
+      - name: Generar CHANGELOG-DB del rango
+        id: notes
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HAS_PREVIOUS: ${{ steps.version.outputs.has_previous }}
+          PREV_VERSION: ${{ steps.version.outputs.previous }}
+        run: |
+          if [ "$HAS_PREVIOUS" = "true" ]; then
+            from_ref="db-v${PREV_VERSION}"
+          else
+            from_ref=$(git rev-list --max-parents=0 HEAD | tail -1)
+          fi
+          bash .github/scripts/build-changelog.sh "$from_ref" HEAD \
+            --only-paths "$DB_PATHS_REGEX" > /tmp/db-notes.md || true
+          if [ ! -s /tmp/db-notes.md ]; then
+            echo "_Sin migraciones categorizadas en el rango._" > /tmp/db-notes.md
+          fi
+
+      - name: Actualizar CHANGELOG-DB.md
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+          PREV_VERSION: ${{ steps.version.outputs.previous }}
+          HAS_PREVIOUS: ${{ steps.version.outputs.has_previous }}
+        run: |
+          date=$(date +%Y-%m-%d)
+          {
+            head -n 6 CHANGELOG-DB.md
+            echo ""
+            echo "## [${NEW_VERSION}] - $date"
+            echo ""
+            cat /tmp/db-notes.md
+            echo ""
+            tail -n +7 CHANGELOG-DB.md
+          } > /tmp/db-changelog-new.md
+          mv /tmp/db-changelog-new.md CHANGELOG-DB.md
+
+          # Link de comparación completa solo si hay un tag db-v* anterior.
+          if [ "$HAS_PREVIOUS" = "true" ]; then
+            range="db-v${PREV_VERSION}...db-v${NEW_VERSION}"
+            compare_url="https://github.com/${{ github.repository }}/compare/${range}"
+            bullet="- [$range]($compare_url)"
+            awk -v bullet="$bullet" '
+              {
+                print
+                if ($0 ~ /^## Comparaciones completas$/ && !done) {
+                  getline nextline
+                  print nextline
+                  print bullet
+                  done = 1
+                }
+              }
+            ' CHANGELOG-DB.md > /tmp/db-changelog-link.md
+            mv /tmp/db-changelog-link.md CHANGELOG-DB.md
+          fi
+
+      - name: Commit del CHANGELOG-DB
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG-DB.md
+          git commit -m "db: release db-v${NEW_VERSION}"
+          git pull --rebase origin main
+          git push origin main
+
+      - name: Crear y pushear el tag db-v*
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          git tag "db-v${NEW_VERSION}"
+          git push origin "db-v${NEW_VERSION}"
+
+      - name: Crear GitHub Release de BD
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          gh release create "db-v${NEW_VERSION}" \
+            --title "Base de datos db-v${NEW_VERSION}" \
+            --notes-file /tmp/db-notes.md
+
+      - name: Asegurar PR de sync a develop
+        if: steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          # release.yml puede haber abierto ya el PR de sync en este mismo merge.
+          existing=$(gh pr list --base develop --head main --state open --json number --jq 'length')
+          if [ "$existing" -gt 0 ]; then
+            echo "Ya hay un PR de sync main -> develop abierto; nada que crear."
+            exit 0
+          fi
+          if ! gh pr create \
+            --base develop \
+            --head main \
+            --title "chore: sync develop con main db-v${NEW_VERSION}" \
+            --body "Sincroniza \`develop\` con el \`CHANGELOG-DB.md\` de db-v${NEW_VERSION} publicado en \`main\`."; then
+            gh pr comment "$PR_NUMBER" \
+              --body "⚠️ db-v${NEW_VERSION} publicada (tag + GitHub Release), pero no se pudo abrir el PR de sync \`main → develop\` automáticamente. Créalo a mano."
+          fi

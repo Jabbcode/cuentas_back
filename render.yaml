@@ -1,14 +1,57 @@
+# Blueprint de los 2 slots de snapshot (PRE / PRE-TEST).
+#
+# Ninguno se despliega por push: `autoDeploy: false`. Los despliegues salen
+# siempre del workflow `.github/workflows/deploy-version.yml` (comando `/deploy`),
+# que hace `PATCH branch` + `POST deploys` sobre el servicio por su ID. El
+# servicio de producción (`cuentas_back`) no está en este Blueprint — se creó a
+# mano y su `autoDeploy` también está en `false` (ver project-state.md).
+#
+# `branch: develop` es solo el valor en reposo; el workflow lo reapunta a la
+# rama de cada PR al desplegar un snapshot.
 services:
   - type: web
-    name: cuentas-back-staging
+    name: cuentas-back-pre
     runtime: node
     plan: free
     branch: develop
+    autoDeploy: false
     buildCommand: npm install --include=dev && npx prisma generate && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: APP_ENV
+        value: pre
+      - key: APP_VERSION
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        value: "MisCuentas <onboarding@resend.dev>"
+      - key: CORS_ORIGIN
+        sync: false
+
+  - type: web
+    name: cuentas-back-pre-test
+    runtime: node
+    plan: free
+    branch: develop
+    autoDeploy: false
+    buildCommand: npm install --include=dev && npx prisma generate && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: pre-test
+      - key: APP_VERSION
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET

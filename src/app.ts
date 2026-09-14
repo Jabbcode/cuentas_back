@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { errorMiddleware } from './middlewares/error.middleware.js';
+import { corsOrigin } from './lib/cors-origin.js';
 
 import authRoutes from './routes/auth.routes.js';
 import accountsRoutes from './routes/accounts.routes.js';
@@ -17,17 +18,15 @@ import receiptsRoutes from './routes/receipts.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import monitoringRoutes from './routes/monitoring.routes.js';
+import versionRoutes from './routes/version.routes.js';
 
 const app = express();
 
 app.set('trust proxy', 1); // Render — necesario para IPs reales en rate limit
 
 // Middlewares
-const allowedOrigin =
-  process.env.NODE_ENV === 'production' ? process.env.CORS_ORIGIN : 'http://localhost:5173';
-
 app.use(helmet());
-app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json());
 
@@ -44,6 +43,7 @@ app.use('/api/recurring-debt-payments', recurringDebtPaymentsRoutes);
 app.use('/api/receipts', receiptsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/version', versionRoutes);
 
 app.use('/api/monitoring', monitoringRoutes);
 

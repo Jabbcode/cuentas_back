@@ -50,6 +50,7 @@ describe('app', () => {
       'receipts',
       'settings',
       'notifications',
+      'version',
       'monitoring',
     ]) {
       expect(mounted.some((r) => r.includes(prefix))).toBe(true);

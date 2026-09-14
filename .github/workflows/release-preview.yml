@@ -1,0 +1,142 @@
+name: Release Preview
+
+# Comenta (y va actualizando) en el PR develop -> main la versión que se
+# generaría y el changelog de vista previa. No publica ni despliega nada.
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  # Mismo guard que release.yml (ver comentario allí).
+  CODE_PATHS_REGEX: '^(src/|prisma/|package\.json$|package-lock\.json$|tsconfig\.json$|render\.yaml$)'
+
+jobs:
+  preview:
+    if: >
+      github.event.action == 'opened' ||
+      github.event.action == 'synchronize' ||
+      startsWith(github.event.label.name, 'release-type/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout de la HEAD del PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Determinar tipo de bump por labels actuales
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          labels=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')
+          if echo "$labels" | grep -qx 'release-type/major'; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$labels" | grep -qx 'release-type/minor'; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          elif echo "$labels" | grep -qx 'release-type/patch'; then
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comprobar si hay cambios de código
+        id: codecheck
+        if: steps.bump.outputs.type != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          rc=0
+          bash .github/scripts/changed-paths.sh "$BASE_SHA" "$HEAD_SHA" "$CODE_PATHS_REGEX" || rc=$?
+          case "$rc" in
+            0) echo "has_code_changes=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "has_code_changes=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "changed-paths.sh falló (rc=$rc)"; exit "$rc" ;;
+          esac
+
+      - name: Calcular siguiente versión
+        id: version
+        if: steps.bump.outputs.type != 'none' && steps.codecheck.outputs.has_code_changes == 'true'
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./package.json').version")
+          new=$(bash .github/scripts/bump-version.sh "$current" "$BUMP_TYPE")
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "previous=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Construir comentario de vista previa
+        if: steps.bump.outputs.type != 'none' && steps.codecheck.outputs.has_code_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+          PREV_VERSION: ${{ steps.version.outputs.previous }}
+        run: |
+          prev_tag="v${PREV_VERSION}"
+          if git rev-parse "$prev_tag" >/dev/null 2>&1; then
+            from_ref="$prev_tag"
+          else
+            from_ref=$(git rev-list --max-parents=0 HEAD | tail -1)
+          fi
+          bash .github/scripts/build-changelog.sh "$from_ref" HEAD > /tmp/notes.md || true
+          if [ ! -s /tmp/notes.md ]; then
+            echo "_Sin cambios categorizados todavía._" > /tmp/notes.md
+          fi
+          {
+            echo "<!-- release-preview-bot -->"
+            echo "## 🔖 Vista previa del release"
+            echo ""
+            echo "Al mergear con la label \`release-type/${BUMP_TYPE}\`, se publicará:"
+            echo ""
+            echo "**v${NEW_VERSION}** (actual: v${PREV_VERSION})"
+            echo ""
+            cat /tmp/notes.md
+          } > /tmp/comment.md
+
+      - name: Construir comentario "sin label"
+        if: steps.bump.outputs.type == 'none'
+        run: |
+          {
+            echo "<!-- release-preview-bot -->"
+            echo "## 🔖 Vista previa del release"
+            echo ""
+            echo "⚠️ No hay ninguna label \`release-type/patch\`, \`release-type/minor\` o \`release-type/major\` en este PR — al mergear **no se publicará ningún release**."
+          } > /tmp/comment.md
+
+      - name: Construir comentario "sin cambios de código"
+        if: steps.bump.outputs.type != 'none' && steps.codecheck.outputs.has_code_changes == 'false'
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          {
+            echo "<!-- release-preview-bot -->"
+            echo "## 🔖 Vista previa del release"
+            echo ""
+            echo "⚠️ Este PR tiene la label \`release-type/${BUMP_TYPE}\`, pero no toca \`src/\`, \`prisma/\` ni configs de build/runtime — al mergear **no se generará ninguna versión ni release**."
+          } > /tmp/comment.md
+
+      - name: Publicar o actualizar el comentario
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          existing_id=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | startswith("<!-- release-preview-bot -->")) | .id' | head -1)
+          if [ -n "$existing_id" ]; then
+            jq -n --rawfile body /tmp/comment.md '{body: $body}' \
+              | gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$existing_id" --input -
+          else
+            gh pr comment "$PR_NUMBER" --body "$(cat /tmp/comment.md)"
+          fi
