@@ -7,6 +7,7 @@ import {
   getDaysBetween,
   normalizeToUTC,
   buildClosedPeriodBounds,
+  formatDateKey,
 } from '../../lib/utils/credit-card.utils.js';
 import type { CreditCardPaymentRepository } from '../../repositories/interfaces/credit-card-payment.repository.port.js';
 import type { FixedExpenseRepository } from '../../repositories/interfaces/fixed-expense.repository.port.js';
@@ -15,6 +16,7 @@ import { CATEGORY_SYSTEM_KEYS } from '../../lib/constants/category-system-keys.j
 import {
   CREDIT_CARD_MESSAGES,
   OVERDUE_LOOKBACK_MONTHS_DEFAULT,
+  OVERDUE_LOOKBACK_MONTHS_MAX,
 } from '../../lib/constants/credit-card.constants.js';
 import { ACCOUNT_TYPES } from '../../lib/constants/account.constants.js';
 import { TRANSACTION_TYPE } from '../../lib/constants/shared.constants.js';
@@ -117,6 +119,7 @@ export function buildStatement(
       return {
         startDate,
         endDate,
+        periodKey: formatDateKey(startDate),
         balance,
         transactionCount: periodTransactions.length,
         paymentDueDate: overduePaymentDueDate,
@@ -368,7 +371,16 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     userId: string,
     data: PayCreditCardStatementInput
   ): Promise<CreditCardPayment> {
-    const statement = await this.getCreditCardStatement(accountId, userId);
+    // Pagar un período atrasado usa la ventana máxima (no el default): el período pudo
+    // haberse listado con cualquier valor del selector 3/6/12, y resolverlo contra el
+    // default rompería el pago de períodos entre 7 y 12 meses visibles en pantalla.
+    // Pagar el closedPeriod (sin periodStart) no depende de la ventana: se mantiene el
+    // default, más barato para el caso común.
+    const statement = await this.getCreditCardStatement(
+      accountId,
+      userId,
+      data.periodStart ? OVERDUE_LOOKBACK_MONTHS_MAX : undefined
+    );
 
     try {
       const targetPeriod = data.periodStart
@@ -509,10 +521,11 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     statement: CreditCardStatement,
     periodStart: string
   ): Promise<{ startDate: Date; endDate: Date }> {
-    const requestedDateUTC = normalizeToUTC(new Date(periodStart));
-
+    // Comparación por string (periodKey/formatDateKey), no por instante UTC: `startDate`
+    // se serializa a JSON en UTC y puede desplazar el día calendario en husos horarios
+    // adelantados a UTC. periodKey usa componentes locales en ambos lados, sin ambigüedad.
     const overdueMatch = statement.overduePeriods.find(
-      (period) => normalizeToUTC(period.startDate).getTime() === requestedDateUTC.getTime()
+      (period) => period.periodKey === periodStart
     );
 
     if (overdueMatch) {
@@ -520,12 +533,12 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     }
 
     const { lastCutoff } = getCutoffDates(statement.account.cutoffDay!);
-    const candidateBounds = buildClosedPeriodBounds(
-      lastCutoff,
-      OVERDUE_LOOKBACK_MONTHS_DEFAULT
-    ).slice(0, -1);
+    const candidateBounds = buildClosedPeriodBounds(lastCutoff, OVERDUE_LOOKBACK_MONTHS_MAX).slice(
+      0,
+      -1
+    );
     const candidateMatch = candidateBounds.find(
-      (bounds) => normalizeToUTC(bounds.startDate).getTime() === requestedDateUTC.getTime()
+      (bounds) => formatDateKey(bounds.startDate) === periodStart
     );
 
     if (candidateMatch) {

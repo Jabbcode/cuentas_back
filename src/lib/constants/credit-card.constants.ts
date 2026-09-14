@@ -7,3 +7,11 @@ export const CREDIT_CARD_MESSAGES = {
 
 export const OVERDUE_LOOKBACK_MONTHS_DEFAULT = 6;
 export const OVERDUE_LOOKBACK_MONTHS_ALLOWED = [3, 6, 12] as const;
+/**
+ * Ventana usada para resolver un pago por `periodStart`: siempre la máxima
+ * permitida, no el default. El período a pagar puede haberse listado con
+ * cualquier valor de OVERDUE_LOOKBACK_MONTHS_ALLOWED (el usuario eligió 12 en
+ * el selector); resolver el pago sólo contra el default (6) haría que un
+ * período visible en pantalla devuelva 404 al intentar pagarlo.
+ */
+export const OVERDUE_LOOKBACK_MONTHS_MAX = Math.max(...OVERDUE_LOOKBACK_MONTHS_ALLOWED);

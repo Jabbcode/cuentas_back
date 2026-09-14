@@ -562,6 +562,26 @@ describe('CreditCardsServiceImpl', () => {
       expect(mockedCreateTransaction).not.toHaveBeenCalled();
     });
 
+    it('(e) período de hace 8 meses (fuera del default de 6, dentro del máximo de 12) se paga sin 404', async () => {
+      // today=10 jun 2026, cutoffDay=5. Un período con default=6 no listaría nada
+      // anterior a diciembre 2025; con la ventana máxima (12) sí incluye octubre 2025.
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2025, 9, 10), amount: 55 }, // oct 2025
+      ]);
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      const payment = await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 55,
+        paymentAccountId: 'card-1',
+        periodStart: '2025-10-05',
+      });
+
+      expect(payment.id).toBe('payment-1');
+    });
+
     it('(d) con gasto fijo activo: pagar un atrasado no lo toca, pagar el closedPeriod sí', async () => {
       mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
       mockedFindFirstFixedExpense.mockResolvedValue({

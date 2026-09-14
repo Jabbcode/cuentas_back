@@ -5,6 +5,7 @@ import { registerWithBankAndCard } from './api-helpers';
 interface OverduePeriod {
   startDate: string;
   endDate: string;
+  periodKey: string;
   balance: number;
   transactionCount: number;
 }
@@ -105,7 +106,7 @@ test.describe('Credit Cards API', () => {
       const overdue: OverduePeriod = statement.overduePeriods[0];
       expect(overdue.balance).toBe(75);
       expect(overdue.transactionCount).toBe(1);
-      const periodStart = overdue.startDate.slice(0, 10);
+      const periodStart = overdue.periodKey;
 
       const payRes = await request.post(`/api/credit-cards/${cardId}/pay`, {
         data: { amount: 75, paymentAccountId: bankId, periodStart },
@@ -124,7 +125,7 @@ test.describe('Credit Cards API', () => {
       await createOverdueExpense(request, cardId, 4, 60);
 
       const statement = await (await request.get(`/api/credit-cards/${cardId}/statement`)).json();
-      const periodStart: string = statement.overduePeriods[0].startDate.slice(0, 10);
+      const periodStart: string = statement.overduePeriods[0].periodKey;
 
       const firstPay = await request.post(`/api/credit-cards/${cardId}/pay`, {
         data: { amount: 60, paymentAccountId: bankId, periodStart },
@@ -163,7 +164,7 @@ test.describe('Credit Cards API', () => {
       const statementA = await (
         await request.get(`/api/credit-cards/${userA.cardId}/statement`)
       ).json();
-      const periodStart: string = statementA.overduePeriods[0].startDate.slice(0, 10);
+      const periodStart: string = statementA.overduePeriods[0].periodKey;
 
       const userB = await registerWithBankAndCard(request); // pisa la cookie de sesión
 

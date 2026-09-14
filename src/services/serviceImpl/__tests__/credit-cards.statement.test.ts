@@ -185,6 +185,10 @@ describe('buildStatement', () => {
       expect(statement.overduePeriods.map((p) => p.balance)).toEqual([10, 20, 30]);
       expect(statement.overduePeriods[0]!.startDate).toEqual(new Date(2026, 1, 5));
       expect(statement.overduePeriods[0]!.transactionCount).toBe(1);
+      // periodKey usa componentes LOCALES (no UTC) — es lo que el cliente debe reenviar
+      // como periodStart al pagar; startDate se serializa a JSON en UTC y puede
+      // desplazarse un día en husos horarios adelantados a UTC.
+      expect(statement.overduePeriods[0]!.periodKey).toBe('2026-02-05');
     });
 
     it('período con CreditCardPayment pre-existente no aparece en overduePeriods (regresión de fronteras)', () => {
