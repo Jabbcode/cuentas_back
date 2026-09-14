@@ -55,6 +55,8 @@ export interface PayCreditCardStatementInput {
   amount: number;
   paymentAccountId: string;
   paymentDate?: string;
+  /** Fecha de inicio (YYYY-MM-DD) del período atrasado a pagar. Sin ella, se paga el closedPeriod (comportamiento actual). */
+  periodStart?: string;
 }
 
 export interface CreditCardsService {

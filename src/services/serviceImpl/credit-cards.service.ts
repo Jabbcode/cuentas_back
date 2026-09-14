@@ -371,16 +371,9 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     const statement = await this.getCreditCardStatement(accountId, userId);
 
     try {
-      if (statement.closedPeriod.isPaid) {
-        logger.warn(
-          'Pago rechazado: periodo {} - {} de la cuenta {} ya estaba pagado (balance={})',
-          statement.closedPeriod.startDate.toISOString().slice(0, 10),
-          statement.closedPeriod.endDate.toISOString().slice(0, 10),
-          accountId,
-          statement.closedPeriod.balance
-        );
-        throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
-      }
+      const targetPeriod = data.periodStart
+        ? await this.resolveOverduePeriod(accountId, statement, data.periodStart)
+        : this.resolveClosedPeriod(accountId, statement);
 
       const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
 
@@ -422,48 +415,53 @@ export class CreditCardsServiceImpl implements CreditCardsService {
         amount: data.amount,
         paymentDate,
         // Normalizado a UTC: el chequeo de "ya pagado" en buildStatement compara contra
-        // fechas UTC-normalizadas, pero closedPeriod.startDate/endDate quedan en hora
-        // local — sin esto, un pago nunca calza con ese chequeo en timezones != UTC.
-        periodStart: normalizeToUTC(statement.closedPeriod.startDate),
-        periodEnd: normalizeToUTC(statement.closedPeriod.endDate),
+        // fechas UTC-normalizadas, pero startDate/endDate quedan en hora local — sin esto,
+        // un pago nunca calza con ese chequeo en timezones != UTC.
+        periodStart: normalizeToUTC(targetPeriod.startDate),
+        periodEnd: normalizeToUTC(targetPeriod.endDate),
         transaction: { connect: { id: transaction.id } },
       });
 
-      // Mark associated fixed expense as paid (if exists)
-      const fixedExpense = await this.fixedExpenseRepo.findFirst({
-        userId,
-        creditCardAccountId: accountId,
-        isActive: true,
-      });
+      // Pagar un período atrasado no marca el gasto fijo del mes como pagado: el gasto fijo
+      // es del mes en curso, y aplicar este bloque a un período de hace varios meses crearía
+      // una transacción de gasto fijo que el usuario no hizo (interpretación 4 del techplan).
+      if (!data.periodStart) {
+        // Mark associated fixed expense as paid (if exists)
+        const fixedExpense = await this.fixedExpenseRepo.findFirst({
+          userId,
+          creditCardAccountId: accountId,
+          isActive: true,
+        });
 
-      if (fixedExpense) {
-        // Create transaction for the fixed expense
-        const now = new Date();
-        const { start: startOfMonth, end: endOfMonth } = getMonthRange(
-          now.getFullYear(),
-          now.getMonth()
-        );
-
-        // Check if there's already a payment this month
-        const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
-          fixedExpense.id,
-          { gte: startOfMonth, lt: endOfMonth }
-        );
-
-        // Only create if there's no payment this month
-        if (!existingPayment) {
-          await this.transactionsService.createTransaction(
-            {
-              amount: data.amount,
-              type: TRANSACTION_TYPE.EXPENSE,
-              description: `Pago: ${fixedExpense.name}`,
-              date: paymentDate.toISOString(),
-              accountId: data.paymentAccountId,
-              categoryId: fixedExpense.categoryId,
-              fixedExpenseId: fixedExpense.id,
-            },
-            userId
+        if (fixedExpense) {
+          // Create transaction for the fixed expense
+          const now = new Date();
+          const { start: startOfMonth, end: endOfMonth } = getMonthRange(
+            now.getFullYear(),
+            now.getMonth()
           );
+
+          // Check if there's already a payment this month
+          const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
+            fixedExpense.id,
+            { gte: startOfMonth, lt: endOfMonth }
+          );
+
+          // Only create if there's no payment this month
+          if (!existingPayment) {
+            await this.transactionsService.createTransaction(
+              {
+                amount: data.amount,
+                type: TRANSACTION_TYPE.EXPENSE,
+                description: `Pago: ${fixedExpense.name}`,
+                date: paymentDate.toISOString(),
+                accountId: data.paymentAccountId,
+                categoryId: fixedExpense.categoryId,
+                fixedExpenseId: fixedExpense.id,
+              },
+              userId
+            );
+          }
         }
       }
 
@@ -476,6 +474,86 @@ export class CreditCardsServiceImpl implements CreditCardsService {
         userId
       );
     }
+  }
+
+  /**
+   * Resuelve el período cerrado más reciente como objetivo del pago (comportamiento
+   * actual, sin `periodStart`). Lanza ConflictError si ya está pagado.
+   */
+  private resolveClosedPeriod(
+    accountId: string,
+    statement: CreditCardStatement
+  ): { startDate: Date; endDate: Date } {
+    if (statement.closedPeriod.isPaid) {
+      logger.warn(
+        'Pago rechazado: periodo {} - {} de la cuenta {} ya estaba pagado (balance={})',
+        statement.closedPeriod.startDate.toISOString().slice(0, 10),
+        statement.closedPeriod.endDate.toISOString().slice(0, 10),
+        accountId,
+        statement.closedPeriod.balance
+      );
+      throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
+    }
+
+    return statement.closedPeriod;
+  }
+
+  /**
+   * Resuelve un período atrasado concreto contra `statement.overduePeriods` (calculado en
+   * servidor, nunca a partir del string recibido). Si `periodStart` no calza con ningún
+   * período impago pero sí con uno ya cubierto por un `CreditCardPayment`, distingue
+   * ConflictError (protección de doble pago) de NotFoundError (período inexistente/futuro).
+   */
+  private async resolveOverduePeriod(
+    accountId: string,
+    statement: CreditCardStatement,
+    periodStart: string
+  ): Promise<{ startDate: Date; endDate: Date }> {
+    const requestedDateUTC = normalizeToUTC(new Date(periodStart));
+
+    const overdueMatch = statement.overduePeriods.find(
+      (period) => normalizeToUTC(period.startDate).getTime() === requestedDateUTC.getTime()
+    );
+
+    if (overdueMatch) {
+      return overdueMatch;
+    }
+
+    const { lastCutoff } = getCutoffDates(statement.account.cutoffDay!);
+    const candidateBounds = buildClosedPeriodBounds(
+      lastCutoff,
+      OVERDUE_LOOKBACK_MONTHS_DEFAULT
+    ).slice(0, -1);
+    const candidateMatch = candidateBounds.find(
+      (bounds) => normalizeToUTC(bounds.startDate).getTime() === requestedDateUTC.getTime()
+    );
+
+    if (candidateMatch) {
+      const payments = await this.creditCardPaymentRepo.findMany({ accountId });
+      const startUTC = normalizeToUTC(candidateMatch.startDate);
+      const endUTC = normalizeToUTC(candidateMatch.endDate);
+      const alreadyPaid = payments.some(
+        (p) =>
+          p.periodStart.getTime() === startUTC.getTime() &&
+          p.periodEnd.getTime() === endUTC.getTime()
+      );
+
+      if (alreadyPaid) {
+        logger.warn(
+          'Pago rechazado: periodo {} de la cuenta {} ya estaba pagado',
+          periodStart,
+          accountId
+        );
+        throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
+      }
+    }
+
+    logger.warn(
+      'Pago rechazado: periodo {} no encontrado para la cuenta {}',
+      periodStart,
+      accountId
+    );
+    throw new NotFoundError(CREDIT_CARD_MESSAGES.PERIOD_NOT_FOUND);
   }
 
   /**

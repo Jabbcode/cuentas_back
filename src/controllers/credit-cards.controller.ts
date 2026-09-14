@@ -31,12 +31,15 @@ export async function getSummary(req: AuthRequest, res: Response, next: NextFunc
 export async function payStatement(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     const accountId = req.params.accountId as string;
-    const { amount, paymentAccountId, paymentDate } = payStatementSchema.parse(req.body);
+    const { amount, paymentAccountId, paymentDate, periodStart } = payStatementSchema.parse(
+      req.body
+    );
 
     const payment = await creditCardsService.payCreditCardStatement(accountId, req.user!.userId, {
       amount,
       paymentAccountId,
       paymentDate,
+      periodStart,
     });
 
     res.json(payment);

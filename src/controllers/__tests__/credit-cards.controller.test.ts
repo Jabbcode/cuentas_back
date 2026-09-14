@@ -104,8 +104,26 @@ describe('credit-cards.controller', () => {
         amount: 50.5,
         paymentAccountId: PAYMENT_ACCOUNT_ID,
         paymentDate: '2026-01-01',
+        periodStart: undefined,
       });
       expect(res.json).toHaveBeenCalledWith({ id: 'payment-1' });
+    });
+
+    it('propaga periodStart al service cuando se paga un período atrasado', async () => {
+      mocked.payCreditCardStatement.mockResolvedValue({ id: 'payment-overdue' });
+      const req = fakeReq({
+        params: { accountId: 'card-1' },
+        body: { amount: '40', paymentAccountId: PAYMENT_ACCOUNT_ID, periodStart: '2026-02-05' },
+      });
+
+      await controller.payStatement(req, fakeRes(), fakeNext());
+
+      expect(mocked.payCreditCardStatement).toHaveBeenCalledWith('card-1', 'user-1', {
+        amount: 40,
+        paymentAccountId: PAYMENT_ACCOUNT_ID,
+        paymentDate: undefined,
+        periodStart: '2026-02-05',
+      });
     });
 
     it('sin paymentAccountId ⇒ error de validación cae en next, sin llamar al service', async () => {
