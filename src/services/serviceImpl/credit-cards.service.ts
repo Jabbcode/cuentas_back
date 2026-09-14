@@ -1,5 +1,6 @@
 import type { Account, CreditCardPayment, Transaction } from '@prisma/client';
 import { NotFoundError, ValidationError, ConflictError } from '../../lib/errors.js';
+import { createLogger } from '../../lib/logger.js';
 import {
   getCutoffDates,
   getPaymentDueDate,
@@ -22,6 +23,8 @@ import type {
   CreditCardsSummary,
   PayCreditCardStatementInput,
 } from '../interfaces/credit-cards.service.port.js';
+
+const logger = createLogger('CREDIT_CARDS');
 
 /**
  * Calcula el statement (períodos, balances, alertas) de una tarjeta a partir de datos
@@ -171,123 +174,140 @@ export class CreditCardsServiceImpl implements CreditCardsService {
    * Get credit card statement with current and closed periods
    */
   async getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement> {
-    const account = await this.accountsService.findAccountById(accountId, userId);
+    try {
+      const account = await this.accountsService.findAccountById(accountId, userId);
 
-    if (!account || account.type !== ACCOUNT_TYPES.CREDIT_CARD) {
-      throw new NotFoundError(CREDIT_CARD_MESSAGES.NOT_FOUND_OR_NOT_CARD);
+      if (!account || account.type !== ACCOUNT_TYPES.CREDIT_CARD) {
+        throw new NotFoundError(CREDIT_CARD_MESSAGES.NOT_FOUND_OR_NOT_CARD);
+      }
+
+      if (!account.cutoffDay || !account.paymentDueDay) {
+        throw new ValidationError(CREDIT_CARD_MESSAGES.MISSING_CUTOFF_DATES);
+      }
+
+      const today = new Date();
+      const { lastCutoff } = getCutoffDates(account.cutoffDay);
+      const previousCutoff = new Date(lastCutoff);
+      previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+
+      const [transactions, payments] = await Promise.all([
+        this.transactionsService.findCardStatementTransactions(userId, [accountId], {
+          gte: previousCutoff,
+          lte: today,
+        }),
+        this.creditCardPaymentRepo.findMany({ accountId }),
+      ]);
+
+      return buildStatement(account, transactions, payments, today);
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo obtener el estado de cuenta de la tarjeta {} del usuario {}',
+        accountId,
+        userId
+      );
     }
-
-    if (!account.cutoffDay || !account.paymentDueDay) {
-      throw new ValidationError(CREDIT_CARD_MESSAGES.MISSING_CUTOFF_DATES);
-    }
-
-    const today = new Date();
-    const { lastCutoff } = getCutoffDates(account.cutoffDay);
-    const previousCutoff = new Date(lastCutoff);
-    previousCutoff.setMonth(previousCutoff.getMonth() - 1);
-
-    const [transactions, payments] = await Promise.all([
-      this.transactionsService.findCardStatementTransactions(userId, [accountId], {
-        gte: previousCutoff,
-        lte: today,
-      }),
-      this.creditCardPaymentRepo.findMany({ accountId }),
-    ]);
-
-    return buildStatement(account, transactions, payments, today);
   }
 
   /**
    * Get summary of all credit cards for dashboard
    */
   async getCreditCardsSummary(userId: string): Promise<CreditCardsSummary> {
-    const creditCards = await this.accountsService.getCreditCards(userId);
-    const eligibleCards = creditCards.filter((card) => card.cutoffDay && card.paymentDueDay);
+    try {
+      const creditCards = await this.accountsService.getCreditCards(userId);
+      const eligibleCards = creditCards.filter((card) => card.cutoffDay && card.paymentDueDay);
 
-    if (eligibleCards.length === 0) {
-      return { totalToPay: 0, upcomingPayments: [], alerts: [], cards: [] };
-    }
+      if (eligibleCards.length === 0) {
+        return { totalToPay: 0, upcomingPayments: [], alerts: [], cards: [] };
+      }
 
-    const today = new Date();
-    const cardIds = eligibleCards.map((card) => card.id);
+      const today = new Date();
+      const cardIds = eligibleCards.map((card) => card.id);
 
-    const previousCutoffs = eligibleCards.map((card) => {
-      const { lastCutoff } = getCutoffDates(card.cutoffDay!);
-      const previousCutoff = new Date(lastCutoff);
-      previousCutoff.setMonth(previousCutoff.getMonth() - 1);
-      return previousCutoff;
-    });
-    const minPreviousCutoff = new Date(Math.min(...previousCutoffs.map((d) => d.getTime())));
+      const previousCutoffs = eligibleCards.map((card) => {
+        const { lastCutoff } = getCutoffDates(card.cutoffDay!);
+        const previousCutoff = new Date(lastCutoff);
+        previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+        return previousCutoff;
+      });
+      const minPreviousCutoff = new Date(Math.min(...previousCutoffs.map((d) => d.getTime())));
 
-    const [allTransactions, allPayments] = await Promise.all([
-      this.transactionsService.findCardStatementTransactions(userId, cardIds, {
-        gte: minPreviousCutoff,
-        lte: today,
-      }),
-      this.creditCardPaymentRepo.findMany({ accountId: { in: cardIds } }),
-    ]);
+      const [allTransactions, allPayments] = await Promise.all([
+        this.transactionsService.findCardStatementTransactions(userId, cardIds, {
+          gte: minPreviousCutoff,
+          lte: today,
+        }),
+        this.creditCardPaymentRepo.findMany({ accountId: { in: cardIds } }),
+      ]);
 
-    const transactionsByAccount = new Map<string, Transaction[]>();
-    for (const tx of allTransactions) {
-      const list = transactionsByAccount.get(tx.accountId) ?? [];
-      list.push(tx);
-      transactionsByAccount.set(tx.accountId, list);
-    }
+      const transactionsByAccount = new Map<string, Transaction[]>();
+      for (const tx of allTransactions) {
+        const list = transactionsByAccount.get(tx.accountId) ?? [];
+        list.push(tx);
+        transactionsByAccount.set(tx.accountId, list);
+      }
 
-    const paymentsByAccount = new Map<string, CreditCardPayment[]>();
-    for (const payment of allPayments) {
-      const list = paymentsByAccount.get(payment.accountId) ?? [];
-      list.push(payment);
-      paymentsByAccount.set(payment.accountId, list);
-    }
+      const paymentsByAccount = new Map<string, CreditCardPayment[]>();
+      for (const payment of allPayments) {
+        const list = paymentsByAccount.get(payment.accountId) ?? [];
+        list.push(payment);
+        paymentsByAccount.set(payment.accountId, list);
+      }
 
-    const summaries = eligibleCards.map((card) =>
-      buildStatement(
-        card,
-        transactionsByAccount.get(card.id) ?? [],
-        paymentsByAccount.get(card.id) ?? [],
-        today
-      )
-    );
+      const summaries = eligibleCards.map((card) =>
+        buildStatement(
+          card,
+          transactionsByAccount.get(card.id) ?? [],
+          paymentsByAccount.get(card.id) ?? [],
+          today
+        )
+      );
 
-    // Calculate totals
-    const totalToPay = summaries.reduce(
-      (sum, s) => sum + (s.closedPeriod.isPaid ? 0 : s.closedPeriod.balance),
-      0
-    );
+      // Calculate totals
+      const totalToPay = summaries.reduce(
+        (sum, s) => sum + (s.closedPeriod.isPaid ? 0 : s.closedPeriod.balance),
+        0
+      );
 
-    // Get upcoming payments (not paid, sorted by due date)
-    const upcomingPayments = summaries
-      .filter((s) => !s.closedPeriod.isPaid && s.closedPeriod.balance > 0)
-      .map((s) => ({
-        accountId: s.account.id,
-        accountName: s.account.name,
-        amount: s.closedPeriod.balance,
-        dueDate: s.closedPeriod.paymentDueDate,
-        daysUntilDue: s.closedPeriod.daysUntilDue,
-      }))
-      .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
-
-    // Collect all alerts
-    const allAlerts = summaries
-      .flatMap((s) =>
-        s.alerts.map((alert) => ({
-          ...alert,
+      // Get upcoming payments (not paid, sorted by due date)
+      const upcomingPayments = summaries
+        .filter((s) => !s.closedPeriod.isPaid && s.closedPeriod.balance > 0)
+        .map((s) => ({
           accountId: s.account.id,
           accountName: s.account.name,
+          amount: s.closedPeriod.balance,
+          dueDate: s.closedPeriod.paymentDueDate,
+          daysUntilDue: s.closedPeriod.daysUntilDue,
         }))
-      )
-      .sort((a, b) => {
-        const severityOrder = { error: 0, warning: 1, info: 2 };
-        return severityOrder[a.severity] - severityOrder[b.severity];
-      });
+        .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
 
-    return {
-      totalToPay,
-      upcomingPayments,
-      alerts: allAlerts,
-      cards: summaries,
-    };
+      // Collect all alerts
+      const allAlerts = summaries
+        .flatMap((s) =>
+          s.alerts.map((alert) => ({
+            ...alert,
+            accountId: s.account.id,
+            accountName: s.account.name,
+          }))
+        )
+        .sort((a, b) => {
+          const severityOrder = { error: 0, warning: 1, info: 2 };
+          return severityOrder[a.severity] - severityOrder[b.severity];
+        });
+
+      return {
+        totalToPay,
+        upcomingPayments,
+        alerts: allAlerts,
+        cards: summaries,
+      };
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo obtener el resumen de tarjetas de credito del usuario {}',
+        userId
+      );
+    }
   }
 
   /**
@@ -300,96 +320,105 @@ export class CreditCardsServiceImpl implements CreditCardsService {
   ): Promise<CreditCardPayment> {
     const statement = await this.getCreditCardStatement(accountId, userId);
 
-    if (statement.closedPeriod.isPaid) {
-      throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
-    }
+    try {
+      if (statement.closedPeriod.isPaid) {
+        throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
+      }
 
-    const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
+      const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
 
-    // Create payment transaction (income to credit card)
-    // This automatically updates the credit card balance
-    const paymentCategory = await this.getOrCreatePaymentCategory(userId);
+      // Create payment transaction (income to credit card)
+      // This automatically updates the credit card balance
+      const paymentCategory = await this.getOrCreatePaymentCategory(userId);
 
-    const transaction = await this.transactionsService.createTransaction(
-      {
-        amount: data.amount,
-        type: TRANSACTION_TYPE.INCOME,
-        description: `Pago estado de cuenta ${statement.account.name}`,
-        date: paymentDate.toISOString(),
-        accountId: accountId,
-        categoryId: paymentCategory.id,
-      },
-      userId
-    );
-
-    // If paying from another account, create expense transaction
-    // This automatically updates the payment account balance
-    if (data.paymentAccountId !== accountId) {
-      await this.transactionsService.createTransaction(
+      const transaction = await this.transactionsService.createTransaction(
         {
           amount: data.amount,
-          type: TRANSACTION_TYPE.EXPENSE,
-          description: `Pago tarjeta ${statement.account.name}`,
+          type: TRANSACTION_TYPE.INCOME,
+          description: `Pago estado de cuenta ${statement.account.name}`,
           date: paymentDate.toISOString(),
-          accountId: data.paymentAccountId,
+          accountId: accountId,
           categoryId: paymentCategory.id,
         },
         userId
       );
-    }
 
-    // Record payment
-    const payment = await this.creditCardPaymentRepo.create({
-      account: { connect: { id: accountId } },
-      amount: data.amount,
-      paymentDate,
-      // Normalizado a UTC: el chequeo de "ya pagado" en buildStatement compara contra
-      // fechas UTC-normalizadas, pero closedPeriod.startDate/endDate quedan en hora
-      // local — sin esto, un pago nunca calza con ese chequeo en timezones != UTC.
-      periodStart: normalizeToUTC(statement.closedPeriod.startDate),
-      periodEnd: normalizeToUTC(statement.closedPeriod.endDate),
-      transaction: { connect: { id: transaction.id } },
-    });
-
-    // Mark associated fixed expense as paid (if exists)
-    const fixedExpense = await this.fixedExpenseRepo.findFirst({
-      userId,
-      creditCardAccountId: accountId,
-      isActive: true,
-    });
-
-    if (fixedExpense) {
-      // Create transaction for the fixed expense
-      const now = new Date();
-      const { start: startOfMonth, end: endOfMonth } = getMonthRange(
-        now.getFullYear(),
-        now.getMonth()
-      );
-
-      // Check if there's already a payment this month
-      const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
-        fixedExpense.id,
-        { gte: startOfMonth, lt: endOfMonth }
-      );
-
-      // Only create if there's no payment this month
-      if (!existingPayment) {
+      // If paying from another account, create expense transaction
+      // This automatically updates the payment account balance
+      if (data.paymentAccountId !== accountId) {
         await this.transactionsService.createTransaction(
           {
             amount: data.amount,
             type: TRANSACTION_TYPE.EXPENSE,
-            description: `Pago: ${fixedExpense.name}`,
+            description: `Pago tarjeta ${statement.account.name}`,
             date: paymentDate.toISOString(),
             accountId: data.paymentAccountId,
-            categoryId: fixedExpense.categoryId,
-            fixedExpenseId: fixedExpense.id,
+            categoryId: paymentCategory.id,
           },
           userId
         );
       }
-    }
 
-    return payment;
+      // Record payment
+      const payment = await this.creditCardPaymentRepo.create({
+        account: { connect: { id: accountId } },
+        amount: data.amount,
+        paymentDate,
+        // Normalizado a UTC: el chequeo de "ya pagado" en buildStatement compara contra
+        // fechas UTC-normalizadas, pero closedPeriod.startDate/endDate quedan en hora
+        // local — sin esto, un pago nunca calza con ese chequeo en timezones != UTC.
+        periodStart: normalizeToUTC(statement.closedPeriod.startDate),
+        periodEnd: normalizeToUTC(statement.closedPeriod.endDate),
+        transaction: { connect: { id: transaction.id } },
+      });
+
+      // Mark associated fixed expense as paid (if exists)
+      const fixedExpense = await this.fixedExpenseRepo.findFirst({
+        userId,
+        creditCardAccountId: accountId,
+        isActive: true,
+      });
+
+      if (fixedExpense) {
+        // Create transaction for the fixed expense
+        const now = new Date();
+        const { start: startOfMonth, end: endOfMonth } = getMonthRange(
+          now.getFullYear(),
+          now.getMonth()
+        );
+
+        // Check if there's already a payment this month
+        const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
+          fixedExpense.id,
+          { gte: startOfMonth, lt: endOfMonth }
+        );
+
+        // Only create if there's no payment this month
+        if (!existingPayment) {
+          await this.transactionsService.createTransaction(
+            {
+              amount: data.amount,
+              type: TRANSACTION_TYPE.EXPENSE,
+              description: `Pago: ${fixedExpense.name}`,
+              date: paymentDate.toISOString(),
+              accountId: data.paymentAccountId,
+              categoryId: fixedExpense.categoryId,
+              fixedExpenseId: fixedExpense.id,
+            },
+            userId
+          );
+        }
+      }
+
+      return payment;
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo procesar el pago del estado de cuenta de la tarjeta {} del usuario {}',
+        accountId,
+        userId
+      );
+    }
   }
 
   /**
