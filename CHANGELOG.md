@@ -5,6 +5,17 @@ Todos los cambios notables de este proyecto se documentan en este fichero.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-09-14
+
+### FIXES
+* [#81](https://github.com/Jabbcode/cuentas_back/pull/81) agrega err.message al log de HTTP
+
+### OTROS
+* [#79](https://github.com/Jabbcode/cuentas_back/pull/79) Sync release 1.1.2 to develop
+* [#82](https://github.com/Jabbcode/cuentas_back/pull/82) v1.1.3 - mensaje de error en logs de HTTP
+
+
+
 ## [1.1.2] - 2026-09-14
 
 ### FIXES
@@ -108,6 +119,7 @@ y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Comparaciones completas
 
+- [v1.1.2...v1.1.3](https://github.com/Jabbcode/cuentas_back/compare/v1.1.2...v1.1.3)
 - [v1.1.1...v1.1.2](https://github.com/Jabbcode/cuentas_back/compare/v1.1.1...v1.1.2)
 - [v1.1.0...v1.1.1](https://github.com/Jabbcode/cuentas_back/compare/v1.1.0...v1.1.1)
 - [v1.0.0...v1.1.0](https://github.com/Jabbcode/cuentas_back/compare/v1.0.0...v1.1.0)
