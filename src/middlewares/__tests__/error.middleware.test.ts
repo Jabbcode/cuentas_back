@@ -1,15 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Response } from 'express';
 import { z } from 'zod';
-import { ConflictError, ValidationError } from '../../lib/errors.js';
+import { AppError, ConflictError, ValidationError } from '../../lib/errors.js';
 
 const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('../../lib/logger.js', () => ({
-  createLogger: () => mockLogger,
-}));
+vi.mock('../../lib/logger.js', async () => {
+  const actual = await import('../../lib/errors.js');
+  return {
+    createLogger: () => mockLogger,
+    isExpectedAppError: (err: unknown) => err instanceof actual.AppError && err.statusCode < 500,
+  };
+});
 
 const { errorMiddleware } = await import('../error.middleware.js');
 
@@ -150,6 +154,23 @@ describe('errorMiddleware — contrato de error consumible por el frontend (BE-T
         '/api/accounts'
       );
       expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('loguea con nivel error (con stack) un AppError de 5xx, no warn', () => {
+      const req = { method: 'POST', originalUrl: '/api/receipts' };
+      const err = new AppError('Fallo de integracion OCR', 500, 'INTEGRATION_ERROR');
+
+      errorMiddleware(err, req as never, fakeResponse(), vi.fn());
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        err,
+        '{} {} -> {} ({})',
+        'POST',
+        '/api/receipts',
+        500,
+        'INTEGRATION_ERROR'
+      );
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
   });
 });

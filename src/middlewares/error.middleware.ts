@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { AppError } from '../lib/errors.js';
-import { createLogger } from '../lib/logger.js';
+import { createLogger, isExpectedAppError } from '../lib/logger.js';
 
 const logger = createLogger('HTTP');
 
@@ -19,7 +19,11 @@ export function errorMiddleware(err: Error, req: Request, res: Response, _next: 
   }
 
   if (err instanceof AppError) {
-    logger.warn('{} {} -> {} ({})', req.method, req.originalUrl, err.statusCode, err.code);
+    if (isExpectedAppError(err)) {
+      logger.warn('{} {} -> {} ({})', req.method, req.originalUrl, err.statusCode, err.code);
+    } else {
+      logger.error(err, '{} {} -> {} ({})', req.method, req.originalUrl, err.statusCode, err.code);
+    }
     res.status(err.statusCode).json({
       error: err.message,
       code: err.code,
