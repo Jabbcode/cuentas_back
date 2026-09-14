@@ -4,6 +4,7 @@ import type {
   UpdateRecurringDebtPaymentInput,
 } from '../../schemas/recurring-debt-payment.schema.js';
 import { NotFoundError, ConflictError } from '../../lib/errors.js';
+import { createLogger } from '../../lib/logger.js';
 import { calculateNextDueDate } from '../../lib/utils/date.utils.js';
 import type { RecurringDebtPaymentRepository } from '../../repositories/interfaces/recurring-debt-payment.repository.port.js';
 import type { AccountsService } from '../interfaces/accounts.service.port.js';
@@ -22,6 +23,8 @@ import type {
   ProcessPendingResultEntry,
 } from '../interfaces/recurring-debt-payments.service.port.js';
 
+const logger = createLogger('RECURRING_DEBT_PAYMENTS');
+
 export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsService {
   constructor(
     private recurringRepo: RecurringDebtPaymentRepository,
@@ -33,84 +36,110 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     userId: string,
     data: CreateRecurringDebtPaymentInput
   ): Promise<RdpCreated> {
-    // Verify debt exists and belongs to user
-    const debt = await this.debtsService.getDebtById(data.debtId, userId);
+    try {
+      // Verify debt exists and belongs to user
+      const debt = await this.debtsService.getDebtById(data.debtId, userId);
 
-    if (debt.status === DEBT_STATUS.PAID) {
-      throw new ConflictError(RECURRING_DEBT_PAYMENT_MESSAGES.CANNOT_CONFIGURE_ON_PAID_DEBT);
-    }
-
-    // Verify account exists and belongs to user
-    await this.accountsService.getAccountById(data.accountId, userId);
-
-    // Calculate next due date
-    const startDate = data.startDate ? new Date(data.startDate) : new Date();
-    const nextDueDate = calculateNextDueDate(
-      data.frequency,
-      data.dayOfMonth || null,
-      data.dayOfWeek || null,
-      startDate
-    );
-
-    const recurringPayment = await this.recurringRepo.create(
-      {
-        user: { connect: { id: userId } },
-        debt: { connect: { id: data.debtId } },
-        amount: data.amount,
-        account: { connect: { id: data.accountId } },
-        frequency: data.frequency,
-        dayOfMonth: data.dayOfMonth,
-        dayOfWeek: data.dayOfWeek,
-        startDate,
-        endDate: data.endDate ? new Date(data.endDate) : null,
-        nextDueDate,
-        notes: data.notes,
-      },
-      {
-        account: { select: { id: true, name: true } },
-        debt: { select: { id: true, creditor: true, description: true, remainingAmount: true } },
+      if (debt.status === DEBT_STATUS.PAID) {
+        throw new ConflictError(RECURRING_DEBT_PAYMENT_MESSAGES.CANNOT_CONFIGURE_ON_PAID_DEBT);
       }
-    );
 
-    return recurringPayment as unknown as RdpCreated;
+      // Verify account exists and belongs to user
+      await this.accountsService.getAccountById(data.accountId, userId);
+
+      // Calculate next due date
+      const startDate = data.startDate ? new Date(data.startDate) : new Date();
+      const nextDueDate = calculateNextDueDate(
+        data.frequency,
+        data.dayOfMonth || null,
+        data.dayOfWeek || null,
+        startDate
+      );
+
+      const recurringPayment = await this.recurringRepo.create(
+        {
+          user: { connect: { id: userId } },
+          debt: { connect: { id: data.debtId } },
+          amount: data.amount,
+          account: { connect: { id: data.accountId } },
+          frequency: data.frequency,
+          dayOfMonth: data.dayOfMonth,
+          dayOfWeek: data.dayOfWeek,
+          startDate,
+          endDate: data.endDate ? new Date(data.endDate) : null,
+          nextDueDate,
+          notes: data.notes,
+        },
+        {
+          account: { select: { id: true, name: true } },
+          debt: { select: { id: true, creditor: true, description: true, remainingAmount: true } },
+        }
+      );
+
+      return recurringPayment as unknown as RdpCreated;
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo crear el pago recurrente para la deuda {} del usuario {}',
+        data.debtId,
+        userId
+      );
+    }
   }
 
   async getRecurringDebtPayments(userId: string, debtId?: string): Promise<RdpWithFullRelations[]> {
-    const recurringPayments = await this.recurringRepo.findAllByUser(userId, debtId, {
-      account: { select: { id: true, name: true, balance: true } },
-      debt: {
-        select: {
-          id: true,
-          creditor: true,
-          description: true,
-          remainingAmount: true,
-          status: true,
+    try {
+      const recurringPayments = await this.recurringRepo.findAllByUser(userId, debtId, {
+        account: { select: { id: true, name: true, balance: true } },
+        debt: {
+          select: {
+            id: true,
+            creditor: true,
+            description: true,
+            remainingAmount: true,
+            status: true,
+          },
         },
-      },
-    });
+      });
 
-    return recurringPayments as unknown as RdpWithFullRelations[];
+      return recurringPayments as unknown as RdpWithFullRelations[];
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudieron obtener los pagos recurrentes del usuario {}',
+        userId
+      );
+    }
   }
 
   async getRecurringDebtPaymentById(id: string, userId: string): Promise<RdpWithFullRelations> {
-    const recurringPayment = await this.recurringRepo.findByIdAndUser(id, userId, {
-      account: { select: { id: true, name: true, balance: true } },
-      debt: {
-        select: {
-          id: true,
-          creditor: true,
-          description: true,
-          remainingAmount: true,
-          status: true,
+    try {
+      const recurringPayment = await this.recurringRepo.findByIdAndUser(id, userId, {
+        account: { select: { id: true, name: true, balance: true } },
+        debt: {
+          select: {
+            id: true,
+            creditor: true,
+            description: true,
+            remainingAmount: true,
+            status: true,
+          },
         },
-      },
-    });
+      });
 
-    if (!recurringPayment) {
-      throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
+      if (!recurringPayment) {
+        throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
+      }
+
+      return recurringPayment as unknown as RdpWithFullRelations;
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo obtener el pago recurrente {} del usuario {}',
+        id,
+        userId
+      );
     }
-
-    return recurringPayment as unknown as RdpWithFullRelations;
   }
 
   async updateRecurringDebtPayment(
@@ -118,54 +147,72 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     userId: string,
     data: UpdateRecurringDebtPaymentInput
   ): Promise<RdpCreated> {
-    const existing = await this.recurringRepo.findByIdAndUser(id, userId);
+    try {
+      const existing = await this.recurringRepo.findByIdAndUser(id, userId);
 
-    if (!existing) {
-      throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
-    }
-
-    // If frequency changes, recalculate nextDueDate
-    let nextDueDate = existing.nextDueDate;
-    if (data.frequency || data.dayOfMonth !== undefined || data.dayOfWeek !== undefined) {
-      const frequency = data.frequency || existing.frequency;
-      const dayOfMonth = data.dayOfMonth !== undefined ? data.dayOfMonth : existing.dayOfMonth;
-      const dayOfWeek = data.dayOfWeek !== undefined ? data.dayOfWeek : existing.dayOfWeek;
-
-      nextDueDate = calculateNextDueDate(frequency, dayOfMonth, dayOfWeek, new Date());
-    }
-
-    const updated = await this.recurringRepo.update(
-      id,
-      {
-        amount: data.amount,
-        accountId: data.accountId,
-        frequency: data.frequency,
-        dayOfMonth: data.dayOfMonth,
-        dayOfWeek: data.dayOfWeek,
-        endDate: data.endDate ? new Date(data.endDate) : undefined,
-        isActive: data.isActive,
-        notes: data.notes,
-        nextDueDate,
-      } as unknown as Prisma.RecurringDebtPaymentUpdateInput,
-      {
-        account: { select: { id: true, name: true } },
-        debt: { select: { id: true, creditor: true, description: true, remainingAmount: true } },
+      if (!existing) {
+        throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
       }
-    );
 
-    return updated as unknown as RdpCreated;
+      // If frequency changes, recalculate nextDueDate
+      let nextDueDate = existing.nextDueDate;
+      if (data.frequency || data.dayOfMonth !== undefined || data.dayOfWeek !== undefined) {
+        const frequency = data.frequency || existing.frequency;
+        const dayOfMonth = data.dayOfMonth !== undefined ? data.dayOfMonth : existing.dayOfMonth;
+        const dayOfWeek = data.dayOfWeek !== undefined ? data.dayOfWeek : existing.dayOfWeek;
+
+        nextDueDate = calculateNextDueDate(frequency, dayOfMonth, dayOfWeek, new Date());
+      }
+
+      const updated = await this.recurringRepo.update(
+        id,
+        {
+          amount: data.amount,
+          accountId: data.accountId,
+          frequency: data.frequency,
+          dayOfMonth: data.dayOfMonth,
+          dayOfWeek: data.dayOfWeek,
+          endDate: data.endDate ? new Date(data.endDate) : undefined,
+          isActive: data.isActive,
+          notes: data.notes,
+          nextDueDate,
+        } as unknown as Prisma.RecurringDebtPaymentUpdateInput,
+        {
+          account: { select: { id: true, name: true } },
+          debt: { select: { id: true, creditor: true, description: true, remainingAmount: true } },
+        }
+      );
+
+      return updated as unknown as RdpCreated;
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo actualizar el pago recurrente {} del usuario {}',
+        id,
+        userId
+      );
+    }
   }
 
   async deleteRecurringDebtPayment(id: string, userId: string): Promise<{ message: string }> {
-    const recurringPayment = await this.recurringRepo.findByIdAndUser(id, userId);
+    try {
+      const recurringPayment = await this.recurringRepo.findByIdAndUser(id, userId);
 
-    if (!recurringPayment) {
-      throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
+      if (!recurringPayment) {
+        throw new NotFoundError(RECURRING_DEBT_PAYMENT_MESSAGES.NOT_FOUND);
+      }
+
+      await this.recurringRepo.remove(id);
+
+      return { message: RECURRING_DEBT_PAYMENT_MESSAGES.DELETED };
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo eliminar el pago recurrente {} del usuario {}',
+        id,
+        userId
+      );
     }
-
-    await this.recurringRepo.remove(id);
-
-    return { message: RECURRING_DEBT_PAYMENT_MESSAGES.DELETED };
   }
 
   async processPendingRecurringPayments(): Promise<ProcessPendingResult> {
@@ -176,10 +223,18 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
     type RdpWithDebtAccount = Prisma.RecurringDebtPaymentGetPayload<{
       include: { debt: true; account: true };
     }>;
-    const duePayments = (await this.recurringRepo.findDuePayments(today, {
-      debt: true,
-      account: true,
-    })) as unknown as RdpWithDebtAccount[];
+    let duePayments: RdpWithDebtAccount[];
+    try {
+      duePayments = (await this.recurringRepo.findDuePayments(today, {
+        debt: true,
+        account: true,
+      })) as unknown as RdpWithDebtAccount[];
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudieron obtener los pagos recurrentes pendientes de procesar'
+      );
+    }
 
     const results: ProcessPendingResultEntry[] = [];
 
@@ -231,6 +286,14 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
           nextDueDate,
         });
       } catch (error: unknown) {
+        // El fallo de un pago recurrente no debe abortar el procesamiento del resto
+        logger.error(
+          error,
+          'No se pudo procesar el pago recurrente {} de la deuda {} del usuario {}',
+          recurringPayment.id,
+          recurringPayment.debtId,
+          recurringPayment.userId
+        );
         results.push({
           id: recurringPayment.id,
           status: PROCESS_PENDING_STATUS.ERROR,
@@ -249,10 +312,18 @@ export class RecurringDebtPaymentsServiceImpl implements RecurringDebtPaymentsSe
   }
 
   async findRecurringPaymentById(id: string) {
-    return this.recurringRepo.findUnique(id);
+    try {
+      return await this.recurringRepo.findUnique(id);
+    } catch (error) {
+      return logger.fail(error, 'No se pudo buscar el pago recurrente {}', id);
+    }
   }
 
   async updateRecurringPaymentFields(id: string, data: Prisma.RecurringDebtPaymentUpdateInput) {
-    return this.recurringRepo.update(id, data);
+    try {
+      return await this.recurringRepo.update(id, data);
+    } catch (error) {
+      return logger.fail(error, 'No se pudieron actualizar los campos del pago recurrente {}', id);
+    }
   }
 }
