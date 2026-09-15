@@ -230,6 +230,22 @@ describe('CreditCardsServiceImpl', () => {
         expect.objectContaining({ gte: expect.any(Date), lte: expect.any(Date) })
       );
     });
+
+    it('monthsBack=12 amplía el gte de la consulta respecto al default (6)', async () => {
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      await service.getCreditCardStatement('card-1', 'user-1');
+      const gteDefault = mockedFindCardStatementTransactions.mock.calls[0]![2].gte as Date;
+
+      vi.clearAllMocks();
+      mockedFindCardStatementTransactions.mockResolvedValue([]);
+      await service.getCreditCardStatement('card-1', 'user-1', 12);
+      const gte12Months = mockedFindCardStatementTransactions.mock.calls[0]![2].gte as Date;
+
+      expect(gte12Months.getTime()).toBeLessThan(gteDefault.getTime());
+    });
   });
 
   describe('getCreditCardsSummary', () => {
@@ -468,6 +484,147 @@ describe('CreditCardsServiceImpl', () => {
       });
 
       expect(mockedCreateTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('payCreditCardStatement con periodStart (período atrasado)', () => {
+    // today=10 jun 2026, cutoffDay=5 -> lastCutoff=5 jun. Con monthsBack=6 (default),
+    // el período [5-feb-2026, 4-mar-2026] es un candidato atrasado.
+
+    it('(a) periodStart válido: crea income + expense y registra el pago con las fechas del período', async () => {
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 1, 10), amount: 40 }, // feb — atrasado
+      ]);
+      const createCalls: unknown[] = [];
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+        creditCardPaymentRepo: {
+          create: async (data) => {
+            createCalls.push(data);
+            return { id: 'payment-overdue' } as unknown as CreditCardPayment;
+          },
+        },
+      });
+
+      const payment = await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 40,
+        paymentAccountId: 'account-bank',
+        periodStart: '2026-02-05',
+      });
+
+      expect(payment.id).toBe('payment-overdue');
+      expect(mockedCreateTransaction).toHaveBeenCalledTimes(2);
+      const call = createCalls[0] as { periodStart: Date; periodEnd: Date };
+      expect(call.periodStart.toISOString().slice(0, 10)).toBe('2026-02-05');
+      expect(call.periodEnd.toISOString().slice(0, 10)).toBe('2026-03-04');
+    });
+
+    it('(b) repetir el pago del mismo período atrasado ⇒ ConflictError', async () => {
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 1, 10), amount: 40 },
+      ]);
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+        creditCardPaymentRepo: {
+          findMany: async () => [
+            {
+              periodStart: new Date(Date.UTC(2026, 1, 5)),
+              periodEnd: new Date(Date.UTC(2026, 2, 4)),
+            } as unknown as CreditCardPayment,
+          ],
+        },
+      });
+
+      await expect(
+        service.payCreditCardStatement('card-1', 'user-1', {
+          amount: 40,
+          paymentAccountId: 'card-1',
+          periodStart: '2026-02-05',
+        })
+      ).rejects.toThrow('El estado de cuenta ya está pagado');
+    });
+
+    it('(c) periodStart inventado/futuro ⇒ NotFoundError y ninguna transacción creada', async () => {
+      mockedFindCardStatementTransactions.mockResolvedValue([]);
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      await expect(
+        service.payCreditCardStatement('card-1', 'user-1', {
+          amount: 40,
+          paymentAccountId: 'card-1',
+          periodStart: '2026-08-05', // futuro respecto a lastCutoff, no calza ningún corte
+        })
+      ).rejects.toThrow('El período solicitado no existe o ya fue pagado');
+
+      expect(mockedCreateTransaction).not.toHaveBeenCalled();
+    });
+
+    it('(e) período de hace 8 meses (fuera del default de 6, dentro del máximo de 12) se paga sin 404', async () => {
+      // today=10 jun 2026, cutoffDay=5. Un período con default=6 no listaría nada
+      // anterior a diciembre 2025; con la ventana máxima (12) sí incluye octubre 2025.
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2025, 9, 10), amount: 55 }, // oct 2025
+      ]);
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      const payment = await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 55,
+        paymentAccountId: 'card-1',
+        periodStart: '2025-10-05',
+      });
+
+      expect(payment.id).toBe('payment-1');
+    });
+
+    it('(d) con gasto fijo activo: pagar un atrasado no lo toca, pagar el closedPeriod sí', async () => {
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+      mockedFindFirstFixedExpense.mockResolvedValue({
+        id: 'fe-1',
+        name: 'Pago Tarjeta',
+        categoryId: 'category-1',
+      });
+      mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 1, 10), amount: 40 }, // feb — atrasado
+      ]);
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 40,
+        paymentAccountId: 'card-1',
+        periodStart: '2026-02-05',
+      });
+
+      expect(mockedFindFirstFixedExpense).not.toHaveBeenCalled();
+      expect(mockedCreateTransaction).toHaveBeenCalledTimes(1); // solo income (misma cuenta origen)
+
+      vi.clearAllMocks();
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-2' });
+      mockedFindFirstFixedExpense.mockResolvedValue({
+        id: 'fe-1',
+        name: 'Pago Tarjeta',
+        categoryId: 'category-1',
+      });
+      mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
+      mockedFindCardStatementTransactions.mockResolvedValue([
+        { accountId: 'card-1', date: new Date(2026, 4, 10), amount: 100 }, // may — closedPeriod
+      ]);
+
+      await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 100,
+        paymentAccountId: 'card-1',
+      });
+
+      expect(mockedFindFirstFixedExpense).toHaveBeenCalled();
+      expect(mockedCreateTransaction).toHaveBeenCalledTimes(2); // income + gasto fijo
     });
   });
 });

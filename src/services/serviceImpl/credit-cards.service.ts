@@ -6,12 +6,18 @@ import {
   getPaymentDueDate,
   getDaysBetween,
   normalizeToUTC,
+  buildClosedPeriodBounds,
+  formatDateKey,
 } from '../../lib/utils/credit-card.utils.js';
 import type { CreditCardPaymentRepository } from '../../repositories/interfaces/credit-card-payment.repository.port.js';
 import type { FixedExpenseRepository } from '../../repositories/interfaces/fixed-expense.repository.port.js';
 import { getMonthRange } from '../../lib/utils/date.utils.js';
 import { CATEGORY_SYSTEM_KEYS } from '../../lib/constants/category-system-keys.js';
-import { CREDIT_CARD_MESSAGES } from '../../lib/constants/credit-card.constants.js';
+import {
+  CREDIT_CARD_MESSAGES,
+  OVERDUE_LOOKBACK_MONTHS_DEFAULT,
+  OVERDUE_LOOKBACK_MONTHS_MAX,
+} from '../../lib/constants/credit-card.constants.js';
 import { ACCOUNT_TYPES } from '../../lib/constants/account.constants.js';
 import { TRANSACTION_TYPE } from '../../lib/constants/shared.constants.js';
 import type { TransactionsService } from '../interfaces/transactions.service.port.js';
@@ -20,6 +26,7 @@ import type { CategoriesService } from '../interfaces/categories.service.port.js
 import type {
   CreditCardsService,
   CreditCardStatement,
+  CreditCardOverduePeriod,
   CreditCardsSummary,
   PayCreditCardStatementInput,
 } from '../interfaces/credit-cards.service.port.js';
@@ -36,7 +43,8 @@ export function buildStatement(
   account: Account,
   transactions: Transaction[],
   payments: CreditCardPayment[],
-  today: Date
+  today: Date,
+  monthsBack: number = OVERDUE_LOOKBACK_MONTHS_DEFAULT
 ): CreditCardStatement {
   if (!account.cutoffDay || !account.paymentDueDay) {
     throw new ValidationError('La tarjeta no tiene configuradas las fechas de corte y pago');
@@ -44,9 +52,12 @@ export function buildStatement(
 
   const { lastCutoff, nextCutoff } = getCutoffDates(account.cutoffDay);
 
-  // Calculate previous cutoff for closed period
-  const previousCutoff = new Date(lastCutoff);
-  previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+  // Fronteras de los últimos `monthsBack` períodos cerrados, ascendente; el último
+  // elemento es el período cerrado más reciente (closedPeriod de hoy).
+  const periodBounds = buildClosedPeriodBounds(lastCutoff, monthsBack);
+  const closedBounds = periodBounds[periodBounds.length - 1]!;
+  const previousCutoff = closedBounds.startDate;
+  const closedPeriodEnd = closedBounds.endDate;
 
   // Normalize dates to UTC midnight for consistent comparisons
   const previousCutoffUTC = normalizeToUTC(previousCutoff);
@@ -64,10 +75,6 @@ export function buildStatement(
   const currentBalance = currentPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
   const closedBalance = closedPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
 
-  // Calculate period end dates (one day before the next cutoff)
-  const closedPeriodEnd = new Date(lastCutoff);
-  closedPeriodEnd.setDate(closedPeriodEnd.getDate() - 1);
-
   // Normalize to UTC midnight for consistent comparisons
   const closedPeriodEndUTC = normalizeToUTC(closedPeriodEnd);
 
@@ -82,6 +89,44 @@ export function buildStatement(
   const paymentDueDate = getPaymentDueDate(lastCutoff, account.paymentDueDay);
   const daysUntilDue = getDaysBetween(today, paymentDueDate);
   const daysUntilCutoff = getDaysBetween(today, nextCutoff);
+
+  // Períodos cerrados anteriores al closedPeriod (candidatos: todos menos el último,
+  // que es closedBounds). Se descartan los ya pagados (mismo match UTC-normalizado
+  // que closedPeriodPayment) y los de balance 0.
+  const isPeriodPaid = (startDate: Date, endDate: Date): boolean => {
+    const startUTC = normalizeToUTC(startDate);
+    const endUTC = normalizeToUTC(endDate);
+    return payments.some(
+      (p) =>
+        p.periodStart.getTime() === startUTC.getTime() && p.periodEnd.getTime() === endUTC.getTime()
+    );
+  };
+
+  const overduePeriods: CreditCardOverduePeriod[] = periodBounds
+    .slice(0, -1)
+    .filter(({ startDate, endDate }) => !isPeriodPaid(startDate, endDate))
+    .map(({ startDate, endDate }) => {
+      // Cutoff que cierra este período (el que abre el siguiente): un día después de endDate.
+      const periodCutoff = new Date(endDate);
+      periodCutoff.setDate(periodCutoff.getDate() + 1);
+
+      const periodTransactions = transactions.filter(
+        (tx) => tx.date >= startDate && tx.date < periodCutoff
+      );
+      const balance = periodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
+      const overduePaymentDueDate = getPaymentDueDate(periodCutoff, account.paymentDueDay!);
+
+      return {
+        startDate,
+        endDate,
+        periodKey: formatDateKey(startDate),
+        balance,
+        transactionCount: periodTransactions.length,
+        paymentDueDate: overduePaymentDueDate,
+        daysOverdue: getDaysBetween(overduePaymentDueDate, today),
+      };
+    })
+    .filter((period) => period.balance !== 0);
 
   // Calculate period end dates (one day before the next cutoff)
   const currentPeriodEnd = new Date(nextCutoff);
@@ -150,6 +195,7 @@ export function buildStatement(
       paymentDueDate,
       daysUntilDue,
     },
+    overduePeriods,
     creditLimit,
     available,
     usagePercentage,
@@ -173,7 +219,11 @@ export class CreditCardsServiceImpl implements CreditCardsService {
   /**
    * Get credit card statement with current and closed periods
    */
-  async getCreditCardStatement(accountId: string, userId: string): Promise<CreditCardStatement> {
+  async getCreditCardStatement(
+    accountId: string,
+    userId: string,
+    monthsBack: number = OVERDUE_LOOKBACK_MONTHS_DEFAULT
+  ): Promise<CreditCardStatement> {
     try {
       const account = await this.accountsService.findAccountById(accountId, userId);
 
@@ -187,18 +237,17 @@ export class CreditCardsServiceImpl implements CreditCardsService {
 
       const today = new Date();
       const { lastCutoff } = getCutoffDates(account.cutoffDay);
-      const previousCutoff = new Date(lastCutoff);
-      previousCutoff.setMonth(previousCutoff.getMonth() - 1);
+      const oldestPeriodStart = buildClosedPeriodBounds(lastCutoff, monthsBack)[0]!.startDate;
 
       const [transactions, payments] = await Promise.all([
         this.transactionsService.findCardStatementTransactions(userId, [accountId], {
-          gte: previousCutoff,
+          gte: oldestPeriodStart,
           lte: today,
         }),
         this.creditCardPaymentRepo.findMany({ accountId }),
       ]);
 
-      return buildStatement(account, transactions, payments, today);
+      return buildStatement(account, transactions, payments, today, monthsBack);
     } catch (error) {
       return logger.fail(
         error,
@@ -212,7 +261,10 @@ export class CreditCardsServiceImpl implements CreditCardsService {
   /**
    * Get summary of all credit cards for dashboard
    */
-  async getCreditCardsSummary(userId: string): Promise<CreditCardsSummary> {
+  async getCreditCardsSummary(
+    userId: string,
+    monthsBack: number = OVERDUE_LOOKBACK_MONTHS_DEFAULT
+  ): Promise<CreditCardsSummary> {
     try {
       const creditCards = await this.accountsService.getCreditCards(userId);
       const eligibleCards = creditCards.filter((card) => card.cutoffDay && card.paymentDueDay);
@@ -224,17 +276,17 @@ export class CreditCardsServiceImpl implements CreditCardsService {
       const today = new Date();
       const cardIds = eligibleCards.map((card) => card.id);
 
-      const previousCutoffs = eligibleCards.map((card) => {
+      const oldestPeriodStarts = eligibleCards.map((card) => {
         const { lastCutoff } = getCutoffDates(card.cutoffDay!);
-        const previousCutoff = new Date(lastCutoff);
-        previousCutoff.setMonth(previousCutoff.getMonth() - 1);
-        return previousCutoff;
+        return buildClosedPeriodBounds(lastCutoff, monthsBack)[0]!.startDate;
       });
-      const minPreviousCutoff = new Date(Math.min(...previousCutoffs.map((d) => d.getTime())));
+      const minOldestPeriodStart = new Date(
+        Math.min(...oldestPeriodStarts.map((d) => d.getTime()))
+      );
 
       const [allTransactions, allPayments] = await Promise.all([
         this.transactionsService.findCardStatementTransactions(userId, cardIds, {
-          gte: minPreviousCutoff,
+          gte: minOldestPeriodStart,
           lte: today,
         }),
         this.creditCardPaymentRepo.findMany({ accountId: { in: cardIds } }),
@@ -259,7 +311,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
           card,
           transactionsByAccount.get(card.id) ?? [],
           paymentsByAccount.get(card.id) ?? [],
-          today
+          today,
+          monthsBack
         )
       );
 
@@ -318,19 +371,21 @@ export class CreditCardsServiceImpl implements CreditCardsService {
     userId: string,
     data: PayCreditCardStatementInput
   ): Promise<CreditCardPayment> {
-    const statement = await this.getCreditCardStatement(accountId, userId);
+    // Pagar un período atrasado usa la ventana máxima (no el default): el período pudo
+    // haberse listado con cualquier valor del selector 3/6/12, y resolverlo contra el
+    // default rompería el pago de períodos entre 7 y 12 meses visibles en pantalla.
+    // Pagar el closedPeriod (sin periodStart) no depende de la ventana: se mantiene el
+    // default, más barato para el caso común.
+    const statement = await this.getCreditCardStatement(
+      accountId,
+      userId,
+      data.periodStart ? OVERDUE_LOOKBACK_MONTHS_MAX : undefined
+    );
 
     try {
-      if (statement.closedPeriod.isPaid) {
-        logger.warn(
-          'Pago rechazado: periodo {} - {} de la cuenta {} ya estaba pagado (balance={})',
-          statement.closedPeriod.startDate.toISOString().slice(0, 10),
-          statement.closedPeriod.endDate.toISOString().slice(0, 10),
-          accountId,
-          statement.closedPeriod.balance
-        );
-        throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
-      }
+      const targetPeriod = data.periodStart
+        ? await this.resolveOverduePeriod(accountId, statement, data.periodStart)
+        : this.resolveClosedPeriod(accountId, statement);
 
       const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
 
@@ -372,48 +427,53 @@ export class CreditCardsServiceImpl implements CreditCardsService {
         amount: data.amount,
         paymentDate,
         // Normalizado a UTC: el chequeo de "ya pagado" en buildStatement compara contra
-        // fechas UTC-normalizadas, pero closedPeriod.startDate/endDate quedan en hora
-        // local — sin esto, un pago nunca calza con ese chequeo en timezones != UTC.
-        periodStart: normalizeToUTC(statement.closedPeriod.startDate),
-        periodEnd: normalizeToUTC(statement.closedPeriod.endDate),
+        // fechas UTC-normalizadas, pero startDate/endDate quedan en hora local — sin esto,
+        // un pago nunca calza con ese chequeo en timezones != UTC.
+        periodStart: normalizeToUTC(targetPeriod.startDate),
+        periodEnd: normalizeToUTC(targetPeriod.endDate),
         transaction: { connect: { id: transaction.id } },
       });
 
-      // Mark associated fixed expense as paid (if exists)
-      const fixedExpense = await this.fixedExpenseRepo.findFirst({
-        userId,
-        creditCardAccountId: accountId,
-        isActive: true,
-      });
+      // Pagar un período atrasado no marca el gasto fijo del mes como pagado: el gasto fijo
+      // es del mes en curso, y aplicar este bloque a un período de hace varios meses crearía
+      // una transacción de gasto fijo que el usuario no hizo (interpretación 4 del techplan).
+      if (!data.periodStart) {
+        // Mark associated fixed expense as paid (if exists)
+        const fixedExpense = await this.fixedExpenseRepo.findFirst({
+          userId,
+          creditCardAccountId: accountId,
+          isActive: true,
+        });
 
-      if (fixedExpense) {
-        // Create transaction for the fixed expense
-        const now = new Date();
-        const { start: startOfMonth, end: endOfMonth } = getMonthRange(
-          now.getFullYear(),
-          now.getMonth()
-        );
-
-        // Check if there's already a payment this month
-        const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
-          fixedExpense.id,
-          { gte: startOfMonth, lt: endOfMonth }
-        );
-
-        // Only create if there's no payment this month
-        if (!existingPayment) {
-          await this.transactionsService.createTransaction(
-            {
-              amount: data.amount,
-              type: TRANSACTION_TYPE.EXPENSE,
-              description: `Pago: ${fixedExpense.name}`,
-              date: paymentDate.toISOString(),
-              accountId: data.paymentAccountId,
-              categoryId: fixedExpense.categoryId,
-              fixedExpenseId: fixedExpense.id,
-            },
-            userId
+        if (fixedExpense) {
+          // Create transaction for the fixed expense
+          const now = new Date();
+          const { start: startOfMonth, end: endOfMonth } = getMonthRange(
+            now.getFullYear(),
+            now.getMonth()
           );
+
+          // Check if there's already a payment this month
+          const existingPayment = await this.transactionsService.findFixedExpensePaymentInMonth(
+            fixedExpense.id,
+            { gte: startOfMonth, lt: endOfMonth }
+          );
+
+          // Only create if there's no payment this month
+          if (!existingPayment) {
+            await this.transactionsService.createTransaction(
+              {
+                amount: data.amount,
+                type: TRANSACTION_TYPE.EXPENSE,
+                description: `Pago: ${fixedExpense.name}`,
+                date: paymentDate.toISOString(),
+                accountId: data.paymentAccountId,
+                categoryId: fixedExpense.categoryId,
+                fixedExpenseId: fixedExpense.id,
+              },
+              userId
+            );
+          }
         }
       }
 
@@ -426,6 +486,87 @@ export class CreditCardsServiceImpl implements CreditCardsService {
         userId
       );
     }
+  }
+
+  /**
+   * Resuelve el período cerrado más reciente como objetivo del pago (comportamiento
+   * actual, sin `periodStart`). Lanza ConflictError si ya está pagado.
+   */
+  private resolveClosedPeriod(
+    accountId: string,
+    statement: CreditCardStatement
+  ): { startDate: Date; endDate: Date } {
+    if (statement.closedPeriod.isPaid) {
+      logger.warn(
+        'Pago rechazado: periodo {} - {} de la cuenta {} ya estaba pagado (balance={})',
+        statement.closedPeriod.startDate.toISOString().slice(0, 10),
+        statement.closedPeriod.endDate.toISOString().slice(0, 10),
+        accountId,
+        statement.closedPeriod.balance
+      );
+      throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
+    }
+
+    return statement.closedPeriod;
+  }
+
+  /**
+   * Resuelve un período atrasado concreto contra `statement.overduePeriods` (calculado en
+   * servidor, nunca a partir del string recibido). Si `periodStart` no calza con ningún
+   * período impago pero sí con uno ya cubierto por un `CreditCardPayment`, distingue
+   * ConflictError (protección de doble pago) de NotFoundError (período inexistente/futuro).
+   */
+  private async resolveOverduePeriod(
+    accountId: string,
+    statement: CreditCardStatement,
+    periodStart: string
+  ): Promise<{ startDate: Date; endDate: Date }> {
+    // Comparación por string (periodKey/formatDateKey), no por instante UTC: `startDate`
+    // se serializa a JSON en UTC y puede desplazar el día calendario en husos horarios
+    // adelantados a UTC. periodKey usa componentes locales en ambos lados, sin ambigüedad.
+    const overdueMatch = statement.overduePeriods.find(
+      (period) => period.periodKey === periodStart
+    );
+
+    if (overdueMatch) {
+      return overdueMatch;
+    }
+
+    const { lastCutoff } = getCutoffDates(statement.account.cutoffDay!);
+    const candidateBounds = buildClosedPeriodBounds(lastCutoff, OVERDUE_LOOKBACK_MONTHS_MAX).slice(
+      0,
+      -1
+    );
+    const candidateMatch = candidateBounds.find(
+      (bounds) => formatDateKey(bounds.startDate) === periodStart
+    );
+
+    if (candidateMatch) {
+      const payments = await this.creditCardPaymentRepo.findMany({ accountId });
+      const startUTC = normalizeToUTC(candidateMatch.startDate);
+      const endUTC = normalizeToUTC(candidateMatch.endDate);
+      const alreadyPaid = payments.some(
+        (p) =>
+          p.periodStart.getTime() === startUTC.getTime() &&
+          p.periodEnd.getTime() === endUTC.getTime()
+      );
+
+      if (alreadyPaid) {
+        logger.warn(
+          'Pago rechazado: periodo {} de la cuenta {} ya estaba pagado',
+          periodStart,
+          accountId
+        );
+        throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
+      }
+    }
+
+    logger.warn(
+      'Pago rechazado: periodo {} no encontrado para la cuenta {}',
+      periodStart,
+      accountId
+    );
+    throw new NotFoundError(CREDIT_CARD_MESSAGES.PERIOD_NOT_FOUND);
   }
 
   /**
