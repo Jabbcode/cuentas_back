@@ -15,6 +15,7 @@ import { DebtsServiceImpl } from './services/serviceImpl/debts.service.js';
 import { RecurringDebtPaymentsServiceImpl } from './services/serviceImpl/recurring-debt-payments.service.js';
 import { NotificationRepositoryImpl } from './repositories/repositoryImpl/notification.repository.js';
 import { CreditCardPaymentRepositoryImpl } from './repositories/repositoryImpl/credit-card-payment.repository.js';
+import { CreditLimitHistoryRepositoryImpl } from './repositories/repositoryImpl/credit-limit-history.repository.js';
 import { CreditCardsServiceImpl } from './services/serviceImpl/credit-cards.service.js';
 import { FixedExpensesServiceImpl } from './services/serviceImpl/fixed-expenses.service.js';
 import { DashboardServiceImpl } from './services/serviceImpl/dashboard.service.js';
@@ -24,6 +25,7 @@ import { SettingsServiceImpl } from './services/serviceImpl/settings.service.js'
 import { ReceiptsServiceImpl } from './services/serviceImpl/receipts.service.js';
 
 const accountRepository = new AccountRepositoryImpl(prisma);
+const creditLimitHistoryRepository = new CreditLimitHistoryRepositoryImpl(prisma);
 export const accountsService = new AccountsServiceImpl(accountRepository, prisma);
 
 const userRepository = new UserRepositoryImpl(prisma);

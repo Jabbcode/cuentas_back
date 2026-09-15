@@ -1,6 +1,9 @@
 import type { Prisma, Account, Transfer, PrismaClient } from '@prisma/client';
 import { NotFoundError } from '../../lib/errors.js';
-import type { AccountRepository } from '../interfaces/account.repository.port.js';
+import type {
+  AccountRepository,
+  CreditLimitHistoryEntry,
+} from '../interfaces/account.repository.port.js';
 import { ACCOUNT_TYPES } from '../../lib/constants/account.constants.js';
 import { SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 
@@ -43,6 +46,33 @@ export class AccountRepositoryImpl implements AccountRepository {
     });
     if (!existing) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
     return this.prisma.account.update({ where: { id }, data });
+  }
+
+  async updateWithCreditLimitHistory(
+    id: string,
+    userId: string,
+    data: Prisma.AccountUpdateInput,
+    limitEntry: CreditLimitHistoryEntry | null
+  ): Promise<Account> {
+    const existing = await this.prisma.account.findFirst({
+      where: { id, userId },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+
+    return this.prisma.$transaction(async (tx) => {
+      const account = await tx.account.update({ where: { id }, data });
+      if (limitEntry) {
+        await tx.creditLimitHistory.create({
+          data: {
+            accountId: id,
+            creditLimit: limitEntry.creditLimit,
+            effectiveFrom: limitEntry.effectiveFrom,
+          },
+        });
+      }
+      return account;
+    });
   }
 
   async updateBalance(id: string, newBalance: number): Promise<Account> {

@@ -24,6 +24,23 @@ function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
   );
 }
 
+function fakePrismaWithTransaction(
+  txOverrides: { update?: ReturnType<typeof vi.fn>; create?: ReturnType<typeof vi.fn> } = {},
+  findFirstResult: unknown = { id: 'account-1' }
+): PrismaClient & { $transaction: ReturnType<typeof vi.fn> } {
+  const txAccountUpdate = txOverrides.update ?? vi.fn().mockResolvedValue({ id: 'account-1' });
+  const txHistoryCreate = txOverrides.create ?? vi.fn().mockResolvedValue({ id: 'history-1' });
+  const tx = {
+    account: { update: txAccountUpdate },
+    creditLimitHistory: { create: txHistoryCreate },
+  };
+
+  return {
+    account: { findFirst: vi.fn().mockResolvedValue(findFirstResult) },
+    $transaction: vi.fn(async (cb: (tx: typeof tx) => unknown) => cb(tx)),
+  } as unknown as PrismaClient & { $transaction: ReturnType<typeof vi.fn> };
+}
+
 describe('AccountRepositoryImpl', () => {
   it('findAllByUser filtra por userId', async () => {
     const prisma = fakePrisma();
@@ -132,6 +149,70 @@ describe('AccountRepositoryImpl', () => {
         select: { id: true },
       });
       expect(prisma.account.delete).toHaveBeenCalledWith({ where: { id: 'account-1' } });
+    });
+  });
+
+  describe('updateWithCreditLimitHistory', () => {
+    it('lanza NotFoundError si la cuenta no pertenece al usuario, sin abrir transacción', async () => {
+      const prisma = fakePrismaWithTransaction({}, null);
+      const repo = new AccountRepositoryImpl(prisma);
+
+      await expect(
+        repo.updateWithCreditLimitHistory(
+          'account-1',
+          'user-1',
+          { creditLimit: 500 } as never,
+          null
+        )
+      ).rejects.toThrow(NotFoundError);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('actualiza la cuenta y no inserta historial si limitEntry es null', async () => {
+      const txAccountUpdate = vi.fn().mockResolvedValue({ id: 'account-1' });
+      const txHistoryCreate = vi.fn();
+      const prisma = fakePrismaWithTransaction({
+        update: txAccountUpdate,
+        create: txHistoryCreate,
+      });
+      const repo = new AccountRepositoryImpl(prisma);
+
+      await repo.updateWithCreditLimitHistory('account-1', 'user-1', { name: 'x' } as never, null);
+
+      expect(txAccountUpdate).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { name: 'x' },
+      });
+      expect(txHistoryCreate).not.toHaveBeenCalled();
+    });
+
+    it('actualiza la cuenta e inserta la fila de historial dentro de la misma transacción', async () => {
+      const txAccountUpdate = vi.fn().mockResolvedValue({ id: 'account-1' });
+      const txHistoryCreate = vi.fn().mockResolvedValue({ id: 'history-1' });
+      const prisma = fakePrismaWithTransaction({
+        update: txAccountUpdate,
+        create: txHistoryCreate,
+      });
+      const repo = new AccountRepositoryImpl(prisma);
+      const effectiveFrom = new Date('2026-09-16T00:00:00Z');
+
+      await repo.updateWithCreditLimitHistory(
+        'account-1',
+        'user-1',
+        { creditLimit: 1000 } as never,
+        {
+          creditLimit: 1000,
+          effectiveFrom,
+        }
+      );
+
+      expect(txAccountUpdate).toHaveBeenCalledWith({
+        where: { id: 'account-1' },
+        data: { creditLimit: 1000 },
+      });
+      expect(txHistoryCreate).toHaveBeenCalledWith({
+        data: { accountId: 'account-1', creditLimit: 1000, effectiveFrom },
+      });
     });
   });
 
