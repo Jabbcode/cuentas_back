@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
-import { ConflictError, NotFoundError } from '../../../lib/errors.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../lib/errors.js';
+import { getPeriodBoundsForDate } from '../../../lib/utils/credit-card.utils.js';
 import type {
   CreateTransactionInput,
   UpdateTransactionInput,
@@ -13,18 +14,20 @@ import { TransactionsServiceImpl } from '../transactions.service.js';
 interface MockAccountRow {
   type: string;
   creditLimit: number | null;
-  balance: number;
-  initialBalance: number;
+  cutoffDay: number | null;
 }
 
 function fakeAccountRow(overrides: Partial<MockAccountRow> = {}): MockAccountRow {
   return {
     type: 'credit_card',
     creditLimit: 1000,
-    balance: 0,
-    initialBalance: 0,
+    cutoffDay: 5,
     ...overrides,
   };
+}
+
+function fakeHistoryEntry(creditLimit: number, effectiveFrom: string) {
+  return { creditLimit, effectiveFrom: new Date(effectiveFrom) };
 }
 
 function baseCreateInput(overrides: Partial<CreateTransactionInput> = {}): CreateTransactionInput {
@@ -112,6 +115,8 @@ function fakePrisma(
     transactionCreate?: ReturnType<typeof vi.fn>;
     transactionUpdate?: ReturnType<typeof vi.fn>;
     transactionDelete?: ReturnType<typeof vi.fn>;
+    transactionAggregate?: ReturnType<typeof vi.fn>;
+    limitHistoryFindMany?: ReturnType<typeof vi.fn>;
   } = {}
 ) {
   const txFake = {
@@ -128,6 +133,11 @@ function fakePrisma(
       create: txOverrides.transactionCreate ?? vi.fn().mockResolvedValue({ id: 'tx-1' }),
       update: txOverrides.transactionUpdate ?? vi.fn().mockResolvedValue({ id: 'tx-1' }),
       delete: txOverrides.transactionDelete ?? vi.fn().mockResolvedValue({ id: 'tx-1' }),
+      aggregate:
+        txOverrides.transactionAggregate ?? vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+    },
+    creditLimitHistory: {
+      findMany: txOverrides.limitHistoryFindMany ?? vi.fn().mockResolvedValue([]),
     },
     $queryRaw: txOverrides.queryRaw ?? vi.fn().mockResolvedValue([fakeAccountRow()]),
   };
@@ -139,11 +149,23 @@ function fakePrisma(
   return { prisma, txFake };
 }
 
-describe('TransactionsServiceImpl.createTransaction — límite de tarjeta de crédito', () => {
-  it('gasto que excede el límite lanza ConflictError y no crea la transacción ni cambia el saldo', async () => {
+describe('TransactionsServiceImpl.createTransaction — límite de período de tarjeta de crédito', () => {
+  const today = new Date(2026, 5, 10); // 10-jun-2026, cutoffDay=5 -> período actual [5-jun, 4-jul]
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(today);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('gasto que supera el límite de su período lanza ConflictError con un mensaje que nombra el período', async () => {
     const updateAccountBalance = vi.fn().mockResolvedValue(undefined);
     const { prisma, txFake } = fakePrisma({
       queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]),
+      transactionAggregate: vi.fn().mockResolvedValue({ _sum: { amount: 60 } }),
     });
     const service = new TransactionsServiceImpl(
       fakeTransactionRepo(),
@@ -153,17 +175,23 @@ describe('TransactionsServiceImpl.createTransaction — límite de tarjeta de cr
     );
 
     await expect(
-      service.createTransaction(baseCreateInput({ amount: 150, type: 'expense' }), 'user-1')
+      service.createTransaction(baseCreateInput({ amount: 50, type: 'expense' }), 'user-1')
     ).rejects.toThrow(ConflictError);
+    await expect(
+      service.createTransaction(baseCreateInput({ amount: 50, type: 'expense' }), 'user-1')
+    ).rejects.toThrow(/2026-06-05.*2026-07-04.*100/);
 
     expect(txFake.transaction.create).not.toHaveBeenCalled();
     expect(updateAccountBalance).not.toHaveBeenCalled();
   });
 
-  it('gasto dentro del límite crea la transacción usando el lock FOR UPDATE', async () => {
+  it('gasto dentro del límite del período crea la transacción usando el lock FOR UPDATE (incluye cutoffDay)', async () => {
     const updateAccountBalance = vi.fn().mockResolvedValue(undefined);
     const queryRaw = vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]);
-    const { prisma, txFake } = fakePrisma({ queryRaw });
+    const { prisma, txFake } = fakePrisma({
+      queryRaw,
+      transactionAggregate: vi.fn().mockResolvedValue({ _sum: { amount: 20 } }),
+    });
     const service = new TransactionsServiceImpl(
       fakeTransactionRepo(),
       fakeAccountsService({ updateAccountBalance }),
@@ -178,11 +206,95 @@ describe('TransactionsServiceImpl.createTransaction — límite de tarjeta de cr
     expect(txFake.transaction.create).toHaveBeenCalledTimes(1);
     expect(updateAccountBalance).toHaveBeenCalledTimes(1);
 
-    // La lectura de saldo para validar el límite debe tomar el lock de fila (FOR UPDATE):
-    // un SELECT plano permitiría que dos requests concurrentes lean el mismo saldo,
-    // pasen ambas la validación y dejen el uso por encima del límite.
     const queryStrings = (queryRaw.mock.calls[0][0] as TemplateStringsArray).join('');
     expect(queryStrings).toContain('FOR UPDATE');
+    expect(queryStrings).toContain('cutoffDay');
+  });
+
+  it('la suma del período filtra solo por el rango de ESE período (mismos bounds que getPeriodBoundsForDate)', async () => {
+    const transactionAggregate = vi.fn().mockResolvedValue({ _sum: { amount: 0 } });
+    const { prisma } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 1000 })]),
+      transactionAggregate,
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await service.createTransaction(baseCreateInput({ amount: 10 }), 'user-1');
+
+    const { startDate, endDate } = getPeriodBoundsForDate(5, today);
+    const nextCutoff = new Date(endDate);
+    nextCutoff.setDate(nextCutoff.getDate() + 1);
+
+    const [{ where }] = transactionAggregate.mock.calls[0];
+    expect(where.accountId).toBe('account-1');
+    expect(where.userId).toBe('user-1');
+    expect(where.type).toBe('expense');
+    expect(where.date).toEqual({ gte: startDate, lt: nextCutoff });
+  });
+
+  it('gasto aprobado aunque la tarjeta arrastre deuda atrasada grande de otros períodos (criterio 5: no valida saldo total)', async () => {
+    // La deuda atrasada NO llega aquí: el aggregate mockeado ya representa solo el
+    // período actual (bien poco usado), sin importar cuánto se deba en otros períodos.
+    const { prisma, txFake } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 500 })]),
+      transactionAggregate: vi.fn().mockResolvedValue({ _sum: { amount: 50 } }),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(
+      service.createTransaction(baseCreateInput({ amount: 100 }), 'user-1')
+    ).resolves.toEqual({ id: 'tx-1' });
+    expect(txFake.transaction.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('gasto con fecha de un período pasado se valida contra el límite histórico vigente en ese período, no el actual', async () => {
+    // Límite actual de la cuenta: 2000. Límite vigente en el período de feb-2026: 300.
+    const { prisma, txFake } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 2000 })]),
+      limitHistoryFindMany: vi.fn().mockResolvedValue([fakeHistoryEntry(300, '2026-01-01')]),
+      transactionAggregate: vi.fn().mockResolvedValue({ _sum: { amount: 250 } }),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    // 250 ya usado + 100 nuevo = 350 > 300 (histórico) aunque muy por debajo de 2000 (actual)
+    await expect(
+      service.createTransaction(
+        baseCreateInput({ amount: 100, date: '2026-02-10T00:00:00.000Z' }),
+        'user-1'
+      )
+    ).rejects.toThrow(ConflictError);
+    expect(txFake.transaction.create).not.toHaveBeenCalled();
+  });
+
+  it('tarjeta sin límite configurado (ni actual ni histórico) lanza ValidationError (422)', async () => {
+    const { prisma } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: null })]),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo(),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(
+      service.createTransaction(baseCreateInput({ amount: 10 }), 'user-1')
+    ).rejects.toThrow(ValidationError);
   });
 
   it('lanza NotFoundError si la cuenta no existe', async () => {
@@ -267,6 +379,17 @@ describe('TransactionsServiceImpl.createTransaction — límite de tarjeta de cr
 });
 
 describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicación de balance', () => {
+  const today = new Date(2026, 5, 10); // 10-jun-2026, cutoffDay=5
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(today);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   function fakeExisting(overrides: Record<string, unknown> = {}) {
     return {
       id: 'tx-1',
@@ -275,6 +398,7 @@ describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicaci�
       amount: 50,
       type: 'expense',
       categoryId: 'category-1',
+      date: today,
       ...overrides,
     };
   }
@@ -372,11 +496,11 @@ describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicaci�
     expect(transactionUpdate).not.toHaveBeenCalled();
   });
 
-  it('editar subiendo el monto por encima del límite lanza ConflictError y no persiste', async () => {
+  it('editar subiendo el monto por encima del límite de su período lanza ConflictError y no persiste', async () => {
     const updateTx = vi.fn();
     const { prisma } = fakePrisma({
-      // el servicio ya revirtió el gasto original (50) antes de leer la cuenta -> balance 0
-      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100, balance: 0 })]),
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]),
+      transactionAggregate: vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       transactionUpdate: updateTx,
     });
     const service = new TransactionsServiceImpl(
@@ -390,6 +514,100 @@ describe('TransactionsServiceImpl.updateTransaction — reversión y reaplicaci�
 
     await expect(service.updateTransaction('tx-1', data, 'user-1')).rejects.toThrow(ConflictError);
     expect(updateTx).not.toHaveBeenCalled();
+  });
+
+  it('subir el monto de una tx del mismo período excluye la tx editada de la suma (sin doble conteo)', async () => {
+    const transactionAggregate = vi.fn().mockResolvedValue({ _sum: { amount: 40 } }); // uso del período SIN esta tx
+    const { prisma, txFake } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]),
+      transactionAggregate,
+      transactionUpdate: vi
+        .fn()
+        .mockResolvedValue({ id: 'tx-1', accountId: 'account-1', amount: 55, type: 'expense' }),
+    });
+    // existente: monto 50 del mismo período; subir a 55 -> 40 (sin la tx) + 55 = 95 <= 100
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => fakeExisting({ amount: 50 }) as never }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(
+      service.updateTransaction('tx-1', { amount: 55 }, 'user-1')
+    ).resolves.toMatchObject({ id: 'tx-1' });
+
+    const [{ where }] = transactionAggregate.mock.calls[0];
+    expect(where.id).toEqual({ not: 'tx-1' });
+    expect(txFake.transaction.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('mover la fecha a otro período valida contra el límite y el uso de ese otro período', async () => {
+    const transactionAggregate = vi.fn().mockResolvedValue({ _sum: { amount: 0 } });
+    const { prisma } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 100 })]),
+      transactionAggregate,
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => fakeExisting() as never }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await service.updateTransaction('tx-1', { date: '2026-02-10' }, 'user-1');
+
+    const { startDate, endDate } = getPeriodBoundsForDate(5, new Date('2026-02-10'));
+    const nextCutoff = new Date(endDate);
+    nextCutoff.setDate(nextCutoff.getDate() + 1);
+    const [{ where }] = transactionAggregate.mock.calls[0];
+    expect(where.date).toEqual({ gte: startDate, lt: nextCutoff });
+  });
+
+  it('cambiar de tarjeta A a B valida el período de B, no el de A aunque A quede por encima de su límite', async () => {
+    const queryRaw = vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 500 })]);
+    const { prisma } = fakePrisma({
+      queryRaw,
+      transactionAggregate: vi.fn().mockResolvedValue({ _sum: { amount: 0 } }),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({
+        findByIdAndUser: async () => fakeExisting({ accountId: 'account-1' }) as never,
+      }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(
+      service.updateTransaction('tx-1', { accountId: 'account-2', amount: 50 }, 'user-1')
+    ).resolves.toMatchObject({ id: 'tx-1' });
+
+    // Un solo lock FOR UPDATE: el de la cuenta destino (account-2). La cuenta origen
+    // (account-1) solo revierte su balance, sin volver a validar su límite.
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('cambiar gasto a ingreso no valida el límite de período', async () => {
+    const transactionAggregate = vi.fn();
+    const { prisma } = fakePrisma({
+      queryRaw: vi.fn().mockResolvedValue([fakeAccountRow({ creditLimit: 10 })]),
+      transactionAggregate,
+      transactionUpdate: vi
+        .fn()
+        .mockResolvedValue({ id: 'tx-1', accountId: 'account-1', amount: 500, type: 'income' }),
+    });
+    const service = new TransactionsServiceImpl(
+      fakeTransactionRepo({ findByIdAndUser: async () => fakeExisting() as never }),
+      fakeAccountsService(),
+      fakeCategoryRepo(),
+      prisma
+    );
+
+    await expect(
+      service.updateTransaction('tx-1', { type: 'income', amount: 500 }, 'user-1')
+    ).resolves.toMatchObject({ id: 'tx-1' });
+    expect(transactionAggregate).not.toHaveBeenCalled();
   });
 });
 

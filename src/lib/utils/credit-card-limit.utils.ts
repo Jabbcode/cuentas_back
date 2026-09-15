@@ -1,4 +1,7 @@
 import { ConflictError, ValidationError } from '../errors.js';
+import { ACCOUNT_TYPES } from '../constants/account.constants.js';
+import { TRANSACTION_TYPE } from '../constants/shared.constants.js';
+import { CREDIT_CARD_MESSAGES } from '../constants/credit-card.constants.js';
 
 export interface CreditLimitEntry {
   creditLimit: number;
@@ -28,36 +31,42 @@ export function resolveCreditLimitAt(
   return resolved;
 }
 
-export interface CreditCardBalanceInfo {
+export interface CreditCardPeriodLimitInfo {
   type: string;
-  creditLimit: number | null;
-  balance: number;
-  initialBalance: number;
+  /** Límite vigente del período al que corresponde la fecha del gasto. `null` = sin límite configurado. */
+  periodLimit: number | null;
+  /** Gasto ya acumulado en ese período, sin contar `amount`. */
+  periodUsed: number;
+  periodStart: Date;
+  periodEnd: Date;
 }
 
 /**
- * Bloquea un gasto sobre tarjeta de crédito que dejaría el uso resultante por
- * encima del límite. `amount` es el monto del gasto que se aplicaría (decrementa
- * `balance`); `resultingType` es el tipo de movimiento tras la operación.
- * No valida cuentas que no sean tarjeta ni movimientos que no sean gasto.
+ * Bloquea un gasto sobre tarjeta de crédito que dejaría el uso del período al
+ * que corresponde su fecha por encima del límite vigente de ESE período —
+ * no del saldo acumulado de la cuenta ni de la deuda de otros períodos.
+ * `amount` es el monto del gasto que se aplicaría; `resultingType` es el tipo
+ * de movimiento tras la operación. No valida cuentas que no sean tarjeta ni
+ * movimientos que no sean gasto.
  */
-export function assertCreditCardLimit(
-  account: CreditCardBalanceInfo,
+export function assertCreditCardPeriodLimit(
+  card: CreditCardPeriodLimitInfo,
   amount: number,
   resultingType: string
 ): void {
-  if (account.type !== 'credit_card' || resultingType !== 'expense') {
+  if (card.type !== ACCOUNT_TYPES.CREDIT_CARD || resultingType !== TRANSACTION_TYPE.EXPENSE) {
     return;
   }
 
-  if (account.creditLimit == null) {
-    throw new ValidationError('La tarjeta no tiene configurado un límite de crédito');
+  if (card.periodLimit == null) {
+    throw new ValidationError(CREDIT_CARD_MESSAGES.MISSING_LIMIT);
   }
 
-  const resultingBalance = account.balance - amount;
-  const resultingUsage = account.initialBalance - resultingBalance;
+  const resultingUsage = card.periodUsed + amount;
 
-  if (resultingUsage > account.creditLimit) {
-    throw new ConflictError('Se superó el límite disponible de la tarjeta');
+  if (resultingUsage > card.periodLimit) {
+    throw new ConflictError(
+      CREDIT_CARD_MESSAGES.PERIOD_LIMIT_EXCEEDED(card.periodStart, card.periodEnd, card.periodLimit)
+    );
   }
 }
