@@ -65,6 +65,11 @@ export class CategoriesServiceImpl implements CategoriesService {
       const transactionCount = await this.transactionsService.countByCategory(id);
 
       if (transactionCount > 0) {
+        logger.warn(
+          'Eliminacion de categoria rechazada: categoria {} tiene {} transacciones',
+          id,
+          transactionCount
+        );
         throw new ConflictError(CATEGORY_MESSAGES.HAS_TRANSACTIONS);
       }
 

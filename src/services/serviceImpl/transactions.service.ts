@@ -8,7 +8,7 @@ import {
   assertCreditCardLimit,
   CreditCardBalanceInfo,
 } from '../../lib/utils/credit-card-limit.utils.js';
-import { NotFoundError } from '../../lib/errors.js';
+import { AppError, NotFoundError } from '../../lib/errors.js';
 import { createLogger } from '../../lib/logger.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 import type { TransactionType } from '../../lib/constants/shared.constants.js';
@@ -40,6 +40,34 @@ const RECEIPT_TRANSACTION_INCLUDE = {
 } as const;
 
 const logger = createLogger('TRANSACTIONS');
+
+/**
+ * Envuelve assertCreditCardLimit para loguear los numeros reales (limite,
+ * balance, monto intentado) cuando bloquea — sin esto, diagnosticar un 409
+ * de limite superado requiere consultar la cuenta a mano en la BD.
+ */
+function assertCreditCardLimitLogged(
+  account: CreditCardBalanceInfo,
+  amount: number,
+  resultingType: string,
+  accountId: string
+): void {
+  try {
+    assertCreditCardLimit(account, amount, resultingType);
+  } catch (error) {
+    if (error instanceof AppError) {
+      logger.warn(
+        'Limite de tarjeta: cuenta {} limit={} balance={} initialBalance={} monto={}',
+        accountId,
+        account.creditLimit,
+        account.balance,
+        account.initialBalance,
+        amount
+      );
+    }
+    throw error;
+  }
+}
 
 export class TransactionsServiceImpl implements TransactionsService {
   constructor(
@@ -208,7 +236,7 @@ export class TransactionsServiceImpl implements TransactionsService {
         const account = await this.lockAccountForBalanceUpdate(tx, data.accountId, userId);
         if (!account) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
 
-        assertCreditCardLimit(account, data.amount, data.type);
+        assertCreditCardLimitLogged(account, data.amount, data.type, data.accountId);
 
         const transaction = await tx.transaction.create({
           data: {
@@ -313,7 +341,12 @@ export class TransactionsServiceImpl implements TransactionsService {
         );
         if (!resultingAccount) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
 
-        assertCreditCardLimit(resultingAccount, resultingAmount, resultingType);
+        assertCreditCardLimitLogged(
+          resultingAccount,
+          resultingAmount,
+          resultingType,
+          resultingAccountId
+        );
 
         const updated = await tx.transaction.update({
           where: { id },

@@ -322,6 +322,13 @@ export class CreditCardsServiceImpl implements CreditCardsService {
 
     try {
       if (statement.closedPeriod.isPaid) {
+        logger.warn(
+          'Pago rechazado: periodo {} - {} de la cuenta {} ya estaba pagado (balance={})',
+          statement.closedPeriod.startDate.toISOString().slice(0, 10),
+          statement.closedPeriod.endDate.toISOString().slice(0, 10),
+          accountId,
+          statement.closedPeriod.balance
+        );
         throw new ConflictError(CREDIT_CARD_MESSAGES.ALREADY_PAID);
       }
 
