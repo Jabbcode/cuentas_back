@@ -3,7 +3,7 @@
 Documento vivo del estado actual del backend. Actualizar regularmente.
 
 ## 📅 Fecha de Actualización
-**Última actualización:** 2026-07-23
+**Última actualización:** 2026-09-16
 
 ## 🚀 Estado General
 API REST en producción activa. Arquitectura Clean (repositories + services + controllers) completada. Observabilidad con Sentry tunnel operativa. JWT migrado a httpOnly cookies. Features Budgets y Tags eliminadas (2026-06-02).
@@ -116,6 +116,20 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
       incluye script de backfill versionado (`prisma/data-migrations/`) ya ejecutado
       contra la DB de producción — duplicados reales unificados
 - [x] #51 — Release a `main`
+
+### ✅ Límite de crédito por período (feature `credit-card-period-limits`, 2026-09-16)
+- [x] Modelo `CreditLimitHistory` (append-only, con backfill en la migración)
+      registra desde cuándo rigió cada valor del `creditLimit` de una tarjeta.
+- [x] `assertCreditCardLimit` (saldo acumulado de la cuenta) reemplazado por
+      `assertCreditCardPeriodLimit`: valida el gasto acumulado del período al
+      que corresponde la fecha de la transacción contra el límite vigente de
+      ESE período — ya no contra el saldo total ni la deuda de otros períodos.
+- [x] El statement (`CreditCardPeriod`/`CreditCardOverduePeriod`) expone
+      `periodLimit` por período (actual, "A pagar" y cada atrasado), cargado
+      en una sola query (`findByAccounts`), sin N+1.
+- [x] Un período ya cerrado conserva para siempre el límite vigente cuando
+      cerró; el período abierto siempre usa el valor más reciente.
+- Spec: `~/vault/workspaces/cuentas-app/specs/credit-card-period-limits`.
 
 ### 📝 Pendiente
 - [ ] FEAT-014: Metas de ahorro (modelo SavingsGoal + CRUD)
