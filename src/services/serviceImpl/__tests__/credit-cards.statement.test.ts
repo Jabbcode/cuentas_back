@@ -242,4 +242,56 @@ describe('buildStatement', () => {
       expect(statement.overduePeriods).toEqual([]);
     });
   });
+
+  describe('periodLimit', () => {
+    it('sin historial: cada período usa el creditLimit actual de la cuenta (fallback)', () => {
+      const account = fakeAccount({ creditLimit: 1500 });
+
+      const statement = buildStatement(account, [], [], today);
+
+      expect(statement.currentPeriod.periodLimit).toBe(1500);
+      expect(statement.closedPeriod.periodLimit).toBe(1500);
+    });
+
+    it('currentPeriod siempre usa el valor más reciente de la cuenta, no el historial', () => {
+      const account = fakeAccount({ creditLimit: 2000 });
+      const limitHistory = [{ creditLimit: 500, effectiveFrom: new Date(2026, 3, 1) }];
+
+      const statement = buildStatement(account, [], [], today, undefined, limitHistory);
+
+      expect(statement.currentPeriod.periodLimit).toBe(2000);
+    });
+
+    it('closedPeriod usa el límite vigente al cerrar (lastCutoff = 5-jun-2026), no el actual', () => {
+      const account = fakeAccount({ creditLimit: 2000 });
+      // Límite vigente al cerrar el período (5-jun): 500 (desde 1-abr). El cambio a 2000
+      // (1-jun-2026, ANTES del cierre en este escenario) no debe aplicarse retroactivamente
+      // a un valor posterior al cierre — se prueba con una entrada posterior al cutoff.
+      const limitHistory = [
+        { creditLimit: 500, effectiveFrom: new Date(2026, 3, 1) }, // 1-abr, antes del cierre
+        { creditLimit: 900, effectiveFrom: new Date(2026, 5, 20) }, // 20-jun, DESPUÉS del cierre (5-jun)
+      ];
+
+      const statement = buildStatement(account, [], [], today, undefined, limitHistory);
+
+      // El cierre (5-jun) resuelve contra la última entrada <= esa fecha: 500 (1-abr).
+      // La entrada de 900 (20-jun) es posterior y no debe afectar al período ya cerrado.
+      expect(statement.closedPeriod.periodLimit).toBe(500);
+      expect(statement.currentPeriod.periodLimit).toBe(2000); // el actual, siempre el más reciente
+    });
+
+    it('overduePeriods resuelve el límite vigente en el cutoff de cada período', () => {
+      const account = fakeAccount({ creditLimit: 2000 });
+      const transactions = [
+        fakeTx(new Date(2026, 1, 10), 10), // feb — overdue
+        fakeTx(new Date(2026, 4, 10), 100), // may — closedPeriod
+      ];
+      // Período feb: [5-feb, 4-mar], cutoff de cierre = 5-mar.
+      const limitHistory = [{ creditLimit: 300, effectiveFrom: new Date(2026, 1, 1) }];
+
+      const statement = buildStatement(account, transactions, [], today, 4, limitHistory);
+
+      expect(statement.overduePeriods[0]!.periodLimit).toBe(300);
+    });
+  });
 });

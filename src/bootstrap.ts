@@ -73,7 +73,8 @@ export const creditCardsService = new CreditCardsServiceImpl(
   creditCardPaymentRepository,
   categoriesService,
   transactionsService,
-  fixedExpenseRepository
+  fixedExpenseRepository,
+  creditLimitHistoryRepository
 );
 export const fixedExpensesService = new FixedExpensesServiceImpl(
   fixedExpenseRepository,
