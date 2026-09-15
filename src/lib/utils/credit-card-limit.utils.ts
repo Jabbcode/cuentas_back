@@ -1,5 +1,33 @@
 import { ConflictError, ValidationError } from '../errors.js';
 
+export interface CreditLimitEntry {
+  creditLimit: number;
+  effectiveFrom: Date;
+}
+
+/**
+ * Límite vigente en el instante `at`: la última entrada de `entries` (se
+ * asume ordenada ascendente por `effectiveFrom`) con `effectiveFrom <= at`.
+ * Si ninguna entrada es anterior o igual a `at` (tarjeta sin historial
+ * previo a esa fecha), devuelve `fallback` — el `creditLimit` actual de la
+ * cuenta.
+ */
+export function resolveCreditLimitAt(
+  entries: CreditLimitEntry[],
+  at: Date,
+  fallback: number | null
+): number | null {
+  let resolved: number | null = fallback;
+  for (const entry of entries) {
+    if (entry.effectiveFrom.getTime() <= at.getTime()) {
+      resolved = entry.creditLimit;
+    } else {
+      break;
+    }
+  }
+  return resolved;
+}
+
 export interface CreditCardBalanceInfo {
   type: string;
   creditLimit: number | null;

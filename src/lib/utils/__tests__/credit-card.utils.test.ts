@@ -5,6 +5,7 @@ import {
   getDaysBetween,
   normalizeToUTC,
   buildClosedPeriodBounds,
+  getPeriodBoundsForDate,
 } from '../credit-card.utils.js';
 
 describe('getCutoffDates', () => {
@@ -105,5 +106,43 @@ describe('buildClosedPeriodBounds', () => {
   it('monthsBack=3 devuelve exactamente 3 elementos', () => {
     const lastCutoff = new Date(2026, 5, 10);
     expect(buildClosedPeriodBounds(lastCutoff, 3)).toHaveLength(3);
+  });
+});
+
+describe('getPeriodBoundsForDate', () => {
+  it('fecha en o después del cutoffDay: período empieza este mes', () => {
+    const { startDate, endDate } = getPeriodBoundsForDate(5, new Date(2026, 5, 10));
+    expect(startDate).toEqual(new Date(2026, 5, 5));
+    expect(endDate).toEqual(new Date(2026, 6, 4));
+  });
+
+  it('fecha antes del cutoffDay: período empieza el mes anterior', () => {
+    const { startDate, endDate } = getPeriodBoundsForDate(20, new Date(2026, 5, 10));
+    expect(startDate).toEqual(new Date(2026, 4, 20));
+    expect(endDate).toEqual(new Date(2026, 5, 19));
+  });
+
+  it('cutoffDay=31 en febrero clamea sin desbordar a marzo', () => {
+    const { startDate, endDate } = getPeriodBoundsForDate(31, new Date(2026, 1, 20));
+    expect(startDate).toEqual(new Date(2026, 0, 31));
+    expect(endDate).toEqual(new Date(2026, 1, 27)); // 2026 no es bisiesto: clamp a 28 - 1 día
+  });
+
+  it('coherente con buildClosedPeriodBounds para la misma fecha de corte (cutoffDay=15)', () => {
+    const lastCutoff = new Date(2026, 5, 15);
+    const [closed] = buildClosedPeriodBounds(lastCutoff, 1);
+    const dentroDelPeriodoCerrado = new Date(2026, 4, 20); // dentro de [15-may, 14-jun]
+    const { startDate, endDate } = getPeriodBoundsForDate(15, dentroDelPeriodoCerrado);
+    expect(startDate).toEqual(closed!.startDate);
+    expect(endDate).toEqual(closed!.endDate);
+  });
+
+  it('coherente con buildClosedPeriodBounds para cutoffDay=31 (mismo clamp de febrero)', () => {
+    const lastCutoff = new Date(2026, 2, 31); // 31-mar-2026
+    const [closed] = buildClosedPeriodBounds(lastCutoff, 1); // [28-feb, 30-mar]
+    const dentroDelPeriodoCerrado = new Date(2026, 2, 10);
+    const { startDate, endDate } = getPeriodBoundsForDate(31, dentroDelPeriodoCerrado);
+    expect(startDate).toEqual(closed!.startDate);
+    expect(endDate).toEqual(closed!.endDate);
   });
 });
