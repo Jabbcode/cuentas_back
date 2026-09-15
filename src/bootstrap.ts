@@ -26,7 +26,11 @@ import { ReceiptsServiceImpl } from './services/serviceImpl/receipts.service.js'
 
 const accountRepository = new AccountRepositoryImpl(prisma);
 const creditLimitHistoryRepository = new CreditLimitHistoryRepositoryImpl(prisma);
-export const accountsService = new AccountsServiceImpl(accountRepository, prisma);
+export const accountsService = new AccountsServiceImpl(
+  accountRepository,
+  prisma,
+  creditLimitHistoryRepository
+);
 
 const userRepository = new UserRepositoryImpl(prisma);
 export const authService = new AuthServiceImpl(userRepository);

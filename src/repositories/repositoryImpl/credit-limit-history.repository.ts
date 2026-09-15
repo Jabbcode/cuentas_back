@@ -10,4 +10,14 @@ export class CreditLimitHistoryRepositoryImpl implements CreditLimitHistoryRepos
       orderBy: { effectiveFrom: 'asc' },
     });
   }
+
+  async create(
+    accountId: string,
+    creditLimit: number,
+    effectiveFrom: Date
+  ): Promise<CreditLimitHistory> {
+    return this.prisma.creditLimitHistory.create({
+      data: { accountId, creditLimit, effectiveFrom },
+    });
+  }
 }
