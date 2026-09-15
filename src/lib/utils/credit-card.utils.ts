@@ -37,3 +37,55 @@ export function getDaysBetween(from: Date, to: Date): number {
 export function normalizeToUTC(date: Date): Date {
   return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0));
 }
+
+/**
+ * Formatea una fecha como YYYY-MM-DD usando sus componentes LOCALES (no UTC).
+ *
+ * Existe porque `Date` siempre se serializa a JSON como ISO en UTC
+ * (`toISOString()`), lo que puede desplazar el día calendario un día hacia
+ * atrás si el servidor corre en un huso horario adelantado a UTC (p. ej.
+ * Europe/Madrid). Un campo `Date` normal no sirve como clave estable para
+ * que el cliente la reenvíe sin ambigüedad — este helper sí, porque nunca
+ * pasa por una conversión UTC.
+ */
+export function formatDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Devuelve `monthsBack` períodos de un mes cada uno, terminando en `lastCutoff`,
+ * ordenados ascendente (más atrasado primero). El último elemento es el período
+ * cerrado más reciente (equivalente al `closedPeriod` de hoy).
+ *
+ * Cada corte se calcula de forma independiente respecto a `lastCutoff` (no
+ * encadenando `setMonth`), clameando el día al último día de ese mes cuando
+ * el día de corte (29/30/31) no existe — evita el desborde de mes a mes que
+ * arrastraba `previousCutoff.setMonth(previousCutoff.getMonth() - 1)`.
+ */
+export function buildClosedPeriodBounds(
+  lastCutoff: Date,
+  monthsBack: number
+): { startDate: Date; endDate: Date }[] {
+  const cutoffDay = lastCutoff.getDate();
+  const year = lastCutoff.getFullYear();
+  const month = lastCutoff.getMonth();
+
+  const cutoffAt = (offset: number): Date => {
+    const daysInTargetMonth = new Date(year, month - offset + 1, 0).getDate();
+    const day = Math.min(cutoffDay, daysInTargetMonth);
+    return new Date(year, month - offset, day);
+  };
+
+  const periods: { startDate: Date; endDate: Date }[] = [];
+  for (let k = monthsBack; k >= 1; k--) {
+    const startDate = cutoffAt(k);
+    const endDate = cutoffAt(k - 1);
+    endDate.setDate(endDate.getDate() - 1);
+    periods.push({ startDate, endDate });
+  }
+
+  return periods;
+}

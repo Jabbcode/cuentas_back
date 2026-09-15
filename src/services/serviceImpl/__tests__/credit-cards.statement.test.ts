@@ -165,4 +165,81 @@ describe('buildStatement', () => {
       expect.objectContaining({ type: 'cutoff_soon', severity: 'info' })
     );
   });
+
+  describe('overduePeriods', () => {
+    // cutoffDay=5, lastCutoff = 5-jun-2026. closedPeriod = [5-may, 4-jun].
+    // Con monthsBack=4: períodos previos [5-feb,4-mar], [5-mar,4-abr], [5-abr,4-may].
+    it('4 períodos impagos con transacciones: 3 en overduePeriods (ascendente) + 1 en closedPeriod', () => {
+      const account = fakeAccount();
+      const transactions = [
+        fakeTx(new Date(2026, 1, 10), 10), // feb — más atrasado
+        fakeTx(new Date(2026, 2, 10), 20), // mar
+        fakeTx(new Date(2026, 3, 10), 30), // abr
+        fakeTx(new Date(2026, 4, 10), 100), // may — closedPeriod
+      ];
+
+      const statement = buildStatement(account, transactions, [], today, 4);
+
+      expect(statement.closedPeriod.balance).toBe(100);
+      expect(statement.overduePeriods).toHaveLength(3);
+      expect(statement.overduePeriods.map((p) => p.balance)).toEqual([10, 20, 30]);
+      expect(statement.overduePeriods[0]!.startDate).toEqual(new Date(2026, 1, 5));
+      expect(statement.overduePeriods[0]!.transactionCount).toBe(1);
+      // periodKey usa componentes LOCALES (no UTC) — es lo que el cliente debe reenviar
+      // como periodStart al pagar; startDate se serializa a JSON en UTC y puede
+      // desplazarse un día en husos horarios adelantados a UTC.
+      expect(statement.overduePeriods[0]!.periodKey).toBe('2026-02-05');
+    });
+
+    it('período con CreditCardPayment pre-existente no aparece en overduePeriods (regresión de fronteras)', () => {
+      const account = fakeAccount();
+      const transactions = [
+        fakeTx(new Date(2026, 2, 10), 20), // mar — pagado
+        fakeTx(new Date(2026, 3, 10), 30), // abr — sin pagar
+      ];
+      // Período mar: [5-mar, 4-abr] normalizado UTC
+      const payments = [
+        fakePayment(new Date(Date.UTC(2026, 2, 5)), new Date(Date.UTC(2026, 3, 4))),
+      ];
+
+      const statement = buildStatement(account, transactions, payments, today, 3);
+
+      expect(statement.overduePeriods).toHaveLength(1);
+      expect(statement.overduePeriods[0]!.balance).toBe(30);
+    });
+
+    it('tarjeta al día: overduePeriods vacío', () => {
+      const account = fakeAccount();
+      const transactions = [fakeTx(new Date(2026, 4, 10), 100)]; // solo closedPeriod
+
+      const statement = buildStatement(account, transactions, [], today, 6);
+
+      expect(statement.overduePeriods).toEqual([]);
+    });
+
+    it('available/usagePercentage no cambian por la presencia de overduePeriods', () => {
+      const account = fakeAccount();
+      const transactions = [
+        fakeTx(new Date(2026, 1, 10), 10),
+        fakeTx(new Date(2026, 4, 10), 100),
+        fakeTx(new Date(2026, 5, 7), 50),
+      ];
+
+      const withDefault = buildStatement(account, transactions, [], today);
+      const withOverdue = buildStatement(account, transactions, [], today, 4);
+
+      expect(withOverdue.available).toBe(withDefault.available);
+      expect(withOverdue.usagePercentage).toBe(withDefault.usagePercentage);
+    });
+
+    it('período fuera de la ventana (monthsBack) no aparece listado', () => {
+      const account = fakeAccount();
+      // Transacción en enero: fuera de la ventana de monthsBack=2 (solo feb-may quedarían)
+      const transactions = [fakeTx(new Date(2026, 0, 10), 999)];
+
+      const statement = buildStatement(account, transactions, [], today, 2);
+
+      expect(statement.overduePeriods).toEqual([]);
+    });
+  });
 });
