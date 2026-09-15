@@ -5,6 +5,28 @@ Todos los cambios notables de este proyecto se documentan en este fichero.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-15
+
+### FEAT
+* [#86](https://github.com/Jabbcode/cuentas_back/pull/86) pago de periodos atrasados de tarjeta de credito
+
+### OTROS
+* [#88](https://github.com/Jabbcode/cuentas_back/pull/88) sync develop con main v1.1.4
+* [#90](https://github.com/Jabbcode/cuentas_back/pull/90) Release
+
+
+
+## [1.1.4] - 2026-09-15
+
+### FEAT
+* [#85](https://github.com/Jabbcode/cuentas_back/pull/85) log de detalle numérico en conflictos de negocio frecuentes
+
+### OTROS
+* [#83](https://github.com/Jabbcode/cuentas_back/pull/83) Sync release 1.1.3 to develop
+* [#87](https://github.com/Jabbcode/cuentas_back/pull/87) Release v1.1.4
+
+
+
 ## [1.1.3] - 2026-09-14
 
 ### FIXES
@@ -119,6 +141,8 @@ y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Comparaciones completas
 
+- [v1.1.4...v1.2.0](https://github.com/Jabbcode/cuentas_back/compare/v1.1.4...v1.2.0)
+- [v1.1.3...v1.1.4](https://github.com/Jabbcode/cuentas_back/compare/v1.1.3...v1.1.4)
 - [v1.1.2...v1.1.3](https://github.com/Jabbcode/cuentas_back/compare/v1.1.2...v1.1.3)
 - [v1.1.1...v1.1.2](https://github.com/Jabbcode/cuentas_back/compare/v1.1.1...v1.1.2)
 - [v1.1.0...v1.1.1](https://github.com/Jabbcode/cuentas_back/compare/v1.1.0...v1.1.1)
