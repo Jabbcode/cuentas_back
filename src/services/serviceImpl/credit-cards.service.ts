@@ -410,7 +410,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
           accountId: accountId,
           categoryId: paymentCategory.id,
         },
-        userId
+        userId,
+        { skipPaidPeriodLock: true }
       );
 
       // If paying from another account, create expense transaction
@@ -425,7 +426,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
             accountId: data.paymentAccountId,
             categoryId: paymentCategory.id,
           },
-          userId
+          userId,
+          { skipPaidPeriodLock: true }
         );
       }
 
@@ -479,7 +481,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
                 categoryId: fixedExpense.categoryId,
                 fixedExpenseId: fixedExpense.id,
               },
-              userId
+              userId,
+              { skipPaidPeriodLock: true }
             );
           }
         }

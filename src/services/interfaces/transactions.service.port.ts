@@ -66,6 +66,15 @@ export interface SimilarTransactionWindow {
   dateLte: Date;
 }
 
+export interface CreateTransactionOptions {
+  /**
+   * Exime la validación de "período de tarjeta ya pagado" (credit-card-paid-period-lock).
+   * Solo para las transacciones automáticas del propio flujo de pago
+   * (payCreditCardStatement) — nunca alcanzable desde el body HTTP.
+   */
+  skipPaidPeriodLock?: boolean;
+}
+
 export interface TransactionsService {
   // Métodos del dueño (consumidor: transactions.controller.ts)
   getTransactions(
@@ -73,7 +82,11 @@ export interface TransactionsService {
     query: TransactionQuery
   ): Promise<{ transactions: Transaction[]; total: number; limit: number; offset: number }>;
   getTransactionById(id: string, userId: string): Promise<Transaction>;
-  createTransaction(data: CreateTransactionInput, userId: string): Promise<Transaction>;
+  createTransaction(
+    data: CreateTransactionInput,
+    userId: string,
+    options?: CreateTransactionOptions
+  ): Promise<Transaction>;
   updateTransaction(id: string, data: UpdateTransactionInput, userId: string): Promise<Transaction>;
   deleteTransaction(id: string, userId: string): Promise<void>;
   getTransactionSummary(

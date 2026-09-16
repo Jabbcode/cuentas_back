@@ -517,6 +517,31 @@ describe('CreditCardsServiceImpl', () => {
 
       expect(mockedCreateTransaction).toHaveBeenCalledTimes(1);
     });
+
+    it('las 3 llamadas a createTransaction pasan { skipPaidPeriodLock: true } (criterio 6)', async () => {
+      mockedCreateTransaction.mockResolvedValue({ id: 'tx-1' });
+      mockedFindFirstFixedExpense.mockResolvedValue({
+        id: 'fe-1',
+        name: 'Pago Tarjeta',
+        categoryId: 'category-1',
+      });
+      mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
+      const service = buildService({
+        accountsService: { findAccountById: async () => fakeAccount() },
+      });
+
+      // paymentAccountId distinta de la tarjeta -> dispara las 3 llamadas: ingreso del
+      // pago, gasto en la cuenta de origen, y el gasto fijo asociado.
+      await service.payCreditCardStatement('card-1', 'user-1', {
+        amount: 50,
+        paymentAccountId: 'account-bank',
+      });
+
+      expect(mockedCreateTransaction).toHaveBeenCalledTimes(3);
+      for (const call of mockedCreateTransaction.mock.calls) {
+        expect(call[2]).toEqual({ skipPaidPeriodLock: true });
+      }
+    });
   });
 
   describe('payCreditCardStatement con periodStart (período atrasado)', () => {
