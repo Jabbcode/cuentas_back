@@ -5,6 +5,18 @@ Todos los cambios notables de este proyecto se documentan en este fichero.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-16
+
+### FEAT
+* [#92](https://github.com/Jabbcode/cuentas_back/pull/92) validar el límite de crédito por período, no por saldo acumulado
+* [#93](https://github.com/Jabbcode/cuentas_back/pull/93) bloquear crear/editar transacciones en período ya pagado
+
+### OTROS
+* [#88](https://github.com/Jabbcode/cuentas_back/pull/88) Sync release 1.2.0 to develop
+* [#94](https://github.com/Jabbcode/cuentas_back/pull/94) Release
+
+
+
 ## [1.2.0] - 2026-09-15
 
 ### FEAT
@@ -141,6 +153,7 @@ y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Comparaciones completas
 
+- [v1.2.0...v1.3.0](https://github.com/Jabbcode/cuentas_back/compare/v1.2.0...v1.3.0)
 - [v1.1.4...v1.2.0](https://github.com/Jabbcode/cuentas_back/compare/v1.1.4...v1.2.0)
 - [v1.1.3...v1.1.4](https://github.com/Jabbcode/cuentas_back/compare/v1.1.3...v1.1.4)
 - [v1.1.2...v1.1.3](https://github.com/Jabbcode/cuentas_back/compare/v1.1.2...v1.1.3)
