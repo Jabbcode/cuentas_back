@@ -25,15 +25,17 @@ function fakeResponse(): Response {
 }
 
 describe('errorMiddleware — contrato de error consumible por el frontend (BE-T4)', () => {
-  it('ConflictError (límite superado) responde 409 con { error, code }', () => {
+  it('ConflictError (límite de período superado) responde 409 con { error, code }', () => {
     const res = fakeResponse();
-    const err = new ConflictError('Se superó el límite disponible de la tarjeta');
+    const err = new ConflictError(
+      'Se superó el límite del período 2026-06-05 al 2026-07-04 (límite: 100)'
+    );
 
     errorMiddleware(err, {} as never, res, vi.fn());
 
     expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalledWith({
-      error: 'Se superó el límite disponible de la tarjeta',
+      error: 'Se superó el límite del período 2026-06-05 al 2026-07-04 (límite: 100)',
       code: 'CONFLICT',
     });
   });

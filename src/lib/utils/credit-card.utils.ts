@@ -18,6 +18,19 @@ export function getCutoffDates(cutoffDay: number): { lastCutoff: Date; nextCutof
   return { lastCutoff, nextCutoff };
 }
 
+/**
+ * Corte de un mes dado, clameando el día (29/30/31) al último día real de
+ * ese mes cuando no existe (p. ej. cutoffDay=31 en febrero -> 28/29).
+ * Compartido por `buildClosedPeriodBounds` y `getPeriodBoundsForDate` para
+ * que ambos calculen "dónde cae un corte" de una única forma y no puedan
+ * divergir.
+ */
+function clampCutoffDate(year: number, month: number, cutoffDay: number): Date {
+  const daysInTargetMonth = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(cutoffDay, daysInTargetMonth);
+  return new Date(year, month, day);
+}
+
 export function getPaymentDueDate(cutoffDate: Date, paymentDueDay: number): Date {
   const cutoffMonth = cutoffDate.getMonth();
   const cutoffYear = cutoffDate.getFullYear();
@@ -73,19 +86,68 @@ export function buildClosedPeriodBounds(
   const year = lastCutoff.getFullYear();
   const month = lastCutoff.getMonth();
 
-  const cutoffAt = (offset: number): Date => {
-    const daysInTargetMonth = new Date(year, month - offset + 1, 0).getDate();
-    const day = Math.min(cutoffDay, daysInTargetMonth);
-    return new Date(year, month - offset, day);
-  };
-
   const periods: { startDate: Date; endDate: Date }[] = [];
   for (let k = monthsBack; k >= 1; k--) {
-    const startDate = cutoffAt(k);
-    const endDate = cutoffAt(k - 1);
+    const startDate = clampCutoffDate(year, month - k, cutoffDay);
+    const endDate = clampCutoffDate(year, month - (k - 1), cutoffDay);
     endDate.setDate(endDate.getDate() - 1);
     periods.push({ startDate, endDate });
   }
 
   return periods;
+}
+
+/**
+ * Período (rango [startDate, endDate]) al que pertenece `date` según el día
+ * de corte de la tarjeta. Mismo criterio que `getCutoffDates` (si el día del
+ * mes es >= cutoffDay, el corte de este mes ya pasó) pero generalizado a
+ * cualquier fecha en vez de "hoy", y compartiendo el clamp de días 29/30/31
+ * con `buildClosedPeriodBounds`.
+ */
+export function getPeriodBoundsForDate(
+  cutoffDay: number,
+  date: Date
+): { startDate: Date; endDate: Date } {
+  const day = date.getDate();
+  const month = date.getMonth();
+  const year = date.getFullYear();
+
+  let startDate: Date;
+  let nextCutoff: Date;
+
+  if (day >= cutoffDay) {
+    startDate = clampCutoffDate(year, month, cutoffDay);
+    nextCutoff = clampCutoffDate(year, month + 1, cutoffDay);
+  } else {
+    startDate = clampCutoffDate(year, month - 1, cutoffDay);
+    nextCutoff = clampCutoffDate(year, month, cutoffDay);
+  }
+
+  const endDate = new Date(nextCutoff);
+  endDate.setDate(endDate.getDate() - 1);
+
+  return { startDate, endDate };
+}
+
+/**
+ * Busca, entre `payments`, uno cuyo `periodStart`/`periodEnd` coincida
+ * exactamente con los bounds locales `startDate`/`endDate` (normalizados a
+ * UTC-medianoche antes de comparar, igual que se guardan en BD). Única
+ * definición de "este período está pagado" en el proyecto — la comparten
+ * `buildStatement` (pantalla de tarjeta) y la validación de período pagado
+ * en `transactions.service.ts`, para que no puedan divergir.
+ */
+export function findPaymentForPeriod<T extends { periodStart: Date; periodEnd: Date }>(
+  payments: T[],
+  startDate: Date,
+  endDate: Date
+): T | null {
+  const startUTC = normalizeToUTC(startDate);
+  const endUTC = normalizeToUTC(endDate);
+  return (
+    payments.find(
+      (p) =>
+        p.periodStart.getTime() === startUTC.getTime() && p.periodEnd.getTime() === endUTC.getTime()
+    ) ?? null
+  );
 }

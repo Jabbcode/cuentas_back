@@ -7,17 +7,19 @@ import {
 import { NotFoundError, ValidationError } from '../../lib/errors.js';
 import { createLogger } from '../../lib/logger.js';
 import type { AccountRepository } from '../../repositories/interfaces/account.repository.port.js';
+import type { CreditLimitHistoryRepository } from '../../repositories/interfaces/credit-limit-history.repository.port.js';
 import type { AccountsService, TransferWithAccounts } from '../interfaces/accounts.service.port.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 import type { TransactionType } from '../../lib/constants/shared.constants.js';
-import { ACCOUNT_MESSAGES } from '../../lib/constants/account.constants.js';
+import { ACCOUNT_MESSAGES, ACCOUNT_TYPES } from '../../lib/constants/account.constants.js';
 
 const logger = createLogger('ACCOUNTS');
 
 export class AccountsServiceImpl implements AccountsService {
   constructor(
     private accountRepo: AccountRepository,
-    private prisma: PrismaClient
+    private prisma: PrismaClient,
+    private creditLimitHistoryRepo: CreditLimitHistoryRepository
   ) {}
 
   async getAccounts(userId: string): Promise<Account[]> {
@@ -89,29 +91,47 @@ export class AccountsServiceImpl implements AccountsService {
   async createAccount(data: CreateAccountInput, userId: string): Promise<Account> {
     try {
       const { paymentAccountId, ...rest } = data;
-      return await this.accountRepo.create({
+      const account = await this.accountRepo.create({
         ...rest,
         user: { connect: { id: userId } },
         ...(paymentAccountId && { paymentAccount: { connect: { id: paymentAccountId } } }),
       });
+
+      if (data.type === ACCOUNT_TYPES.CREDIT_CARD && data.creditLimit != null) {
+        await this.creditLimitHistoryRepo.create(account.id, data.creditLimit, account.createdAt);
+      }
+
+      return account;
     } catch (error) {
       return logger.fail(error, 'No se pudo crear la cuenta del usuario {}', userId);
     }
   }
 
   async updateAccount(id: string, data: UpdateAccountInput, userId: string): Promise<Account> {
-    await this.getAccountById(id, userId);
+    const existing = await this.getAccountById(id, userId);
 
     try {
       const { paymentAccountId, ...rest } = data;
-      return await this.accountRepo.update(id, userId, {
-        ...rest,
-        ...(paymentAccountId !== undefined && {
-          paymentAccount: paymentAccountId
-            ? { connect: { id: paymentAccountId } }
-            : { disconnect: true },
-        }),
-      });
+      const limitChanged =
+        data.creditLimit !== undefined && data.creditLimit !== Number(existing.creditLimit);
+      const limitEntry =
+        limitChanged && data.creditLimit != null
+          ? { creditLimit: data.creditLimit, effectiveFrom: new Date() }
+          : null;
+
+      return await this.accountRepo.updateWithCreditLimitHistory(
+        id,
+        userId,
+        {
+          ...rest,
+          ...(paymentAccountId !== undefined && {
+            paymentAccount: paymentAccountId
+              ? { connect: { id: paymentAccountId } }
+              : { disconnect: true },
+          }),
+        },
+        limitEntry
+      );
     } catch (error) {
       return logger.fail(error, 'No se pudo actualizar la cuenta {} del usuario {}', id, userId);
     }
