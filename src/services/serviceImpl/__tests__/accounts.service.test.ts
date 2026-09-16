@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Account, Transfer, PrismaClient } from '@prisma/client';
+import type { Account, Transfer, PrismaClient, CreditLimitHistory } from '@prisma/client';
 import type { AccountRepository } from '../../../repositories/interfaces/account.repository.port.js';
+import type { CreditLimitHistoryRepository } from '../../../repositories/interfaces/credit-limit-history.repository.port.js';
 import { AccountsServiceImpl } from '../accounts.service.js';
 
 function fakeAccount(overrides: Partial<Account> = {}): Account {
@@ -43,6 +44,7 @@ function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRep
     countByUser: async () => 0,
     create: async () => fakeAccount(),
     update: async () => fakeAccount(),
+    updateWithCreditLimitHistory: async () => fakeAccount(),
     updateBalance: async () => fakeAccount(),
     decrementBalance: async () => fakeAccount(),
     remove: async () => fakeAccount(),
@@ -52,6 +54,16 @@ function fakeAccountRepo(overrides: Partial<AccountRepository> = {}): AccountRep
       toAccount: fakeAccount(),
     }),
     findTransfersByAccount: async () => [],
+    ...overrides,
+  };
+}
+
+function fakeCreditLimitHistoryRepo(
+  overrides: Partial<CreditLimitHistoryRepository> = {}
+): CreditLimitHistoryRepository {
+  return {
+    findByAccounts: async () => [],
+    create: async () => ({ id: 'history-1' }) as CreditLimitHistory,
     ...overrides,
   };
 }
@@ -85,7 +97,7 @@ describe('AccountsServiceImpl', () => {
     it('delega en accountRepo.findAllByUser', async () => {
       const accounts = [fakeAccount()];
       const repo = fakeAccountRepo({ findAllByUser: async () => accounts });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.getAccounts('user-1')).resolves.toEqual(accounts);
     });
@@ -94,7 +106,7 @@ describe('AccountsServiceImpl', () => {
   describe('getAccountById', () => {
     it('lanza NotFoundError si el repo devuelve null', async () => {
       const repo = fakeAccountRepo({ findByIdAndUser: async () => null });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.getAccountById('account-1', 'user-1')).rejects.toThrow(
         'Cuenta no encontrada'
@@ -104,7 +116,7 @@ describe('AccountsServiceImpl', () => {
     it('devuelve la cuenta si existe', async () => {
       const account = fakeAccount();
       const repo = fakeAccountRepo({ findByIdAndUser: async () => account });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.getAccountById('account-1', 'user-1')).resolves.toEqual(account);
     });
@@ -114,7 +126,7 @@ describe('AccountsServiceImpl', () => {
     it('createAccount devuelve la cuenta creada', async () => {
       const created = fakeAccount({ name: 'Nueva' });
       const repo = fakeAccountRepo({ create: async () => created });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(
         service.createAccount(
@@ -129,13 +141,100 @@ describe('AccountsServiceImpl', () => {
       const updated = fakeAccount({ name: 'Actualizada' });
       const repo = fakeAccountRepo({
         findByIdAndUser: async () => existing,
-        update: async () => updated,
+        updateWithCreditLimitHistory: async () => updated,
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(
         service.updateAccount('account-1', { name: 'Actualizada' }, 'user-1')
       ).resolves.toEqual(updated);
+    });
+
+    it('updateAccount escribe historial cuando el límite cambia', async () => {
+      const existing = fakeAccount({ type: 'credit_card', creditLimit: 500 });
+      const updateWithCreditLimitHistory = vi.fn().mockResolvedValue(fakeAccount());
+      const repo = fakeAccountRepo({
+        findByIdAndUser: async () => existing,
+        updateWithCreditLimitHistory,
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
+
+      await service.updateAccount('account-1', { creditLimit: 1000 }, 'user-1');
+
+      expect(updateWithCreditLimitHistory).toHaveBeenCalledWith(
+        'account-1',
+        'user-1',
+        { creditLimit: 1000 },
+        { creditLimit: 1000, effectiveFrom: expect.any(Date) }
+      );
+    });
+
+    it('updateAccount no escribe historial si el límite no cambia', async () => {
+      const existing = fakeAccount({ type: 'credit_card', creditLimit: 500 });
+      const updateWithCreditLimitHistory = vi.fn().mockResolvedValue(fakeAccount());
+      const repo = fakeAccountRepo({
+        findByIdAndUser: async () => existing,
+        updateWithCreditLimitHistory,
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
+
+      await service.updateAccount('account-1', { creditLimit: 500 }, 'user-1');
+
+      expect(updateWithCreditLimitHistory).toHaveBeenCalledWith(
+        'account-1',
+        'user-1',
+        { creditLimit: 500 },
+        null
+      );
+    });
+
+    it('updateAccount no escribe historial al quitar el límite (pasar a null)', async () => {
+      const existing = fakeAccount({ type: 'credit_card', creditLimit: 500 });
+      const updateWithCreditLimitHistory = vi.fn().mockResolvedValue(fakeAccount());
+      const repo = fakeAccountRepo({
+        findByIdAndUser: async () => existing,
+        updateWithCreditLimitHistory,
+      });
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
+
+      await service.updateAccount('account-1', { creditLimit: null }, 'user-1');
+
+      expect(updateWithCreditLimitHistory).toHaveBeenCalledWith(
+        'account-1',
+        'user-1',
+        { creditLimit: null },
+        null
+      );
+    });
+
+    it('createAccount escribe la fila inicial de historial si trae creditLimit', async () => {
+      const created = fakeAccount({ type: 'credit_card', creditLimit: 2000 });
+      const historyCreate = vi.fn().mockResolvedValue({ id: 'history-1' });
+      const repo = fakeAccountRepo({ create: async () => created });
+      const historyRepo = fakeCreditLimitHistoryRepo({ create: historyCreate });
+      const service = new AccountsServiceImpl(repo, fakePrisma(), historyRepo);
+
+      await service.createAccount(
+        { name: 'Tarjeta', type: 'credit_card', balance: 0, currency: 'EUR', creditLimit: 2000 },
+        'user-1'
+      );
+
+      expect(historyCreate).toHaveBeenCalledWith('account-1', 2000, created.createdAt);
+    });
+
+    it('createAccount no escribe historial si no es tarjeta o no trae creditLimit', async () => {
+      const created = fakeAccount({ type: 'bank' });
+      const historyCreate = vi.fn();
+      const repo = fakeAccountRepo({ create: async () => created });
+      const historyRepo = fakeCreditLimitHistoryRepo({ create: historyCreate });
+      const service = new AccountsServiceImpl(repo, fakePrisma(), historyRepo);
+
+      await service.createAccount(
+        { name: 'Cuenta', type: 'bank', balance: 0, currency: 'EUR' },
+        'user-1'
+      );
+
+      expect(historyCreate).not.toHaveBeenCalled();
     });
 
     it('deleteAccount devuelve la cuenta eliminada', async () => {
@@ -144,7 +243,7 @@ describe('AccountsServiceImpl', () => {
         findByIdAndUser: async () => existing,
         remove: async () => existing,
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.deleteAccount('account-1', 'user-1')).resolves.toEqual(existing);
     });
@@ -153,7 +252,7 @@ describe('AccountsServiceImpl', () => {
   describe('transferFunds', () => {
     it('lanza ValidationError si fromAccountId === toAccountId', async () => {
       const repo = fakeAccountRepo();
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(
         service.transferFunds(
@@ -167,7 +266,7 @@ describe('AccountsServiceImpl', () => {
       const repo = fakeAccountRepo({
         findByIdAndUser: async (id: string) => (id === 'account-1' ? fakeAccount() : null),
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(
         service.transferFunds(
@@ -181,7 +280,7 @@ describe('AccountsServiceImpl', () => {
       const repo = fakeAccountRepo({
         findByIdAndUser: async (id: string) => (id === 'account-2' ? fakeAccount() : null),
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(
         service.transferFunds(
@@ -195,7 +294,7 @@ describe('AccountsServiceImpl', () => {
       const repo = fakeAccountRepo({
         findByIdAndUser: async () => fakeAccount({ balance: 5 }),
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(
         service.transferFunds(
@@ -210,7 +309,7 @@ describe('AccountsServiceImpl', () => {
         findByIdAndUser: async () => fakeAccount({ balance: 100 }),
       });
       const prisma = fakePrisma();
-      const service = new AccountsServiceImpl(repo, prisma);
+      const service = new AccountsServiceImpl(repo, prisma, fakeCreditLimitHistoryRepo());
 
       const result = await service.transferFunds(
         { fromAccountId: 'account-1', toAccountId: 'account-2', amount: 10 },
@@ -224,7 +323,7 @@ describe('AccountsServiceImpl', () => {
   describe('findAccountById (Fase 6 — null-returning, sin lanzar)', () => {
     it('devuelve null si el repo no encuentra la cuenta (a diferencia de getAccountById)', async () => {
       const repo = fakeAccountRepo({ findByIdAndUser: async () => null });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.findAccountById('account-1', 'user-1')).resolves.toBeNull();
     });
@@ -232,7 +331,7 @@ describe('AccountsServiceImpl', () => {
     it('devuelve la cuenta si existe', async () => {
       const account = fakeAccount();
       const repo = fakeAccountRepo({ findByIdAndUser: async () => account });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.findAccountById('account-1', 'user-1')).resolves.toEqual(account);
     });
@@ -243,7 +342,7 @@ describe('AccountsServiceImpl', () => {
       const cards = [fakeAccount({ id: 'card-1', type: 'credit_card' })];
       const findCreditCardsByUser = async () => cards;
       const repo = fakeAccountRepo({ findCreditCardsByUser });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.getCreditCards('user-1')).resolves.toEqual(cards);
     });
@@ -256,7 +355,7 @@ describe('AccountsServiceImpl', () => {
           return [];
         },
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await service.getConfiguredCreditCards('user-1');
 
@@ -276,7 +375,7 @@ describe('AccountsServiceImpl', () => {
   describe('countByUser (Fase 6)', () => {
     it('delega en accountRepo.countByUser', async () => {
       const repo = fakeAccountRepo({ countByUser: async () => 3 });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.countByUser('user-1')).resolves.toBe(3);
     });
@@ -289,7 +388,7 @@ describe('AccountsServiceImpl', () => {
         findByIdAndUser: async () => null,
         findTransfersByAccount,
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.getTransfersByAccount('account-1', 'user-1')).rejects.toThrow(
         'Cuenta no encontrada'
@@ -305,7 +404,7 @@ describe('AccountsServiceImpl', () => {
         findByIdAndUser: async () => fakeAccount(),
         findTransfersByAccount: async () => transfers,
       });
-      const service = new AccountsServiceImpl(repo, fakePrisma());
+      const service = new AccountsServiceImpl(repo, fakePrisma(), fakeCreditLimitHistoryRepo());
 
       await expect(service.getTransfersByAccount('account-1', 'user-1')).resolves.toEqual(
         transfers
@@ -316,7 +415,11 @@ describe('AccountsServiceImpl', () => {
   describe('updateAccountBalance', () => {
     it('income: incrementa el balance', async () => {
       const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+      const service = new AccountsServiceImpl(
+        fakeAccountRepo(),
+        fakePrisma({}, { updateMany }),
+        fakeCreditLimitHistoryRepo()
+      );
 
       await service.updateAccountBalance('account-1', 'user-1', 50, 'income');
 
@@ -328,7 +431,11 @@ describe('AccountsServiceImpl', () => {
 
     it('expense: decrementa el balance', async () => {
       const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+      const service = new AccountsServiceImpl(
+        fakeAccountRepo(),
+        fakePrisma({}, { updateMany }),
+        fakeCreditLimitHistoryRepo()
+      );
 
       await service.updateAccountBalance('account-1', 'user-1', 50, 'expense');
 
@@ -340,7 +447,11 @@ describe('AccountsServiceImpl', () => {
 
     it('lanza NotFoundError si no actualiza ninguna fila (cuenta inexistente o de otro usuario)', async () => {
       const updateMany = vi.fn().mockResolvedValue({ count: 0 });
-      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+      const service = new AccountsServiceImpl(
+        fakeAccountRepo(),
+        fakePrisma({}, { updateMany }),
+        fakeCreditLimitHistoryRepo()
+      );
 
       await expect(
         service.updateAccountBalance('account-1', 'user-1', 50, 'expense')
@@ -349,7 +460,11 @@ describe('AccountsServiceImpl', () => {
 
     it('usa this.prisma por defecto cuando no se pasa un tx explícito', async () => {
       const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-      const service = new AccountsServiceImpl(fakeAccountRepo(), fakePrisma({}, { updateMany }));
+      const service = new AccountsServiceImpl(
+        fakeAccountRepo(),
+        fakePrisma({}, { updateMany }),
+        fakeCreditLimitHistoryRepo()
+      );
 
       await service.updateAccountBalance('account-1', 'user-1', 10, 'income');
 

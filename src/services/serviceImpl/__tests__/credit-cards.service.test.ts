@@ -7,6 +7,7 @@ import type {
   CategorySpending,
 } from '../../interfaces/categories.service.port.js';
 import type { FixedExpenseRepository } from '../../../repositories/interfaces/fixed-expense.repository.port.js';
+import type { CreditLimitHistoryRepository } from '../../../repositories/interfaces/credit-limit-history.repository.port.js';
 import type { TransactionsService } from '../../interfaces/transactions.service.port.js';
 import { CreditCardsServiceImpl } from '../credit-cards.service.js';
 
@@ -14,6 +15,7 @@ const mockedFindFirstFixedExpense = vi.fn();
 const mockedCreateTransaction = vi.fn();
 const mockedFindCardStatementTransactions = vi.fn();
 const mockedFindFixedExpensePaymentInMonth = vi.fn();
+const mockedFindByAccounts = vi.fn();
 
 function fakeAccount(overrides: Partial<Account> = {}): Account {
   return {
@@ -111,6 +113,16 @@ function fakeFixedExpenseRepo(
   };
 }
 
+function fakeCreditLimitHistoryRepo(
+  overrides: Partial<CreditLimitHistoryRepository> = {}
+): CreditLimitHistoryRepository {
+  return {
+    findByAccounts: mockedFindByAccounts,
+    create: async () => ({ id: 'history-1' }) as never,
+    ...overrides,
+  };
+}
+
 function fakeTransactionsService(
   overrides: Partial<TransactionsService> = {}
 ): TransactionsService {
@@ -157,6 +169,7 @@ function buildService(
     categoriesService?: Partial<CategoriesService>;
     transactionsService?: Partial<TransactionsService>;
     fixedExpenseRepo?: Partial<FixedExpenseRepository>;
+    creditLimitHistoryRepo?: Partial<CreditLimitHistoryRepository>;
   } = {}
 ) {
   return new CreditCardsServiceImpl(
@@ -164,7 +177,8 @@ function buildService(
     fakeCreditCardPaymentRepo(overrides.creditCardPaymentRepo),
     fakeCategoriesService(overrides.categoriesService),
     fakeTransactionsService(overrides.transactionsService),
-    fakeFixedExpenseRepo(overrides.fixedExpenseRepo)
+    fakeFixedExpenseRepo(overrides.fixedExpenseRepo),
+    fakeCreditLimitHistoryRepo(overrides.creditLimitHistoryRepo)
   );
 }
 
@@ -178,6 +192,7 @@ describe('CreditCardsServiceImpl', () => {
     mockedFindCardStatementTransactions.mockResolvedValue([]);
     mockedFindFixedExpensePaymentInMonth.mockResolvedValue(null);
     mockedFindFirstFixedExpense.mockResolvedValue(null);
+    mockedFindByAccounts.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -335,6 +350,23 @@ describe('CreditCardsServiceImpl', () => {
       const summary = await service.getCreditCardsSummary('user-1');
 
       expect(summary.upcomingPayments.map((p) => p.accountId)).toEqual(['card-2', 'card-1']);
+    });
+
+    it('sin N+1: con 3 tarjetas, findByAccounts se llama una sola vez con todos los ids', async () => {
+      const service = buildService({
+        accountsService: {
+          getCreditCards: async () => [
+            fakeAccount({ id: 'card-1' }),
+            fakeAccount({ id: 'card-2' }),
+            fakeAccount({ id: 'card-3' }),
+          ],
+        },
+      });
+
+      await service.getCreditCardsSummary('user-1');
+
+      expect(mockedFindByAccounts).toHaveBeenCalledTimes(1);
+      expect(mockedFindByAccounts).toHaveBeenCalledWith(['card-1', 'card-2', 'card-3'], 'user-1');
     });
 
     it('las alertas quedan ordenadas por severidad: error, warning, info', async () => {

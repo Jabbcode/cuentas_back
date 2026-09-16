@@ -1,8 +1,19 @@
 import type { Prisma, Account, Transfer } from '@prisma/client';
 
+export interface CreditLimitHistoryEntry {
+  creditLimit: number;
+  effectiveFrom: Date;
+}
+
 export interface AccountRepository {
   findAllByUser(userId: string): Promise<Account[]>;
   findByIdAndUser(id: string, userId: string): Promise<Account | null>;
+  updateWithCreditLimitHistory(
+    id: string,
+    userId: string,
+    data: Prisma.AccountUpdateInput,
+    limitEntry: CreditLimitHistoryEntry | null
+  ): Promise<Account>;
   findCreditCardsByUser(
     userId: string,
     filters?: {

@@ -527,11 +527,11 @@ describe('FixedExpensesServiceImpl', () => {
       expect(result.failedByUser).toEqual({});
     });
 
-    it('createTransaction lanza ConflictError (límite de tarjeta): se reporta en failedByUser', async () => {
+    it('createTransaction lanza ConflictError (límite de período de tarjeta): se reporta en failedByUser', async () => {
       const findManyFixedExpense = vi.fn().mockResolvedValue([fakeFixedExpense({ id: 'fe-1' })]);
       const service = buildService({ prisma: fakePrisma({ findManyFixedExpense }) });
       mockedCreateTransaction.mockRejectedValueOnce(
-        new ConflictError('Se superó el límite disponible de la tarjeta')
+        new ConflictError('Se superó el límite del período 2026-06-05 al 2026-07-04 (límite: 100)')
       );
 
       const result = await service.autoGenerateFixedExpenseTransactions(new Date(2026, 5, 10));
@@ -539,7 +539,10 @@ describe('FixedExpensesServiceImpl', () => {
       expect(result.createdByUser).toEqual({});
       expect(result.failedByUser).toEqual({
         'user-1': [
-          { fixedExpenseName: 'FE fe-1', message: 'Se superó el límite disponible de la tarjeta' },
+          {
+            fixedExpenseName: 'FE fe-1',
+            message: 'Se superó el límite del período 2026-06-05 al 2026-07-04 (límite: 100)',
+          },
         ],
       });
     });
