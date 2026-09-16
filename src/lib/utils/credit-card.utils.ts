@@ -128,3 +128,26 @@ export function getPeriodBoundsForDate(
 
   return { startDate, endDate };
 }
+
+/**
+ * Busca, entre `payments`, uno cuyo `periodStart`/`periodEnd` coincida
+ * exactamente con los bounds locales `startDate`/`endDate` (normalizados a
+ * UTC-medianoche antes de comparar, igual que se guardan en BD). Única
+ * definición de "este período está pagado" en el proyecto — la comparten
+ * `buildStatement` (pantalla de tarjeta) y la validación de período pagado
+ * en `transactions.service.ts`, para que no puedan divergir.
+ */
+export function findPaymentForPeriod<T extends { periodStart: Date; periodEnd: Date }>(
+  payments: T[],
+  startDate: Date,
+  endDate: Date
+): T | null {
+  const startUTC = normalizeToUTC(startDate);
+  const endUTC = normalizeToUTC(endDate);
+  return (
+    payments.find(
+      (p) =>
+        p.periodStart.getTime() === startUTC.getTime() && p.periodEnd.getTime() === endUTC.getTime()
+    ) ?? null
+  );
+}

@@ -8,6 +8,8 @@ export const CREDIT_CARD_MESSAGES = {
   MISSING_LIMIT: 'La tarjeta no tiene configurado un límite de crédito',
   PERIOD_LIMIT_EXCEEDED: (periodStart: Date, periodEnd: Date, limit: number) =>
     `Se superó el límite del período ${formatDateKey(periodStart)} al ${formatDateKey(periodEnd)} (límite: ${limit})`,
+  PAID_PERIOD_LOCKED: (periodStart: Date, periodEnd: Date, paymentDate: Date) =>
+    `El período ${formatDateKey(periodStart)} al ${formatDateKey(periodEnd)} ya fue pagado el ${formatDateKey(paymentDate)} y no admite nuevas transacciones`,
 } as const;
 
 export const OVERDUE_LOOKBACK_MONTHS_DEFAULT = 6;

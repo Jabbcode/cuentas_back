@@ -6,6 +6,7 @@ import {
   normalizeToUTC,
   buildClosedPeriodBounds,
   getPeriodBoundsForDate,
+  findPaymentForPeriod,
 } from '../credit-card.utils.js';
 
 describe('getCutoffDates', () => {
@@ -144,5 +145,57 @@ describe('getPeriodBoundsForDate', () => {
     const { startDate, endDate } = getPeriodBoundsForDate(31, dentroDelPeriodoCerrado);
     expect(startDate).toEqual(closed!.startDate);
     expect(endDate).toEqual(closed!.endDate);
+  });
+});
+
+describe('findPaymentForPeriod', () => {
+  const paymentDate = new Date(2026, 5, 20);
+
+  it('coincidencia exacta devuelve el pago', () => {
+    const startDate = new Date(2026, 4, 15);
+    const endDate = new Date(2026, 5, 14);
+    const payment = {
+      periodStart: normalizeToUTC(startDate),
+      periodEnd: normalizeToUTC(endDate),
+      paymentDate,
+    };
+    expect(findPaymentForPeriod([payment], startDate, endDate)).toBe(payment);
+  });
+
+  it('un día de diferencia en periodStart no matchea', () => {
+    const startDate = new Date(2026, 4, 15);
+    const endDate = new Date(2026, 5, 14);
+    const payment = {
+      periodStart: normalizeToUTC(new Date(2026, 4, 16)),
+      periodEnd: normalizeToUTC(endDate),
+      paymentDate,
+    };
+    expect(findPaymentForPeriod([payment], startDate, endDate)).toBeNull();
+  });
+
+  it('un día de diferencia en periodEnd no matchea', () => {
+    const startDate = new Date(2026, 4, 15);
+    const endDate = new Date(2026, 5, 14);
+    const payment = {
+      periodStart: normalizeToUTC(startDate),
+      periodEnd: normalizeToUTC(new Date(2026, 5, 15)),
+      paymentDate,
+    };
+    expect(findPaymentForPeriod([payment], startDate, endDate)).toBeNull();
+  });
+
+  it('bounds locales vs pagos ya UTC-normalizados en BD siguen matcheando', () => {
+    const startDate = new Date(2026, 4, 15, 23, 0, 0); // hora local irrelevante
+    const endDate = new Date(2026, 5, 14, 3, 0, 0);
+    const payment = {
+      periodStart: normalizeToUTC(new Date(2026, 4, 15)),
+      periodEnd: normalizeToUTC(new Date(2026, 5, 14)),
+      paymentDate,
+    };
+    expect(findPaymentForPeriod([payment], startDate, endDate)).toBe(payment);
+  });
+
+  it('lista vacía devuelve null', () => {
+    expect(findPaymentForPeriod([], new Date(2026, 4, 15), new Date(2026, 5, 14))).toBeNull();
   });
 });
