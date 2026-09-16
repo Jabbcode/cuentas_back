@@ -139,6 +139,9 @@ function fakePrisma(
     creditLimitHistory: {
       findMany: txOverrides.limitHistoryFindMany ?? vi.fn().mockResolvedValue([]),
     },
+    creditCardPayment: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     $queryRaw: txOverrides.queryRaw ?? vi.fn().mockResolvedValue([fakeAccountRow()]),
   };
 

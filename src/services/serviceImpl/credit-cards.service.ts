@@ -7,6 +7,7 @@ import {
   getDaysBetween,
   normalizeToUTC,
   buildClosedPeriodBounds,
+  findPaymentForPeriod,
   formatDateKey,
 } from '../../lib/utils/credit-card.utils.js';
 import {
@@ -66,9 +67,6 @@ export function buildStatement(
   const previousCutoff = closedBounds.startDate;
   const closedPeriodEnd = closedBounds.endDate;
 
-  // Normalize dates to UTC midnight for consistent comparisons
-  const previousCutoffUTC = normalizeToUTC(previousCutoff);
-
   // Partition preloaded transactions by period (same bounds as las queries originales)
   const currentPeriodTransactions = transactions
     .filter((tx) => tx.date >= lastCutoff && tx.date <= today)
@@ -82,32 +80,17 @@ export function buildStatement(
   const currentBalance = currentPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
   const closedBalance = closedPeriodTransactions.reduce((sum, tx) => sum + Number(tx.amount), 0);
 
-  // Normalize to UTC midnight for consistent comparisons
-  const closedPeriodEndUTC = normalizeToUTC(closedPeriodEnd);
-
-  // Check if closed period is paid (use UTC normalized dates)
-  const closedPeriodPayment =
-    payments.find(
-      (p) =>
-        p.periodStart.getTime() === previousCutoffUTC.getTime() &&
-        p.periodEnd.getTime() === closedPeriodEndUTC.getTime()
-    ) ?? null;
+  // Check if closed period is paid
+  const closedPeriodPayment = findPaymentForPeriod(payments, previousCutoff, closedPeriodEnd);
 
   const paymentDueDate = getPaymentDueDate(lastCutoff, account.paymentDueDay);
   const daysUntilDue = getDaysBetween(today, paymentDueDate);
   const daysUntilCutoff = getDaysBetween(today, nextCutoff);
 
   // Períodos cerrados anteriores al closedPeriod (candidatos: todos menos el último,
-  // que es closedBounds). Se descartan los ya pagados (mismo match UTC-normalizado
-  // que closedPeriodPayment) y los de balance 0.
-  const isPeriodPaid = (startDate: Date, endDate: Date): boolean => {
-    const startUTC = normalizeToUTC(startDate);
-    const endUTC = normalizeToUTC(endDate);
-    return payments.some(
-      (p) =>
-        p.periodStart.getTime() === startUTC.getTime() && p.periodEnd.getTime() === endUTC.getTime()
-    );
-  };
+  // que es closedBounds). Se descartan los ya pagados y los de balance 0.
+  const isPeriodPaid = (startDate: Date, endDate: Date): boolean =>
+    findPaymentForPeriod(payments, startDate, endDate) !== null;
 
   const overduePeriods: CreditCardOverduePeriod[] = periodBounds
     .slice(0, -1)
@@ -427,7 +410,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
           accountId: accountId,
           categoryId: paymentCategory.id,
         },
-        userId
+        userId,
+        { skipPaidPeriodLock: true }
       );
 
       // If paying from another account, create expense transaction
@@ -442,7 +426,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
             accountId: data.paymentAccountId,
             categoryId: paymentCategory.id,
           },
-          userId
+          userId,
+          { skipPaidPeriodLock: true }
         );
       }
 
@@ -496,7 +481,8 @@ export class CreditCardsServiceImpl implements CreditCardsService {
                 categoryId: fixedExpense.categoryId,
                 fixedExpenseId: fixedExpense.id,
               },
-              userId
+              userId,
+              { skipPaidPeriodLock: true }
             );
           }
         }

@@ -10,8 +10,8 @@ import {
   CreditCardPeriodLimitInfo,
   CreditLimitEntry,
 } from '../../lib/utils/credit-card-limit.utils.js';
-import { getPeriodBoundsForDate } from '../../lib/utils/credit-card.utils.js';
-import { AppError, NotFoundError, ValidationError } from '../../lib/errors.js';
+import { getPeriodBoundsForDate, findPaymentForPeriod } from '../../lib/utils/credit-card.utils.js';
+import { AppError, ConflictError, NotFoundError, ValidationError } from '../../lib/errors.js';
 import { createLogger } from '../../lib/logger.js';
 import { TRANSACTION_TYPE, SHARED_MESSAGES } from '../../lib/constants/shared.constants.js';
 import type { TransactionType } from '../../lib/constants/shared.constants.js';
@@ -32,6 +32,7 @@ import type {
   DateRangeGteLt,
   DateRangeGteLte,
   SimilarTransactionWindow,
+  CreateTransactionOptions,
 } from '../interfaces/transactions.service.port.js';
 
 const CARD_STATEMENT_TRANSACTION_INCLUDE = {
@@ -196,6 +197,34 @@ export class TransactionsServiceImpl implements TransactionsService {
     };
   }
 
+  /**
+   * Bloquea crear/editar dentro de un período de tarjeta ya pagado (criterios 1/2/5/7).
+   * A diferencia de loadPeriodLimitContext, no hace early-return para income: ambos
+   * tipos quedan bloqueados por igual (criterio 5). Sin cutoffDay no hay concepto de
+   * período (y payCreditCardStatement no pudo haber registrado ningún pago), así que
+   * se omite en silencio en vez de lanzar.
+   */
+  private async assertPeriodNotPaid(
+    tx: Prisma.TransactionClient,
+    account: LockedAccountForLimit,
+    accountId: string,
+    userId: string,
+    date: Date
+  ): Promise<void> {
+    if (account.type !== ACCOUNT_TYPES.CREDIT_CARD || account.cutoffDay == null) return;
+
+    const { startDate, endDate } = getPeriodBoundsForDate(account.cutoffDay, date);
+    const payments = await tx.creditCardPayment.findMany({
+      where: { accountId, account: { userId } },
+    });
+    const payment = findPaymentForPeriod(payments, startDate, endDate);
+    if (payment) {
+      throw new ConflictError(
+        CREDIT_CARD_MESSAGES.PAID_PERIOD_LOCKED(startDate, endDate, payment.paymentDate)
+      );
+    }
+  }
+
   private async assertOwnership(
     userId: string,
     refs: { accountId?: string; categoryId?: string; fixedExpenseId?: string },
@@ -303,7 +332,11 @@ export class TransactionsServiceImpl implements TransactionsService {
     }
   }
 
-  async createTransaction(data: CreateTransactionInput, userId: string): Promise<Transaction> {
+  async createTransaction(
+    data: CreateTransactionInput,
+    userId: string,
+    options?: CreateTransactionOptions
+  ): Promise<Transaction> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         await this.assertOwnership(
@@ -320,6 +353,9 @@ export class TransactionsServiceImpl implements TransactionsService {
         if (!account) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
 
         const transactionDate = data.date ? new Date(data.date) : new Date();
+        if (!options?.skipPaidPeriodLock) {
+          await this.assertPeriodNotPaid(tx, account, data.accountId, userId, transactionDate);
+        }
         const periodContext = await this.loadPeriodLimitContext(
           tx,
           account,
@@ -433,6 +469,14 @@ export class TransactionsServiceImpl implements TransactionsService {
           userId
         );
         if (!resultingAccount) throw new NotFoundError(SHARED_MESSAGES.ACCOUNT_NOT_FOUND);
+
+        await this.assertPeriodNotPaid(
+          tx,
+          resultingAccount,
+          resultingAccountId,
+          userId,
+          resultingDate
+        );
 
         const periodContext = await this.loadPeriodLimitContext(
           tx,
