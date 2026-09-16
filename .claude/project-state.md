@@ -149,6 +149,19 @@ API REST en producción activa. Arquitectura Clean (repositories + services + co
   eliminación de Budgets (2026-06-02) — el tipo de notificación `category_limit` existe
   en el schema y en las preferencias (`categoryLimit: true`), pero ningún código lo
   genera. `Category.monthlyLimit` sigue activo y en uso (dashboard `getByCategory`).
+- ⚠️ **Gasto retroactivo en un período de tarjeta ya pagado desaparece de la UI**
+  (detectado 2026-09-16, preexistente — no introducido por `credit-card-period-limits`).
+  `buildStatement` (`credit-cards.service.ts`, `isPeriodPaid` + filtro de
+  `overduePeriods`, desde `credit-card-overdue-periods-payment` / commit `4f58218`)
+  excluye un período de `overduePeriods` en cuanto existe un `CreditCardPayment` con
+  esos bounds — por fecha, no por saldo. Si después se crea una transacción con fecha
+  dentro de ese período ya pagado, el gasto se suma al balance interno pero el período
+  entero queda invisible (no aparece en ningún lado del statement).
+  **Fix decidido, pendiente de spec**: no debería poder crearse/editarse una
+  transacción cuya fecha caiga en un período de tarjeta ya pagado — la validación va
+  en `transactions.service.ts` (`createTransaction`/`updateTransaction`), consultando
+  `CreditCardPayment` por bounds de fecha. Spec sugerida:
+  `credit-card-paid-period-lock` (el usuario la arranca manualmente con `/code-plan`).
 
 ## 🔐 Seguridad
 - ✅ JWT en httpOnly cookie (no accesible desde JS) — FIX-032
