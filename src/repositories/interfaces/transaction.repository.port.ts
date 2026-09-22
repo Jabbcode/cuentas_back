@@ -55,4 +55,11 @@ export interface TransactionRepository {
     userId: string,
     orderBy: Prisma.TransactionOrderByWithRelationInput
   ): Promise<{ date: Date } | null>;
+  groupByCategoryAndMonth(params: {
+    userId: string;
+    type: string;
+    gte: Date;
+    lte: Date;
+    accountId?: string;
+  }): Promise<Array<{ categoryId: string; month: string; total: Prisma.Decimal; count: number }>>;
 }

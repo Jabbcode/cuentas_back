@@ -1,4 +1,5 @@
-import type { Prisma, Transaction, ReceiptItem, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { Transaction, ReceiptItem, PrismaClient } from '@prisma/client';
 import type { TransactionRepository } from '../interfaces/transaction.repository.port.js';
 
 export class TransactionRepositoryImpl implements TransactionRepository {
@@ -104,5 +105,30 @@ export class TransactionRepositoryImpl implements TransactionRepository {
       orderBy,
       select: { date: true },
     });
+  }
+
+  async groupByCategoryAndMonth(params: {
+    userId: string;
+    type: string;
+    gte: Date;
+    lte: Date;
+    accountId?: string;
+  }): Promise<Array<{ categoryId: string; month: string; total: Prisma.Decimal; count: number }>> {
+    const { userId, type, gte, lte, accountId } = params;
+    const accountFilter = accountId ? Prisma.sql`AND t."accountId" = ${accountId}` : Prisma.empty;
+
+    return this.prisma.$queryRaw<
+      Array<{ categoryId: string; month: string; total: Prisma.Decimal; count: number }>
+    >(Prisma.sql`
+      SELECT t."categoryId"                                   AS "categoryId",
+             to_char(date_trunc('month', t."date"), 'YYYY-MM') AS "month",
+             SUM(t."amount")                                   AS "total",
+             COUNT(*)::int                                     AS "count"
+      FROM "Transaction" t
+      WHERE t."userId" = ${userId} AND t."type" = ${type}
+        AND t."date" >= ${gte} AND t."date" <= ${lte}
+        ${accountFilter}
+      GROUP BY 1, 2
+    `);
   }
 }
