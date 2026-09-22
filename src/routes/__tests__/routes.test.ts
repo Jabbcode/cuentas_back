@@ -78,6 +78,7 @@ const AUTH_GUARDED_ROUTERS: { name: string; router: Router; routes: [string, str
     routes: [
       ['get', '/'],
       ['get', '/summary'],
+      ['get', '/category-series'],
       ['post', '/'],
       ['get', '/:id'],
       ['get', '/:id/items'],
@@ -191,6 +192,21 @@ describe.each(AUTH_GUARDED_ROUTERS)('$name.routes', ({ router, routes }) => {
     );
     const expected = routes.map(([m, p]) => `${m} ${p}`);
     expect(actual.sort()).toEqual(expected.sort());
+  });
+});
+
+describe('transactions.routes', () => {
+  it('/category-series se registra antes que /:id (si no, Express la captura como :id)', () => {
+    const stack = routeLayers(transactionsRouter);
+    const categorySeriesIndex = stack.findIndex(
+      (l) => l.route!.path === '/category-series' && l.route!.methods.get === true
+    );
+    const idIndex = stack.findIndex(
+      (l) => l.route!.path === '/:id' && l.route!.methods.get === true
+    );
+
+    expect(categorySeriesIndex).toBeGreaterThanOrEqual(0);
+    expect(categorySeriesIndex).toBeLessThan(idIndex);
   });
 });
 

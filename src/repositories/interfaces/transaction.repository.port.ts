@@ -1,4 +1,5 @@
 import type { Prisma, Transaction, ReceiptItem } from '@prisma/client';
+import type { TransactionType } from '../../lib/constants/shared.constants.js';
 
 export interface TransactionRepository {
   findMany(
@@ -55,4 +56,11 @@ export interface TransactionRepository {
     userId: string,
     orderBy: Prisma.TransactionOrderByWithRelationInput
   ): Promise<{ date: Date } | null>;
+  groupByCategoryAndMonth(params: {
+    userId: string;
+    type: TransactionType;
+    gte: Date;
+    lte: Date;
+    accountId?: string;
+  }): Promise<Array<{ categoryId: string; month: string; total: Prisma.Decimal; count: number }>>;
 }

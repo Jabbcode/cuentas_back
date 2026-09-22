@@ -8,6 +8,7 @@ router.use(authMiddleware);
 
 router.get('/', transactionsController.getTransactions);
 router.get('/summary', transactionsController.getTransactionSummary);
+router.get('/category-series', transactionsController.getCategoryMonthlySeries);
 router.post('/', transactionsController.createTransaction);
 router.get('/:id', transactionsController.getTransactionById);
 router.get('/:id/items', transactionsController.getReceiptItems);

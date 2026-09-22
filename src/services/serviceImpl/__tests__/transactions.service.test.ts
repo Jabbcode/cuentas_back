@@ -23,6 +23,7 @@ function fakeTransactionRepo(
     findReceiptItems: async () => [],
     countByUser: async () => 0,
     findFirstByUser: async () => null,
+    groupByCategoryAndMonth: async () => [],
     ...overrides,
   };
 }
@@ -251,6 +252,179 @@ describe('TransactionsServiceImpl.getTransactionSummary', () => {
     });
 
     await expect(service.getTransactionSummary('user-1', {})).resolves.toEqual([]);
+  });
+});
+
+describe('TransactionsServiceImpl.getCategoryMonthlySeries', () => {
+  it('el where del repo coincide campo a campo con el de getTransactionSummary para los mismos filtros', async () => {
+    const groupByCategory = vi.fn().mockResolvedValue([]);
+    const groupByCategoryAndMonth = vi.fn().mockResolvedValue([]);
+    const service = buildService({
+      transactionRepo: { groupByCategory, groupByCategoryAndMonth },
+    });
+    const filters = {
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      accountId: 'account-1',
+      type: 'expense' as const,
+    };
+
+    await service.getTransactionSummary('user-1', filters);
+    await service.getCategoryMonthlySeries('user-1', filters);
+
+    const summaryWhere = groupByCategory.mock.calls[0][0];
+    const [seriesParams] = groupByCategoryAndMonth.mock.calls[0];
+    expect(seriesParams).toEqual({
+      userId: summaryWhere.userId,
+      type: summaryWhere.type,
+      gte: summaryWhere.date.gte,
+      lte: summaryWhere.date.lte,
+      accountId: summaryWhere.accountId,
+    });
+  });
+
+  it('incluye en `months` los meses sin ningún movimiento, con un punto en 0 para cada serie', async () => {
+    const service = buildService({
+      transactionRepo: {
+        groupByCategoryAndMonth: async () =>
+          [
+            { categoryId: 'cat-1', month: '2026-01', total: 100, count: 2 },
+            { categoryId: 'cat-1', month: '2026-03', total: 50, count: 1 },
+          ] as never,
+      },
+      categoryRepo: {
+        findMany: async () => [{ id: 'cat-1', name: 'Comida', icon: null, color: null }] as never,
+      },
+    });
+
+    const result = await service.getCategoryMonthlySeries('user-1', {
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      type: 'expense',
+    });
+
+    expect(result.months).toEqual(['2026-01', '2026-02', '2026-03']);
+    expect(result.series[0].points).toEqual([
+      { month: '2026-01', total: 100, count: 2 },
+      { month: '2026-02', total: 0, count: 0 },
+      { month: '2026-03', total: 50, count: 1 },
+    ]);
+    expect(result.series[0].total).toBe(150);
+  });
+
+  it('ordena por total descendente, desempatando por nombre ascendente', async () => {
+    const service = buildService({
+      transactionRepo: {
+        groupByCategoryAndMonth: async () =>
+          [
+            { categoryId: 'cat-b', month: '2026-01', total: 50, count: 1 },
+            { categoryId: 'cat-a', month: '2026-01', total: 50, count: 1 },
+            { categoryId: 'cat-c', month: '2026-01', total: 200, count: 1 },
+          ] as never,
+      },
+      categoryRepo: {
+        findMany: async () =>
+          [
+            { id: 'cat-b', name: 'Zapatos', icon: null, color: null },
+            { id: 'cat-a', name: 'Alquiler', icon: null, color: null },
+            { id: 'cat-c', name: 'Comida', icon: null, color: null },
+          ] as never,
+      },
+    });
+
+    const result = await service.getCategoryMonthlySeries('user-1', {
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      type: 'expense',
+    });
+
+    expect(result.series.map((s) => s.category.id)).toEqual(['cat-c', 'cat-a', 'cat-b']);
+  });
+
+  it('una categoría de sistema (Pago de Tarjeta) aparece como una serie más, sin trato especial', async () => {
+    const service = buildService({
+      transactionRepo: {
+        groupByCategoryAndMonth: async () =>
+          [{ categoryId: 'cat-system', month: '2026-01', total: 300, count: 1 }] as never,
+      },
+      categoryRepo: {
+        findMany: async () =>
+          [{ id: 'cat-system', name: 'Pago de Tarjeta', icon: '💳', color: '#8B5CF6' }] as never,
+      },
+    });
+
+    const result = await service.getCategoryMonthlySeries('user-1', {
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      type: 'expense',
+    });
+
+    expect(result.series).toEqual([
+      {
+        category: { id: 'cat-system', name: 'Pago de Tarjeta', icon: '💳', color: '#8B5CF6' },
+        total: 300,
+        points: [{ month: '2026-01', total: 300, count: 1 }],
+      },
+    ]);
+  });
+
+  it('la consulta de categorías incluye userId (no propaga el hallazgo de seguridad de getTransactionSummary)', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const service = buildService({
+      transactionRepo: {
+        groupByCategoryAndMonth: async () =>
+          [{ categoryId: 'cat-1', month: '2026-01', total: 10, count: 1 }] as never,
+      },
+      categoryRepo: { findMany },
+    });
+
+    await service.getCategoryMonthlySeries('user-1', {
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      type: 'expense',
+    });
+
+    const [where] = findMany.mock.calls[0];
+    expect(where).toEqual({ id: { in: ['cat-1'] }, userId: 'user-1' });
+  });
+
+  it('devuelve [] sin consultar categorías cuando no hay filas', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const service = buildService({
+      transactionRepo: { groupByCategoryAndMonth: async () => [] },
+      categoryRepo: { findMany },
+    });
+
+    const result = await service.getCategoryMonthlySeries('user-1', {
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      type: 'expense',
+    });
+
+    expect(result).toEqual({ months: ['2026-01'], series: [] });
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it('la respuesta no expone ningún campo fuera de la forma declarada (sin userId, sin filas de transacción)', async () => {
+    const service = buildService({
+      transactionRepo: {
+        groupByCategoryAndMonth: async () =>
+          [{ categoryId: 'cat-1', month: '2026-01', total: 10, count: 1 }] as never,
+      },
+      categoryRepo: {
+        findMany: async () => [{ id: 'cat-1', name: 'Comida', icon: null, color: null }] as never,
+      },
+    });
+
+    const result = await service.getCategoryMonthlySeries('user-1', {
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      type: 'expense',
+    });
+
+    expect(Object.keys(result)).toEqual(['months', 'series']);
+    expect(Object.keys(result.series[0])).toEqual(['category', 'total', 'points']);
+    expect(Object.keys(result.series[0].category)).toEqual(['id', 'name', 'icon', 'color']);
   });
 });
 

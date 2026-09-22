@@ -8,6 +8,7 @@ const mocked = vi.hoisted(() => ({
   updateTransaction: vi.fn(),
   deleteTransaction: vi.fn(),
   getTransactionSummary: vi.fn(),
+  getCategoryMonthlySeries: vi.fn(),
   getReceiptItems: vi.fn(),
 }));
 
@@ -148,6 +149,142 @@ describe('transactions.controller', () => {
       await controller.getTransactionSummary(fakeReq(), res, fakeNext());
 
       expect(res.json).toHaveBeenCalledWith([]);
+    });
+  });
+
+  describe('getCategoryMonthlySeries', () => {
+    it('query válida -> 200 con el resultado del service', async () => {
+      mocked.getCategoryMonthlySeries.mockResolvedValue({ months: [], series: [] });
+      const res = fakeRes();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '2026-01-01', endDate: '2026-01-31', type: 'expense' },
+        }),
+        res,
+        fakeNext()
+      );
+
+      expect(mocked.getCategoryMonthlySeries).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({
+          startDate: '2026-01-01',
+          endDate: '2026-01-31',
+          type: 'expense',
+        })
+      );
+      expect(res.json).toHaveBeenCalledWith({ months: [], series: [] });
+    });
+
+    it('startDate > endDate cae en next (error de validación)', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '2026-02-01', endDate: '2026-01-01', type: 'expense' },
+        }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('accountId no-uuid cae en next', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: {
+            startDate: '2026-01-01',
+            endDate: '2026-01-31',
+            type: 'expense',
+            accountId: 'no-es-uuid',
+          },
+        }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('fecha con formato válido pero inexistente en el calendario cae en next', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '2026-99-99', endDate: '2026-01-31', type: 'expense' },
+        }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('rango de más de 600 meses cae en next (tope de defensa en profundidad)', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '0001-01-01', endDate: '9999-12-31', type: 'expense' },
+        }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('rango de exactamente 600 meses no cae en next', async () => {
+      mocked.getCategoryMonthlySeries.mockResolvedValue({ months: [], series: [] });
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '1976-01-01', endDate: '2025-12-31', type: 'expense' },
+        }),
+        fakeRes(),
+        fakeNext()
+      );
+
+      expect(mocked.getCategoryMonthlySeries).toHaveBeenCalled();
+    });
+
+    it('type ausente cae en next', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({ query: { startDate: '2026-01-01', endDate: '2026-01-31' } }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('usa el userId del token, aunque la query traiga otro', async () => {
+      mocked.getCategoryMonthlySeries.mockResolvedValue({ months: [], series: [] });
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: {
+            startDate: '2026-01-01',
+            endDate: '2026-01-31',
+            type: 'expense',
+            userId: 'otro-user',
+          },
+        }),
+        fakeRes(),
+        fakeNext()
+      );
+
+      expect(mocked.getCategoryMonthlySeries).toHaveBeenCalledWith('user-1', expect.anything());
     });
   });
 
