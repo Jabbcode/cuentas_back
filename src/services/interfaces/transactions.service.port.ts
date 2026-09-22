@@ -45,6 +45,30 @@ export interface CategorySummaryItem {
   netTotal: number;
 }
 
+export interface CategoryMonthlyPoint {
+  month: string;
+  total: number;
+  count: number;
+}
+
+export interface CategoryMonthlySeries {
+  category: { id: string; name: string; icon: string | null; color: string | null };
+  total: number;
+  points: CategoryMonthlyPoint[];
+}
+
+export interface CategoryMonthlySeriesResult {
+  months: string[];
+  series: CategoryMonthlySeries[];
+}
+
+export interface CategoryMonthlySeriesQuery {
+  startDate: string;
+  endDate: string;
+  type: TransactionType;
+  accountId?: string;
+}
+
 export interface DateRangeGte {
   gte: Date;
 }
@@ -93,6 +117,10 @@ export interface TransactionsService {
     userId: string,
     query: Pick<TransactionQuery, 'startDate' | 'endDate' | 'accountId' | 'type'>
   ): Promise<CategorySummaryItem[]>;
+  getCategoryMonthlySeries(
+    userId: string,
+    query: CategoryMonthlySeriesQuery
+  ): Promise<CategoryMonthlySeriesResult>;
   getReceiptItems(transactionId: string, userId: string): Promise<ReceiptItem[]>;
 
   // Métodos de negocio (uno por uso real de los 8 consumidores)

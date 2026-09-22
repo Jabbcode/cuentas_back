@@ -1,10 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TransactionRepositoryImpl } from '../transaction.repository.js';
 import { fakePrismaModels } from './prisma-fakes.js';
 
-function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
-  return fakePrismaModels(
+function fakePrisma(
+  overrides: Record<string, unknown> = {},
+  queryRaw?: ReturnType<typeof vi.fn>
+): PrismaClient {
+  const base = fakePrismaModels(
     {
       transaction: {
         findMany: vi.fn().mockResolvedValue([]),
@@ -20,6 +24,10 @@ function fakePrisma(overrides: Record<string, unknown> = {}): PrismaClient {
     },
     overrides
   );
+  return {
+    ...base,
+    $queryRaw: queryRaw ?? vi.fn().mockResolvedValue([]),
+  } as unknown as PrismaClient;
 }
 
 describe('TransactionRepositoryImpl', () => {
@@ -191,5 +199,58 @@ describe('TransactionRepositoryImpl', () => {
       orderBy,
       select: { date: true },
     });
+  });
+
+  it('groupByCategoryAndMonth envía userId, type y fechas como parámetros enlazados, no interpolados en el texto', async () => {
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const prisma = fakePrisma({}, queryRaw);
+    const repo = new TransactionRepositoryImpl(prisma);
+    const gte = new Date('2026-01-01');
+    const lte = new Date('2026-01-31');
+
+    await repo.groupByCategoryAndMonth({ userId: 'user-1', type: 'expense', gte, lte });
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const sqlArg = queryRaw.mock.calls[0][0] as Prisma.Sql;
+    expect(sqlArg.sql).not.toContain('user-1');
+    expect(sqlArg.sql).not.toContain('expense');
+    expect(sqlArg.values).toEqual(['user-1', 'expense', gte, lte]);
+    expect(sqlArg.sql).toContain('date_trunc');
+    expect(sqlArg.sql).toContain('GROUP BY 1, 2');
+  });
+
+  it('groupByCategoryAndMonth añade el fragmento de accountId como parámetro enlazado cuando se pasa', async () => {
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const prisma = fakePrisma({}, queryRaw);
+    const repo = new TransactionRepositoryImpl(prisma);
+    const gte = new Date('2026-01-01');
+    const lte = new Date('2026-01-31');
+
+    await repo.groupByCategoryAndMonth({
+      userId: 'user-1',
+      type: 'expense',
+      gte,
+      lte,
+      accountId: 'account-1',
+    });
+
+    const sqlArg = queryRaw.mock.calls[0][0] as Prisma.Sql;
+    expect(sqlArg.sql).not.toContain('account-1');
+    expect(sqlArg.sql).toContain('"accountId"');
+    expect(sqlArg.values).toEqual(['user-1', 'expense', gte, lte, 'account-1']);
+  });
+
+  it('groupByCategoryAndMonth no añade el fragmento de accountId cuando no se pasa', async () => {
+    const queryRaw = vi.fn().mockResolvedValue([]);
+    const prisma = fakePrisma({}, queryRaw);
+    const repo = new TransactionRepositoryImpl(prisma);
+    const gte = new Date('2026-01-01');
+    const lte = new Date('2026-01-31');
+
+    await repo.groupByCategoryAndMonth({ userId: 'user-1', type: 'expense', gte, lte });
+
+    const sqlArg = queryRaw.mock.calls[0][0] as Prisma.Sql;
+    expect(sqlArg.sql).not.toContain('"accountId"');
+    expect(sqlArg.values).toHaveLength(4);
   });
 });

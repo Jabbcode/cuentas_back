@@ -158,3 +158,178 @@ test.describe('Transactions API', () => {
     expect(res.status()).toBe(404);
   });
 });
+
+test.describe('Category monthly series API (GET /transactions/category-series)', () => {
+  test.beforeEach(async ({ request }) => {
+    await registerUser(request);
+  });
+
+  test('serie por categoría y mes: totales correctos, meses sin movimiento rellenos con 0', async ({
+    request,
+  }) => {
+    const account = await createAccount(request, { balance: 10000 });
+    const categories = (await (await request.get('/api/categories?type=expense')).json()) as {
+      id: string;
+    }[];
+    const [catA, catB] = categories;
+
+    await request.post('/api/transactions', {
+      data: {
+        amount: 40,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: catA.id,
+        date: '2020-01-15T12:00:00.000Z',
+      },
+    });
+    await request.post('/api/transactions', {
+      data: {
+        amount: 20,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: catB.id,
+        date: '2020-01-20T12:00:00.000Z',
+      },
+    });
+    await request.post('/api/transactions', {
+      data: {
+        amount: 30,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: catA.id,
+        date: '2020-02-10T12:00:00.000Z',
+      },
+    });
+    await request.post('/api/transactions', {
+      data: {
+        amount: 25,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: catB.id,
+        date: '2020-03-05T12:00:00.000Z',
+      },
+    });
+
+    const res = await request.get(
+      '/api/transactions/category-series?startDate=2020-01-01&endDate=2020-03-31&type=expense'
+    );
+    expect(res.ok()).toBeTruthy();
+    const body = (await res.json()) as {
+      months: string[];
+      series: { category: { id: string }; total: number; points: unknown[] }[];
+    };
+
+    expect(body.months).toEqual(['2020-01', '2020-02', '2020-03']);
+    const seriesA = body.series.find((s) => s.category.id === catA.id)!;
+    const seriesB = body.series.find((s) => s.category.id === catB.id)!;
+    expect(seriesA.total).toBe(70);
+    expect(seriesA.points).toEqual([
+      { month: '2020-01', total: 40, count: 1 },
+      { month: '2020-02', total: 30, count: 1 },
+      { month: '2020-03', total: 0, count: 0 },
+    ]);
+    expect(seriesB.total).toBe(45);
+    expect(seriesB.points).toEqual([
+      { month: '2020-01', total: 20, count: 1 },
+      { month: '2020-02', total: 0, count: 0 },
+      { month: '2020-03', total: 25, count: 1 },
+    ]);
+  });
+
+  test('el total de una categoría coincide con el que devuelve /transactions/summary para los mismos filtros', async ({
+    request,
+  }) => {
+    const account = await createAccount(request, { balance: 10000 });
+    const category = await getCategoryByType(request, 'expense');
+
+    await request.post('/api/transactions', {
+      data: {
+        amount: 40,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: category.id,
+        date: '2020-01-15T12:00:00.000Z',
+      },
+    });
+    await request.post('/api/transactions', {
+      data: {
+        amount: 30,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: category.id,
+        date: '2020-02-10T12:00:00.000Z',
+      },
+    });
+
+    const filters = 'startDate=2020-01-01&endDate=2020-02-29&type=expense';
+    const seriesBody = (await (
+      await request.get(`/api/transactions/category-series?${filters}`)
+    ).json()) as { series: { category: { id: string }; total: number }[] };
+    const summaryBody = (await (
+      await request.get(`/api/transactions/summary?${filters}`)
+    ).json()) as { category: { id: string }; expenseTotal: number }[];
+
+    const seriesTotal = seriesBody.series.find((s) => s.category.id === category.id)!.total;
+    const summaryTotal = summaryBody.find((s) => s.category.id === category.id)!.expenseTotal;
+
+    expect(seriesTotal).toBe(summaryTotal);
+    expect(seriesTotal).toBe(70);
+  });
+
+  test('aislamiento multi-tenant: un segundo usuario no ve la serie del primero', async ({
+    request,
+  }) => {
+    const account = await createAccount(request, { balance: 1000 });
+    const category = await getCategoryByType(request, 'expense');
+    await request.post('/api/transactions', {
+      data: {
+        amount: 50,
+        type: 'expense',
+        accountId: account.id,
+        categoryId: category.id,
+        date: '2020-01-15T12:00:00.000Z',
+      },
+    });
+
+    await registerUser(request);
+
+    const res = await request.get(
+      '/api/transactions/category-series?startDate=2020-01-01&endDate=2020-01-31&type=expense'
+    );
+    const body = (await res.json()) as { series: unknown[] };
+
+    expect(body.series).toEqual([]);
+  });
+
+  test('filtro por accountId acota la serie a esa cuenta', async ({ request }) => {
+    const accountA = await createAccount(request, { name: 'Cuenta A', balance: 1000 });
+    const accountB = await createAccount(request, { name: 'Cuenta B', balance: 1000 });
+    const category = await getCategoryByType(request, 'expense');
+
+    await request.post('/api/transactions', {
+      data: {
+        amount: 40,
+        type: 'expense',
+        accountId: accountA.id,
+        categoryId: category.id,
+        date: '2020-01-15T12:00:00.000Z',
+      },
+    });
+    await request.post('/api/transactions', {
+      data: {
+        amount: 90,
+        type: 'expense',
+        accountId: accountB.id,
+        categoryId: category.id,
+        date: '2020-01-15T12:00:00.000Z',
+      },
+    });
+
+    const res = await request.get(
+      `/api/transactions/category-series?startDate=2020-01-01&endDate=2020-01-31&type=expense&accountId=${accountA.id}`
+    );
+    const body = (await res.json()) as { series: { category: { id: string }; total: number }[] };
+
+    expect(body.series.find((s) => s.category.id === category.id)!.total).toBe(40);
+  });
+});
