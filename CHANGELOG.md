@@ -5,6 +5,17 @@ Todos los cambios notables de este proyecto se documentan en este fichero.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-22
+
+### FEAT
+* [#98](https://github.com/Jabbcode/cuentas_back/pull/98) endpoint de serie mensual por categoría (gastos-por-categoria-grafica)
+
+### OTROS
+* [#95](https://github.com/Jabbcode/cuentas_back/pull/95) sync develop con main v1.3.0
+* [#99](https://github.com/Jabbcode/cuentas_back/pull/99) gastos-por-categoria-grafica
+
+
+
 ## [1.3.0] - 2026-09-16
 
 ### FEAT
@@ -153,6 +164,7 @@ y este proyecto sigue [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## Comparaciones completas
 
+- [v1.3.0...v1.4.0](https://github.com/Jabbcode/cuentas_back/compare/v1.3.0...v1.4.0)
 - [v1.2.0...v1.3.0](https://github.com/Jabbcode/cuentas_back/compare/v1.2.0...v1.3.0)
 - [v1.1.4...v1.2.0](https://github.com/Jabbcode/cuentas_back/compare/v1.1.4...v1.2.0)
 - [v1.1.3...v1.1.4](https://github.com/Jabbcode/cuentas_back/compare/v1.1.3...v1.1.4)
