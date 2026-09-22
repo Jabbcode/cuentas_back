@@ -143,6 +143,7 @@ jobs:
           {
             head -n 6 CHANGELOG.md
             echo ""
+            echo "<a id=\"v${NEW_VERSION}\"></a>"
             echo "## [${NEW_VERSION}] - $date"
             echo ""
             cat /tmp/notes.md
@@ -205,9 +206,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
+          # El detalle completo ya vive en CHANGELOG.md (anclado en v${NEW_VERSION});
+          # el body del release solo enlaza ahí en vez de repetir todo el contenido.
+          changelog_url="https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md#v${NEW_VERSION}"
           gh release create "v${NEW_VERSION}" \
             --title "v${NEW_VERSION}" \
-            --notes-file /tmp/notes.md
+            --notes "Ver el detalle completo en el [CHANGELOG](${changelog_url})."
 
       - name: Crear PR de sync a develop
         if: steps.codecheck.outputs.has_code_changes == 'true'
@@ -224,7 +228,7 @@ jobs:
           if ! gh pr create \
             --base develop \
             --head main \
-            --title "chore: sync develop con main v${NEW_VERSION}" \
+            --title "Sync release v${NEW_VERSION} to develop" \
             --body "Sincroniza \`develop\` con el CHANGELOG y version bump de v${NEW_VERSION} publicados en \`main\`."; then
             gh pr comment "$PR_NUMBER" \
               --body "⚠️ Release v${NEW_VERSION} publicada (tag + GitHub Release), pero no se pudo abrir el PR de sync \`main → develop\` automáticamente. Créalo a mano."

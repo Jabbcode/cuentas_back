@@ -143,6 +143,7 @@ jobs:
           {
             head -n 6 CHANGELOG-DB.md
             echo ""
+            echo "<a id=\"db-v${NEW_VERSION}\"></a>"
             echo "## [${NEW_VERSION}] - $date"
             echo ""
             cat /tmp/db-notes.md
@@ -196,9 +197,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
+          # El detalle completo ya vive en CHANGELOG-DB.md (anclado en db-v${NEW_VERSION});
+          # el body del release solo enlaza ahí en vez de repetir todo el contenido.
+          changelog_url="https://github.com/${{ github.repository }}/blob/main/CHANGELOG-DB.md#db-v${NEW_VERSION}"
           gh release create "db-v${NEW_VERSION}" \
             --title "Base de datos db-v${NEW_VERSION}" \
-            --notes-file /tmp/db-notes.md
+            --notes "Ver el detalle completo en el [CHANGELOG-DB](${changelog_url})."
 
       - name: Asegurar PR de sync a develop
         if: steps.dbcheck.outputs.has_db_changes == 'true'
@@ -216,7 +220,7 @@ jobs:
           if ! gh pr create \
             --base develop \
             --head main \
-            --title "chore: sync develop con main db-v${NEW_VERSION}" \
+            --title "Sync DB release db-v${NEW_VERSION} to develop" \
             --body "Sincroniza \`develop\` con el \`CHANGELOG-DB.md\` de db-v${NEW_VERSION} publicado en \`main\`."; then
             gh pr comment "$PR_NUMBER" \
               --body "⚠️ db-v${NEW_VERSION} publicada (tag + GitHub Release), pero no se pudo abrir el PR de sync \`main → develop\` automáticamente. Créalo a mano."
