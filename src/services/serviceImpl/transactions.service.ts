@@ -29,11 +29,34 @@ import type {
   GroupTotalsRow,
   GroupUserCategoryRow,
   CategorySummaryItem,
+  CategoryMonthlySeries,
+  CategoryMonthlySeriesQuery,
+  CategoryMonthlySeriesResult,
   DateRangeGteLt,
   DateRangeGteLte,
   SimilarTransactionWindow,
   CreateTransactionOptions,
 } from '../interfaces/transactions.service.port.js';
+
+/** Genera las claves 'YYYY-MM' del rango a partir de los componentes string de las
+ * fechas (sin `new Date`), para no arrastrar conversión de huso horario (ADR-002). */
+function buildMonthKeysFromDateStrings(startDate: string, endDate: string): string[] {
+  const [startYear, startMonth] = startDate.split('-').map(Number);
+  const [endYear, endMonth] = endDate.split('-').map(Number);
+
+  const months: string[] = [];
+  let year = startYear;
+  let month = startMonth;
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return months;
+}
 
 const CARD_STATEMENT_TRANSACTION_INCLUDE = {
   category: { select: { id: true, name: true, icon: true, color: true } },
@@ -607,6 +630,63 @@ export class TransactionsServiceImpl implements TransactionsService {
       return logger.fail(
         error,
         'No se pudo obtener el resumen de transacciones del usuario {}',
+        userId
+      );
+    }
+  }
+
+  async getCategoryMonthlySeries(
+    userId: string,
+    query: CategoryMonthlySeriesQuery
+  ): Promise<CategoryMonthlySeriesResult> {
+    const { startDate, endDate, type, accountId } = query;
+
+    try {
+      const rows = await this.transactionRepo.groupByCategoryAndMonth({
+        userId,
+        type,
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+        accountId,
+      });
+
+      const months = buildMonthKeysFromDateStrings(startDate, endDate);
+
+      const pointsByCategory = new Map<string, Map<string, { total: number; count: number }>>();
+      for (const row of rows) {
+        if (!pointsByCategory.has(row.categoryId)) {
+          pointsByCategory.set(row.categoryId, new Map());
+        }
+        pointsByCategory
+          .get(row.categoryId)!
+          .set(row.month, { total: Number(row.total), count: row.count });
+      }
+
+      const categoryIds = Array.from(pointsByCategory.keys());
+      if (categoryIds.length === 0) return { months, series: [] };
+
+      const cats = await this.categoryRepo.findMany(
+        { id: { in: categoryIds }, userId },
+        { id: true, name: true, icon: true, color: true }
+      );
+
+      const series = (cats as unknown as CategoryMonthlySeries['category'][])
+        .map((cat) => {
+          const monthlyData = pointsByCategory.get(cat.id) ?? new Map();
+          const points = months.map((month) => {
+            const data = monthlyData.get(month) ?? { total: 0, count: 0 };
+            return { month, total: data.total, count: data.count };
+          });
+          const total = points.reduce((sum, point) => sum + point.total, 0);
+          return { category: cat, total, points };
+        })
+        .sort((a, b) => b.total - a.total || a.category.name.localeCompare(b.category.name));
+
+      return { months, series };
+    } catch (error) {
+      return logger.fail(
+        error,
+        'No se pudo obtener la serie mensual por categoría del usuario {}',
         userId
       );
     }
