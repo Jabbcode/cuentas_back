@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TRANSACTION_TYPE_VALUES } from '../lib/constants/shared.constants.js';
 
 const receiptItemInputSchema = z.object({
   name: z.string().min(1),
@@ -38,16 +39,61 @@ export const transactionQuerySchema = z.object({
   maxAmount: z.string().transform(Number).optional(),
 });
 
+const DATE_STRING_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Rango máximo del endpoint de serie mensual por categoría — 50 años. La spec
+ * pide un rango libre sin tope de negocio, pero sin límite alguno un rango
+ * absurdo (p. ej. "0001-01-01" a "9999-12-31") genera un punto por mes por
+ * categoría en la respuesta: defensa en profundidad contra abuso, no una
+ * restricción funcional (ningún uso real se acerca a este tope). */
+const MAX_ANALYSIS_RANGE_MONTHS = 600;
+
+function isValidCalendarDate(dateString: string): boolean {
+  return !Number.isNaN(new Date(dateString).getTime());
+}
+
+/** Meses entre dos fechas 'YYYY-MM-DD' (inclusive), por componentes enteros —
+ * sin `new Date`, para no arrastrar conversión de huso horario (ADR-002). */
+function monthsBetween(startDate: string, endDate: string): number {
+  const [startYear, startMonth] = startDate.split('-').map(Number);
+  const [endYear, endMonth] = endDate.split('-').map(Number);
+  return (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+}
+
 export const transactionCategorySeriesQuerySchema = z
   .object({
-    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
-    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
-    type: z.enum(['expense', 'income']),
+    startDate: z.string().regex(DATE_STRING_REGEX, 'Formato de fecha inválido (YYYY-MM-DD)'),
+    endDate: z.string().regex(DATE_STRING_REGEX, 'Formato de fecha inválido (YYYY-MM-DD)'),
+    type: z.enum(TRANSACTION_TYPE_VALUES),
     accountId: z.string().uuid().optional(),
   })
-  .refine((data) => data.startDate <= data.endDate, {
-    message: '"startDate" debe ser anterior o igual a "endDate"',
-    path: ['startDate'],
+  .superRefine((data, ctx) => {
+    const startValid = isValidCalendarDate(data.startDate);
+    const endValid = isValidCalendarDate(data.endDate);
+    if (!startValid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Fecha inválida', path: ['startDate'] });
+    }
+    if (!endValid) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Fecha inválida', path: ['endDate'] });
+    }
+    if (!startValid || !endValid) return;
+
+    if (data.startDate > data.endDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: '"startDate" debe ser anterior o igual a "endDate"',
+        path: ['startDate'],
+      });
+      return;
+    }
+
+    if (monthsBetween(data.startDate, data.endDate) > MAX_ANALYSIS_RANGE_MONTHS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `El rango no puede superar ${MAX_ANALYSIS_RANGE_MONTHS} meses`,
+        path: ['endDate'],
+      });
+    }
   });
 
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;

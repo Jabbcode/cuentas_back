@@ -211,6 +211,50 @@ describe('transactions.controller', () => {
       expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
     });
 
+    it('fecha con formato válido pero inexistente en el calendario cae en next', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '2026-99-99', endDate: '2026-01-31', type: 'expense' },
+        }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('rango de más de 600 meses cae en next (tope de defensa en profundidad)', async () => {
+      const next = fakeNext();
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '0001-01-01', endDate: '9999-12-31', type: 'expense' },
+        }),
+        fakeRes(),
+        next
+      );
+
+      expect(next).toHaveBeenCalled();
+      expect(mocked.getCategoryMonthlySeries).not.toHaveBeenCalled();
+    });
+
+    it('rango de exactamente 600 meses no cae en next', async () => {
+      mocked.getCategoryMonthlySeries.mockResolvedValue({ months: [], series: [] });
+
+      await controller.getCategoryMonthlySeries(
+        fakeReq({
+          query: { startDate: '1976-01-01', endDate: '2025-12-31', type: 'expense' },
+        }),
+        fakeRes(),
+        fakeNext()
+      );
+
+      expect(mocked.getCategoryMonthlySeries).toHaveBeenCalled();
+    });
+
     it('type ausente cae en next', async () => {
       const next = fakeNext();
 

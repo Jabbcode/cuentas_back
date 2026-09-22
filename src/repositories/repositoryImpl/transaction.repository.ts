@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { Transaction, ReceiptItem, PrismaClient } from '@prisma/client';
 import type { TransactionRepository } from '../interfaces/transaction.repository.port.js';
+import type { TransactionType } from '../../lib/constants/shared.constants.js';
 
 export class TransactionRepositoryImpl implements TransactionRepository {
   constructor(private prisma: PrismaClient) {}
@@ -109,7 +110,7 @@ export class TransactionRepositoryImpl implements TransactionRepository {
 
   async groupByCategoryAndMonth(params: {
     userId: string;
-    type: string;
+    type: TransactionType;
     gte: Date;
     lte: Date;
     accountId?: string;

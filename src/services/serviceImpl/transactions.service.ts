@@ -568,6 +568,23 @@ export class TransactionsServiceImpl implements TransactionsService {
     }
   }
 
+  /**
+   * Hidrata categorías por id para los endpoints de resumen/serie. `userId` es
+   * opcional a propósito: `getTransactionSummary` lo omite (hallazgo de
+   * seguridad preexistente documentado en el techplan, fuera de alcance de
+   * esta spec) mientras que `getCategoryMonthlySeries` sí lo incluye.
+   */
+  private async hydrateCategoriesFor(
+    categoryIds: string[],
+    userId?: string
+  ): Promise<CategorySummaryItem['category'][]> {
+    const cats = await this.categoryRepo.findMany(
+      userId ? { id: { in: categoryIds }, userId } : { id: { in: categoryIds } },
+      { id: true, name: true, icon: true, color: true }
+    );
+    return cats as unknown as CategorySummaryItem['category'][];
+  }
+
   async getTransactionSummary(
     userId: string,
     query: Pick<TransactionQuery, 'startDate' | 'endDate' | 'accountId' | 'type'>
@@ -609,12 +626,9 @@ export class TransactionsServiceImpl implements TransactionsService {
       const categoryIds = Array.from(categoryMap.keys());
       if (categoryIds.length === 0) return [];
 
-      const cats = await this.categoryRepo.findMany(
-        { id: { in: categoryIds } },
-        { id: true, name: true, icon: true, color: true }
-      );
+      const cats = await this.hydrateCategoriesFor(categoryIds);
 
-      return (cats as unknown as CategorySummaryItem['category'][])
+      return cats
         .map((cat) => {
           const data = categoryMap.get(cat.id) ?? { expenseTotal: 0, incomeTotal: 0, count: 0 };
           return {
@@ -665,12 +679,9 @@ export class TransactionsServiceImpl implements TransactionsService {
       const categoryIds = Array.from(pointsByCategory.keys());
       if (categoryIds.length === 0) return { months, series: [] };
 
-      const cats = await this.categoryRepo.findMany(
-        { id: { in: categoryIds }, userId },
-        { id: true, name: true, icon: true, color: true }
-      );
+      const cats = await this.hydrateCategoriesFor(categoryIds, userId);
 
-      const series = (cats as unknown as CategoryMonthlySeries['category'][])
+      const series = cats
         .map((cat) => {
           const monthlyData = pointsByCategory.get(cat.id) ?? new Map();
           const points = months.map((month) => {
