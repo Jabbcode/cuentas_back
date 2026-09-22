@@ -38,6 +38,19 @@ export const transactionQuerySchema = z.object({
   maxAmount: z.string().transform(Number).optional(),
 });
 
+export const transactionCategorySeriesQuerySchema = z
+  .object({
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
+    type: z.enum(['expense', 'income']),
+    accountId: z.string().uuid().optional(),
+  })
+  .refine((data) => data.startDate <= data.endDate, {
+    message: '"startDate" debe ser anterior o igual a "endDate"',
+    path: ['startDate'],
+  });
+
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
 export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
 export type TransactionQuery = z.infer<typeof transactionQuerySchema>;
+export type TransactionCategorySeriesQuery = z.infer<typeof transactionCategorySeriesQuerySchema>;

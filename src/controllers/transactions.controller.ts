@@ -4,6 +4,7 @@ import {
   createTransactionSchema,
   updateTransactionSchema,
   transactionQuerySchema,
+  transactionCategorySeriesQuerySchema,
 } from '../schemas/transaction.schema.js';
 import { AuthRequest } from '../types/index.js';
 
@@ -74,6 +75,20 @@ export async function getTransactionSummary(req: AuthRequest, res: Response, nex
   try {
     const query = transactionQuerySchema.parse(req.query);
     const result = await transactionsService.getTransactionSummary(req.user!.userId, query);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getCategoryMonthlySeries(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const query = transactionCategorySeriesQuerySchema.parse(req.query);
+    const result = await transactionsService.getCategoryMonthlySeries(req.user!.userId, query);
     res.json(result);
   } catch (error) {
     next(error);
