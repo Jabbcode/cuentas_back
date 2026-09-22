@@ -1,7 +1,10 @@
 name: Release Preview
 
 # Comenta (y va actualizando) en el PR develop -> main la versión que se
-# generaría y el changelog de vista previa. No publica ni despliega nada.
+# generaría y el changelog de vista previa. También renombra el título del PR
+# a "Prepare Release vX.Y.Z" / "Prepare DB Release db-vX.Y.Z" según las
+# labels release-type/* y db-release-type/* presentes. No publica ni
+# despliega nada.
 
 on:
   pull_request:
@@ -15,13 +18,16 @@ permissions:
 env:
   # Mismo guard que release.yml (ver comentario allí).
   CODE_PATHS_REGEX: '^(src/|prisma/|package\.json$|package-lock\.json$|tsconfig\.json$|render\.yaml$)'
+  # Mismo guard que db-release.yml.
+  DB_PATHS_REGEX: 'prisma/migrations|prisma/schema\.prisma'
 
 jobs:
   preview:
     if: >
       github.event.action == 'opened' ||
       github.event.action == 'synchronize' ||
-      startsWith(github.event.label.name, 'release-type/')
+      startsWith(github.event.label.name, 'release-type/') ||
+      startsWith(github.event.label.name, 'db-release-type/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout de la HEAD del PR
@@ -47,6 +53,23 @@ jobs:
             echo "type=none" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Determinar tipo de bump de BD por labels actuales
+        id: dbbump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          labels=$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name')
+          if echo "$labels" | grep -qx 'db-release-type/major'; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$labels" | grep -qx 'db-release-type/minor'; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          elif echo "$labels" | grep -qx 'db-release-type/patch'; then
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=none" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Comprobar si hay cambios de código
         id: codecheck
         if: steps.bump.outputs.type != 'none'
@@ -64,6 +87,23 @@ jobs:
             *) echo "changed-paths.sh falló (rc=$rc)"; exit "$rc" ;;
           esac
 
+      - name: Comprobar si hay cambios de BD
+        id: dbcheck
+        if: steps.dbbump.outputs.type != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          rc=0
+          bash .github/scripts/changed-paths.sh "$BASE_SHA" "$HEAD_SHA" "$DB_PATHS_REGEX" || rc=$?
+          case "$rc" in
+            0) echo "has_db_changes=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "has_db_changes=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "changed-paths.sh falló (rc=$rc)"; exit "$rc" ;;
+          esac
+
       - name: Calcular siguiente versión
         id: version
         if: steps.bump.outputs.type != 'none' && steps.codecheck.outputs.has_code_changes == 'true'
@@ -75,6 +115,41 @@ jobs:
           new=$(bash .github/scripts/bump-version.sh "$current" "$BUMP_TYPE")
           echo "new=$new" >> "$GITHUB_OUTPUT"
           echo "previous=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Calcular siguiente versión de BD
+        id: dbversion
+        if: steps.dbbump.outputs.type != 'none' && steps.dbcheck.outputs.has_db_changes == 'true'
+        env:
+          BUMP_TYPE: ${{ steps.dbbump.outputs.type }}
+        run: |
+          set -euo pipefail
+          current_tag=$(git tag --list 'db-v*' | sort -V | tail -1)
+          current="${current_tag#db-v}"
+          current="${current:-0.0.0}"
+          new=$(bash .github/scripts/bump-version.sh "$current" "$BUMP_TYPE")
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Actualizar título del PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CODE_READY: ${{ steps.bump.outputs.type != 'none' && steps.codecheck.outputs.has_code_changes == 'true' }}
+          DB_READY: ${{ steps.dbbump.outputs.type != 'none' && steps.dbcheck.outputs.has_db_changes == 'true' }}
+          CODE_VERSION: ${{ steps.version.outputs.new }}
+          DB_VERSION: ${{ steps.dbversion.outputs.new }}
+        run: |
+          if [ "$CODE_READY" = "true" ] && [ "$DB_READY" = "true" ]; then
+            title="Prepare Release v${CODE_VERSION} + DB db-v${DB_VERSION}"
+          elif [ "$CODE_READY" = "true" ]; then
+            title="Prepare Release v${CODE_VERSION}"
+          elif [ "$DB_READY" = "true" ]; then
+            title="Prepare DB Release db-v${DB_VERSION}"
+          else
+            title=""
+          fi
+          if [ -n "$title" ]; then
+            gh pr edit "$PR_NUMBER" --title "$title"
+          fi
 
       - name: Construir comentario de vista previa
         if: steps.bump.outputs.type != 'none' && steps.codecheck.outputs.has_code_changes == 'true'
